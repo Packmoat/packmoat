@@ -1,0 +1,55 @@
+# The .NET implementation (dotnet/): build, test, check doc-comment references, and build and smoke-test the image. No secrets, a
+# read-only token, and nothing is pushed. Actions are pinned to full commit SHAs. Every path here is relative to this repository's root.
+name: dotnet
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dotnet-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dotnet:
+    name: dotnet
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: shellcheck the scripts (preinstalled on the runner image)
+        run: shellcheck .github/scripts/*.sh deploy/helm/*.sh
+      - name: actionlint the workflows (a pinned release, checked by sha256)
+        # nullglob: a pattern that matches nothing (no .yaml files) drops out instead of reaching actionlint as a literal name.
+        run: |
+          shopt -s nullglob
+          .github/scripts/actionlint.sh .github/workflows/*.{yml,yaml}
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: dotnet/global.json
+      - name: Build (warnings are errors)
+        working-directory: dotnet
+        # MSB9008 (a referenced project does not exist) is only a warning by default: a dangling project reference must fail here.
+        run: dotnet build Packmoat.sln -c Release --nologo -warnaserror:MSB9008
+      - name: Test (live tests skip without their environment)
+        working-directory: dotnet
+        run: dotnet test Packmoat.sln -c Release --no-build --nologo --logger "trx;LogFileName=results.trx" --results-directory "$RUNNER_TEMP/results"
+      # A doc comment's cref must resolve. Only the cref checks are errors here (CS1574, CS1580, CS1581, CS1584); the other doc-comment
+      # warnings are left as warnings.
+      - name: Doc comment references resolve
+        working-directory: dotnet
+        run: dotnet build Packmoat.sln -c Release --nologo --no-incremental -p:GenerateDocumentationFile=true -p:TreatWarningsAsErrors=false "-p:WarningsAsErrors=CS1574%3BCS1580%3BCS1581%3BCS1584" -warnaserror:MSB9008 -clp:ErrorsOnly
+      - name: The image builds from dotnet/ (not pushed)
+        working-directory: dotnet
+        run: docker build -t packmoat-core:ci .
+      - name: Image smoke (Entrypoint, packmoat-admin --help, /healthz 200 with dummy settings)
+        run: .github/scripts/image-smoke.sh packmoat-core:ci /app/host/Packmoat.Server.dll
+      - name: Image PORT smoke (PORT=9090 moves the server and its health check; PORT=0 stops it)
+        run: .github/scripts/port-smoke.sh packmoat-core:ci 9090

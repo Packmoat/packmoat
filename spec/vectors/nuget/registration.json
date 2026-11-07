@@ -1,0 +1,617 @@
+{
+  "description": "A registration index (registrations2/{id}/index.json) or page, filtered by the verdicts for its leaves. A leaf's version is its catalogEntry.version, else the last segment of its @id without .json. Leaves not positively allowed go, including leaves with no readable version or no verdict. Counts follow the leaves that stay; lower and upper are left as they were. A page given only as a link stays, pointed at the proxy. Any date_source_unavailable verdict makes the answer a 503.",
+  "cases": [
+    {
+      "name": "an inline registration index loses hidden leaves, and each page's count follows",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "count": 1,
+          "items": [
+            {
+              "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/page/1.0.0/3.0.0.json",
+              "count": 3,
+              "lower": "1.0.0",
+              "upper": "3.0.0",
+              "items": [
+                {
+                  "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/1.0.0.json",
+                  "catalogEntry": {
+                    "version": "1.0.0"
+                  },
+                  "packageContent": "https://upstream.example.com/contoso/flat2/fabrikam.json/1.0.0/fabrikam.json.1.0.0.nupkg"
+                },
+                {
+                  "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/2.0.0.json",
+                  "catalogEntry": {
+                    "version": "2.0.0"
+                  },
+                  "packageContent": "https://upstream.example.com/contoso/flat2/fabrikam.json/2.0.0/fabrikam.json.2.0.0.nupkg"
+                },
+                {
+                  "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/3.0.0.json",
+                  "catalogEntry": {
+                    "version": "3.0.0"
+                  },
+                  "packageContent": "https://upstream.example.com/contoso/flat2/fabrikam.json/3.0.0/fabrikam.json.3.0.0.nupkg"
+                }
+              ]
+            }
+          ]
+        },
+        "verdicts": {
+          "1.0.0": "cooldown_elapsed",
+          "2.0.0": "waiver",
+          "3.0.0": "cooldown"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "count": 1,
+          "items": [
+            {
+              "@id": "https://packmoat.example.com/v3/u/contoso/reg/fabrikam.json/page/1.0.0/3.0.0.json",
+              "count": 2,
+              "lower": "1.0.0",
+              "upper": "3.0.0",
+              "items": [
+                {
+                  "@id": "https://packmoat.example.com/v3/u/contoso/reg/fabrikam.json/1.0.0.json",
+                  "catalogEntry": {
+                    "version": "1.0.0"
+                  },
+                  "packageContent": "https://packmoat.example.com/v3/u/contoso/flat2/fabrikam.json/1.0.0/fabrikam.json.1.0.0.nupkg"
+                },
+                {
+                  "@id": "https://packmoat.example.com/v3/u/contoso/reg/fabrikam.json/2.0.0.json",
+                  "catalogEntry": {
+                    "version": "2.0.0"
+                  },
+                  "packageContent": "https://packmoat.example.com/v3/u/contoso/flat2/fabrikam.json/2.0.0/fabrikam.json.2.0.0.nupkg"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "link-only pages stay, pointed at the proxy, to be filtered when fetched",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "count": 2,
+          "items": [
+            {
+              "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/page/1.0.0/2.0.0.json",
+              "count": 2,
+              "lower": "1.0.0",
+              "upper": "2.0.0"
+            },
+            {
+              "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/page/3.0.0/4.0.0.json",
+              "count": 2,
+              "lower": "3.0.0",
+              "upper": "4.0.0"
+            }
+          ]
+        },
+        "verdicts": {}
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "count": 2,
+          "items": [
+            {
+              "@id": "https://packmoat.example.com/v3/u/contoso/reg/fabrikam.json/page/1.0.0/2.0.0.json",
+              "count": 2,
+              "lower": "1.0.0",
+              "upper": "2.0.0"
+            },
+            {
+              "@id": "https://packmoat.example.com/v3/u/contoso/reg/fabrikam.json/page/3.0.0/4.0.0.json",
+              "count": 2,
+              "lower": "3.0.0",
+              "upper": "4.0.0"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a registration page is filtered directly, and its count follows",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/page/1.0.0/3.0.0.json",
+          "count": 3,
+          "lower": "1.0.0",
+          "upper": "3.0.0",
+          "items": [
+            {
+              "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/1.0.0.json",
+              "catalogEntry": {
+                "version": "1.0.0"
+              },
+              "packageContent": "https://upstream.example.com/contoso/flat2/fabrikam.json/1.0.0/fabrikam.json.1.0.0.nupkg"
+            },
+            {
+              "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/2.0.0.json",
+              "catalogEntry": {
+                "version": "2.0.0"
+              },
+              "packageContent": "https://upstream.example.com/contoso/flat2/fabrikam.json/2.0.0/fabrikam.json.2.0.0.nupkg"
+            },
+            {
+              "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/3.0.0.json",
+              "catalogEntry": {
+                "version": "3.0.0"
+              },
+              "packageContent": "https://upstream.example.com/contoso/flat2/fabrikam.json/3.0.0/fabrikam.json.3.0.0.nupkg"
+            }
+          ]
+        },
+        "verdicts": {
+          "1.0.0": "cooldown",
+          "2.0.0": "cooldown_elapsed",
+          "3.0.0": "internal_namespace"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "@id": "https://packmoat.example.com/v3/u/contoso/reg/fabrikam.json/page/1.0.0/3.0.0.json",
+          "count": 1,
+          "lower": "1.0.0",
+          "upper": "3.0.0",
+          "items": [
+            {
+              "@id": "https://packmoat.example.com/v3/u/contoso/reg/fabrikam.json/2.0.0.json",
+              "catalogEntry": {
+                "version": "2.0.0"
+              },
+              "packageContent": "https://packmoat.example.com/v3/u/contoso/flat2/fabrikam.json/2.0.0/fabrikam.json.2.0.0.nupkg"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "the version is read from the leaf's @id when the catalog entry is only a link",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "items": [
+            {
+              "lower": "1.0.0",
+              "upper": "2.0.0",
+              "count": 2,
+              "items": [
+                {
+                  "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/1.0.0.json",
+                  "catalogEntry": "https://upstream.example.com/contoso/_apis/packaging/f/nuget/commitLog/100a"
+                },
+                {
+                  "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/2.0.0.json",
+                  "catalogEntry": "https://upstream.example.com/contoso/_apis/packaging/f/nuget/commitLog/200a"
+                }
+              ]
+            }
+          ]
+        },
+        "verdicts": {
+          "1.0.0": "cooldown_elapsed",
+          "2.0.0": "cooldown"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "lower": "1.0.0",
+              "upper": "2.0.0",
+              "count": 1,
+              "items": [
+                {
+                  "@id": "https://packmoat.example.com/v3/u/contoso/reg/fabrikam.json/1.0.0.json",
+                  "catalogEntry": "https://packmoat.example.com/v3/u/contoso/_apis/packaging/f/nuget/commitLog/100a"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a leaf whose version cannot be read is removed (fail closed)",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "items": [
+            {
+              "lower": "1.0.0",
+              "upper": "1.0.0",
+              "count": 2,
+              "items": [
+                {
+                  "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/1.0.0.json",
+                  "catalogEntry": {
+                    "version": "1.0.0"
+                  },
+                  "packageContent": "https://upstream.example.com/contoso/flat2/fabrikam.json/1.0.0/fabrikam.json.1.0.0.nupkg"
+                },
+                {
+                  "packageContent": "https://upstream.example.com/contoso/flat2/mystery.nupkg"
+                }
+              ]
+            }
+          ]
+        },
+        "verdicts": {
+          "1.0.0": "waiver",
+          "": "waiver"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "lower": "1.0.0",
+              "upper": "1.0.0",
+              "count": 1,
+              "items": [
+                {
+                  "@id": "https://packmoat.example.com/v3/u/contoso/reg/fabrikam.json/1.0.0.json",
+                  "catalogEntry": {
+                    "version": "1.0.0"
+                  },
+                  "packageContent": "https://packmoat.example.com/v3/u/contoso/flat2/fabrikam.json/1.0.0/fabrikam.json.1.0.0.nupkg"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "note": "The empty version is allowed here, so the leaf goes only because its version cannot be read, not for want of a verdict."
+    },
+    {
+      "name": "a leaf with no verdict is removed (fail closed)",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/page/1.0.0/2.0.0.json",
+          "count": 2,
+          "lower": "1.0.0",
+          "upper": "2.0.0",
+          "items": [
+            {
+              "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/1.0.0.json",
+              "catalogEntry": {
+                "version": "1.0.0"
+              },
+              "packageContent": "https://upstream.example.com/contoso/flat2/fabrikam.json/1.0.0/fabrikam.json.1.0.0.nupkg"
+            },
+            {
+              "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/2.0.0.json",
+              "catalogEntry": {
+                "version": "2.0.0"
+              },
+              "packageContent": "https://upstream.example.com/contoso/flat2/fabrikam.json/2.0.0/fabrikam.json.2.0.0.nupkg"
+            }
+          ]
+        },
+        "verdicts": {
+          "1.0.0": "cooldown_elapsed"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "@id": "https://packmoat.example.com/v3/u/contoso/reg/fabrikam.json/page/1.0.0/2.0.0.json",
+          "count": 1,
+          "lower": "1.0.0",
+          "upper": "2.0.0",
+          "items": [
+            {
+              "@id": "https://packmoat.example.com/v3/u/contoso/reg/fabrikam.json/1.0.0.json",
+              "catalogEntry": {
+                "version": "1.0.0"
+              },
+              "packageContent": "https://packmoat.example.com/v3/u/contoso/flat2/fabrikam.json/1.0.0/fabrikam.json.1.0.0.nupkg"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a failed date source makes the registration a 503, never a shorter list",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/page/1.0.0/2.0.0.json",
+          "count": 2,
+          "lower": "1.0.0",
+          "upper": "2.0.0",
+          "items": [
+            {
+              "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/1.0.0.json",
+              "catalogEntry": {
+                "version": "1.0.0"
+              },
+              "packageContent": "https://upstream.example.com/contoso/flat2/fabrikam.json/1.0.0/fabrikam.json.1.0.0.nupkg"
+            },
+            {
+              "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/2.0.0.json",
+              "catalogEntry": {
+                "version": "2.0.0"
+              },
+              "packageContent": "https://upstream.example.com/contoso/flat2/fabrikam.json/2.0.0/fabrikam.json.2.0.0.nupkg"
+            }
+          ]
+        },
+        "verdicts": {
+          "1.0.0": "cooldown_elapsed",
+          "2.0.0": "date_source_unavailable"
+        }
+      },
+      "expected": {
+        "status": 503
+      }
+    },
+    {
+      "name": "the catalog entry's version wins over the version in the leaf's @id",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/page/1.0.0/2.0.0.json",
+          "count": 1,
+          "lower": "1.0.0",
+          "upper": "2.0.0",
+          "items": [
+            {
+              "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/1.0.0.json",
+              "catalogEntry": {
+                "version": "2.0.0"
+              },
+              "packageContent": "https://upstream.example.com/contoso/flat2/fabrikam.json/2.0.0/fabrikam.json.2.0.0.nupkg"
+            }
+          ]
+        },
+        "verdicts": {
+          "1.0.0": "cooldown_elapsed",
+          "2.0.0": "cooldown"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "@id": "https://packmoat.example.com/v3/u/contoso/reg/fabrikam.json/page/1.0.0/2.0.0.json",
+          "count": 0,
+          "lower": "1.0.0",
+          "upper": "2.0.0",
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "an inline page emptied by the filter stays with count 0, and the index count is untouched",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "count": 1,
+          "items": [
+            {
+              "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/page/1.0.0/1.0.0.json",
+              "lower": "1.0.0",
+              "upper": "1.0.0",
+              "items": [
+                {
+                  "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/1.0.0.json",
+                  "catalogEntry": {
+                    "version": "1.0.0"
+                  },
+                  "packageContent": "https://upstream.example.com/contoso/flat2/fabrikam.json/1.0.0/fabrikam.json.1.0.0.nupkg"
+                }
+              ]
+            }
+          ]
+        },
+        "verdicts": {
+          "1.0.0": "cooldown"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "count": 1,
+          "items": [
+            {
+              "@id": "https://packmoat.example.com/v3/u/contoso/reg/fabrikam.json/page/1.0.0/1.0.0.json",
+              "lower": "1.0.0",
+              "upper": "1.0.0",
+              "items": [],
+              "count": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a version read from an @id is unescaped, and .json matches in any case",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "items": [
+            {
+              "lower": "1.0.0",
+              "upper": "2.0.0",
+              "count": 2,
+              "items": [
+                {
+                  "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/1.0.0-beta%2B1.json",
+                  "catalogEntry": "https://upstream.example.com/contoso/_apis/packaging/f/nuget/commitLog/1a"
+                },
+                {
+                  "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/2.0.0.JSON",
+                  "catalogEntry": "https://upstream.example.com/contoso/_apis/packaging/f/nuget/commitLog/1a"
+                }
+              ]
+            }
+          ]
+        },
+        "verdicts": {
+          "1.0.0-beta+1": "waiver",
+          "2.0.0": "cooldown_elapsed"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "items": [
+            {
+              "lower": "1.0.0",
+              "upper": "2.0.0",
+              "count": 2,
+              "items": [
+                {
+                  "@id": "https://packmoat.example.com/v3/u/contoso/reg/fabrikam.json/1.0.0-beta%2B1.json",
+                  "catalogEntry": "https://packmoat.example.com/v3/u/contoso/_apis/packaging/f/nuget/commitLog/1a"
+                },
+                {
+                  "@id": "https://packmoat.example.com/v3/u/contoso/reg/fabrikam.json/2.0.0.JSON",
+                  "catalogEntry": "https://packmoat.example.com/v3/u/contoso/_apis/packaging/f/nuget/commitLog/1a"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "verdicts for versions not in the body change nothing",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "count": 1,
+          "items": [
+            {
+              "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/1.0.0.json",
+              "catalogEntry": {
+                "version": "1.0.0"
+              },
+              "packageContent": "https://upstream.example.com/contoso/flat2/fabrikam.json/1.0.0/fabrikam.json.1.0.0.nupkg"
+            }
+          ]
+        },
+        "verdicts": {
+          "1.0.0": "cooldown_elapsed",
+          "9.9.9": "date_source_unavailable"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "count": 1,
+          "items": [
+            {
+              "@id": "https://packmoat.example.com/v3/u/contoso/reg/fabrikam.json/1.0.0.json",
+              "catalogEntry": {
+                "version": "1.0.0"
+              },
+              "packageContent": "https://packmoat.example.com/v3/u/contoso/flat2/fabrikam.json/1.0.0/fabrikam.json.1.0.0.nupkg"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a registration that is not a JSON object is a 502",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": [
+          {
+            "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/1.0.0.json",
+            "catalogEntry": {
+              "version": "1.0.0"
+            },
+            "packageContent": "https://upstream.example.com/contoso/flat2/fabrikam.json/1.0.0/fabrikam.json.1.0.0.nupkg"
+          }
+        ],
+        "verdicts": {
+          "1.0.0": "cooldown_elapsed"
+        }
+      },
+      "expected": {
+        "status": 502
+      }
+    },
+    {
+      "name": "other properties of a registration stay",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "count": 1,
+          "items": [
+            {
+              "@id": "https://upstream.example.com/contoso/reg/fabrikam.json/1.0.0.json",
+              "catalogEntry": {
+                "version": "1.0.0"
+              },
+              "packageContent": "https://upstream.example.com/contoso/flat2/fabrikam.json/1.0.0/fabrikam.json.1.0.0.nupkg"
+            }
+          ],
+          "unused": true
+        },
+        "verdicts": {
+          "1.0.0": "cooldown_elapsed"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "count": 1,
+          "items": [
+            {
+              "@id": "https://packmoat.example.com/v3/u/contoso/reg/fabrikam.json/1.0.0.json",
+              "catalogEntry": {
+                "version": "1.0.0"
+              },
+              "packageContent": "https://packmoat.example.com/v3/u/contoso/flat2/fabrikam.json/1.0.0/fabrikam.json.1.0.0.nupkg"
+            }
+          ],
+          "unused": true
+        }
+      }
+    }
+  ]
+}

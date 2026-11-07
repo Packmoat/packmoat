@@ -1,0 +1,559 @@
+{
+  "description": "The token check on a feed request: the Authorization header, the tokens and tenants the store holds, and whether the store answers. Defaults: a tenant is active and its serving gate serves; a token is not revoked and never expires; the store is available.",
+  "cases": [
+    {
+      "name": "a bearer token authenticates to its tenant",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Bearer pmt_example_contoso_ci",
+        "tenants": [
+          {
+            "id": "contoso"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso"
+          }
+        ]
+      },
+      "expected": {
+        "status": 200,
+        "reason": "authenticated",
+        "tenant": "contoso"
+      }
+    },
+    {
+      "name": "the token as a Basic password authenticates, whatever the user name",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Basic cGFja21vYXQ6cG10X2V4YW1wbGVfY29udG9zb19jaQ==",
+        "tenants": [
+          {
+            "id": "contoso"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso"
+          }
+        ]
+      },
+      "expected": {
+        "status": 200,
+        "reason": "authenticated",
+        "tenant": "contoso"
+      }
+    },
+    {
+      "name": "Basic credentials with no colon are the token itself",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Basic cG10X2V4YW1wbGVfY29udG9zb19jaQ==",
+        "tenants": [
+          {
+            "id": "contoso"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso"
+          }
+        ]
+      },
+      "expected": {
+        "status": 200,
+        "reason": "authenticated",
+        "tenant": "contoso"
+      }
+    },
+    {
+      "name": "the scheme name matches in any case",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "bearer pmt_example_contoso_ci",
+        "tenants": [
+          {
+            "id": "contoso"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso"
+          }
+        ]
+      },
+      "expected": {
+        "status": 200,
+        "reason": "authenticated",
+        "tenant": "contoso"
+      }
+    },
+    {
+      "name": "the tenant is the token's own, among several",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Bearer pmt_example_northwind_dev",
+        "tenants": [
+          {
+            "id": "contoso"
+          },
+          {
+            "id": "northwind"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso"
+          },
+          {
+            "token": "pmt_example_northwind_dev",
+            "tenant": "northwind"
+          }
+        ]
+      },
+      "expected": {
+        "status": 200,
+        "reason": "authenticated",
+        "tenant": "northwind"
+      }
+    },
+    {
+      "name": "no Authorization header is challenged and not counted as a guess",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": null,
+        "tenants": [
+          {
+            "id": "contoso"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso"
+          }
+        ]
+      },
+      "expected": {
+        "status": 401,
+        "reason": "no_credentials",
+        "challenge": "Basic realm=\"Packmoat\""
+      }
+    },
+    {
+      "name": "Basic credentials with an empty password carry no token",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Basic cGFja21vYXQ6",
+        "tenants": [
+          {
+            "id": "contoso"
+          }
+        ]
+      },
+      "expected": {
+        "status": 401,
+        "reason": "no_credentials",
+        "challenge": "Basic realm=\"Packmoat\""
+      }
+    },
+    {
+      "name": "Basic credentials that are not base64 carry no token",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Basic not-base64!",
+        "tenants": [
+          {
+            "id": "contoso"
+          }
+        ]
+      },
+      "expected": {
+        "status": 401,
+        "reason": "no_credentials",
+        "challenge": "Basic realm=\"Packmoat\""
+      }
+    },
+    {
+      "name": "another scheme carries no token",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Token pmt_example_contoso_ci",
+        "tenants": [
+          {
+            "id": "contoso"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso"
+          }
+        ]
+      },
+      "expected": {
+        "status": 401,
+        "reason": "no_credentials",
+        "challenge": "Basic realm=\"Packmoat\""
+      }
+    },
+    {
+      "name": "an unknown token is rejected and counted as a guess",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Bearer pmt_example_unknown",
+        "tenants": [
+          {
+            "id": "contoso"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso"
+          }
+        ]
+      },
+      "expected": {
+        "status": 401,
+        "reason": "token_rejected",
+        "challenge": "Basic realm=\"Packmoat\""
+      }
+    },
+    {
+      "name": "a token differing only in case is a different token",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Bearer PMT_EXAMPLE_CONTOSO_CI",
+        "tenants": [
+          {
+            "id": "contoso"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso"
+          }
+        ]
+      },
+      "expected": {
+        "status": 401,
+        "reason": "token_rejected",
+        "challenge": "Basic realm=\"Packmoat\""
+      }
+    },
+    {
+      "name": "a revoked token is rejected",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Bearer pmt_example_contoso_ci",
+        "tenants": [
+          {
+            "id": "contoso"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso",
+            "revoked": true
+          }
+        ]
+      },
+      "expected": {
+        "status": 401,
+        "reason": "token_rejected",
+        "challenge": "Basic realm=\"Packmoat\""
+      }
+    },
+    {
+      "name": "a token is rejected from the exact instant it expires",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Bearer pmt_example_contoso_ci",
+        "tenants": [
+          {
+            "id": "contoso"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso",
+            "expiresAt": "2026-10-10T12:00:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "status": 401,
+        "reason": "token_rejected",
+        "challenge": "Basic realm=\"Packmoat\""
+      }
+    },
+    {
+      "name": "a token one second before it expires authenticates",
+      "now": "2026-10-10T11:59:59Z",
+      "input": {
+        "authorization": "Bearer pmt_example_contoso_ci",
+        "tenants": [
+          {
+            "id": "contoso"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso",
+            "expiresAt": "2026-10-10T12:00:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "status": 200,
+        "reason": "authenticated",
+        "tenant": "contoso"
+      }
+    },
+    {
+      "name": "a suspended tenant's token is rejected",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Bearer pmt_example_contoso_ci",
+        "tenants": [
+          {
+            "id": "contoso",
+            "active": false
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso"
+          }
+        ]
+      },
+      "expected": {
+        "status": 401,
+        "reason": "token_rejected",
+        "challenge": "Basic realm=\"Packmoat\""
+      }
+    },
+    {
+      "name": "a token is rejected when the serving gate refuses its tenant",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Bearer pmt_example_contoso_ci",
+        "tenants": [
+          {
+            "id": "contoso",
+            "gate": "refuse"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso"
+          }
+        ]
+      },
+      "expected": {
+        "status": 401,
+        "reason": "token_rejected",
+        "challenge": "Basic realm=\"Packmoat\""
+      }
+    },
+    {
+      "name": "a serving gate that fails answers 503, never serves (fail closed)",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Bearer pmt_example_contoso_ci",
+        "tenants": [
+          {
+            "id": "contoso",
+            "gate": "fail"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso"
+          }
+        ]
+      },
+      "expected": {
+        "status": 503,
+        "reason": "unavailable"
+      }
+    },
+    {
+      "name": "a token store that fails answers 503, never serves (fail closed)",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Bearer pmt_example_contoso_ci",
+        "tenants": [
+          {
+            "id": "contoso"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso"
+          }
+        ],
+        "store": "unavailable"
+      },
+      "expected": {
+        "status": 503,
+        "reason": "unavailable"
+      }
+    },
+    {
+      "name": "a Basic password is everything after the first colon, colons included",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Basic cGFja21vYXQ6cG10X2V4YW1wbGVfY29sb246cGFydA==",
+        "tenants": [
+          {
+            "id": "contoso"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_colon:part",
+            "tenant": "contoso"
+          }
+        ]
+      },
+      "expected": {
+        "status": 200,
+        "reason": "authenticated",
+        "tenant": "contoso"
+      }
+    },
+    {
+      "name": "a Basic password keeps its surrounding spaces, so it does not match the token",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Basic cGFja21vYXQ6IHBtdF9leGFtcGxlX2NvbnRvc29fY2kg",
+        "tenants": [
+          {
+            "id": "contoso"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso"
+          }
+        ]
+      },
+      "expected": {
+        "status": 401,
+        "reason": "token_rejected",
+        "challenge": "Basic realm=\"Packmoat\""
+      }
+    },
+    {
+      "name": "a Bearer token is trimmed",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Bearer   pmt_example_contoso_ci  ",
+        "tenants": [
+          {
+            "id": "contoso"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso"
+          }
+        ]
+      },
+      "expected": {
+        "status": 200,
+        "reason": "authenticated",
+        "tenant": "contoso"
+      }
+    },
+    {
+      "name": "unpadded base64 in Basic carries no token",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Basic cGFja21vYXQ6cG10X2V4YW1wbGVfY29udG9zb19jaQ",
+        "tenants": [
+          {
+            "id": "contoso"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso"
+          }
+        ]
+      },
+      "expected": {
+        "status": 401,
+        "reason": "no_credentials",
+        "challenge": "Basic realm=\"Packmoat\""
+      }
+    },
+    {
+      "name": "Basic credentials that are not UTF-8 are decoded with replacement characters and match no token",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Basic cGFja21vYXQ6cG10X2V4YW1wbGVf/2NvbnRvc29fY2k=",
+        "tenants": [
+          {
+            "id": "contoso"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso"
+          }
+        ]
+      },
+      "expected": {
+        "status": 401,
+        "reason": "token_rejected",
+        "challenge": "Basic realm=\"Packmoat\""
+      }
+    },
+    {
+      "name": "a suspended tenant is rejected before its serving gate is asked",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "authorization": "Bearer pmt_example_contoso_ci",
+        "tenants": [
+          {
+            "id": "contoso",
+            "active": false,
+            "gate": "fail"
+          }
+        ],
+        "tokens": [
+          {
+            "token": "pmt_example_contoso_ci",
+            "tenant": "contoso"
+          }
+        ]
+      },
+      "expected": {
+        "status": 401,
+        "reason": "token_rejected",
+        "challenge": "Basic realm=\"Packmoat\""
+      }
+    }
+  ]
+}

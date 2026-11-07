@@ -1,0 +1,8 @@
+[Unit]
+Description=Packmoat encrypted off-box backup
+After=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/packmoat/backup.env
+ExecStart=/opt/packmoat/deploy/backup.sh

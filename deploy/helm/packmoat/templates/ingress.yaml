@@ -1,0 +1,35 @@
+{{- if .Values.ingress.enabled }}
+{{- $service := include "packmoat.fullname" . }}
+{{- $hosts := concat .Values.hosts (splitList " " (include "packmoat.siteHosts" .) | compact) }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $service }}
+  labels:
+    {{- include "packmoat.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range $hosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $service | quote }}
+                port:
+                  name: http
+    {{- end }}
+{{- end }}

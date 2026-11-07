@@ -1,0 +1,179 @@
+{
+  "description": "What an upstream path asks for, decided on the path alone (case-insensitively, after unescaping). Checked in this order: a flat2 segment, then a registrations* segment, then .../v3/index.json, then the catalog shape; anything else is unknown and refused.",
+  "cases": [
+    {
+      "name": "the feed's service index",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "path": "/contoso/project/_packaging/feed/nuget/v3/index.json"
+      },
+      "expected": {
+        "kind": "service_index"
+      }
+    },
+    {
+      "name": "a version list",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "path": "/contoso/project/_packaging/feed/nuget/v3/flat2/fabrikam.json/index.json"
+      },
+      "expected": {
+        "kind": "flat_container_versions",
+        "packageId": "fabrikam.json"
+      }
+    },
+    {
+      "name": "flat2 is recognised before the service index, wherever it is",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "path": "/contoso/project/_packaging/feed/nuget/v3/flat2/v3/index.json"
+      },
+      "expected": {
+        "kind": "flat_container_versions",
+        "packageId": "v3"
+      }
+    },
+    {
+      "name": "a package file of the version in the path",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "path": "/contoso/project/_packaging/feed/nuget/v3/flat2/fabrikam.json/4.21.0/fabrikam.json.4.21.0.nupkg"
+      },
+      "expected": {
+        "kind": "flat_container_content",
+        "packageId": "fabrikam.json",
+        "version": "4.21.0"
+      }
+    },
+    {
+      "name": "the nuspec of the version in the path",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "path": "/contoso/project/_packaging/feed/nuget/v3/flat2/fabrikam.json/4.21.0/fabrikam.json.nuspec"
+      },
+      "expected": {
+        "kind": "flat_container_content",
+        "packageId": "fabrikam.json",
+        "version": "4.21.0"
+      }
+    },
+    {
+      "name": "a package file whose version is spelled differently but normalises the same",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "path": "/contoso/project/_packaging/feed/nuget/v3/flat2/fabrikam.json/4.21/fabrikam.json.4.21.0.0.nupkg"
+      },
+      "expected": {
+        "kind": "flat_container_content",
+        "packageId": "fabrikam.json",
+        "version": "4.21"
+      }
+    },
+    {
+      "name": "ids and versions are lower-cased and unescaped",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "path": "/contoso/project/_packaging/feed/nuget/v3/flat2/Fabrikam.Json/13.0.3-BETA%2B1/Fabrikam.Json.13.0.3-BETA%2B1.nupkg"
+      },
+      "expected": {
+        "kind": "flat_container_content",
+        "packageId": "fabrikam.json",
+        "version": "13.0.3-beta+1"
+      }
+    },
+    {
+      "name": "another version's package file is unknown (fail closed)",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "path": "/contoso/project/_packaging/feed/nuget/v3/flat2/fabrikam.json/4.21.0/fabrikam.json.4.22.0.nupkg"
+      },
+      "expected": {
+        "kind": "unknown"
+      }
+    },
+    {
+      "name": "another package's file is unknown (fail closed)",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "path": "/contoso/project/_packaging/feed/nuget/v3/flat2/fabrikam.json/4.21.0/northwind.data.4.21.0.nupkg"
+      },
+      "expected": {
+        "kind": "unknown"
+      }
+    },
+    {
+      "name": "a registration index",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "path": "/contoso/project/_packaging/feed/nuget/v3/registrations2/fabrikam.json/index.json"
+      },
+      "expected": {
+        "kind": "registration_index",
+        "packageId": "fabrikam.json"
+      }
+    },
+    {
+      "name": "a registration page",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "path": "/contoso/project/_packaging/feed/nuget/v3/registrations2-semver2/fabrikam.json/page/1.0.0/2.0.0.json"
+      },
+      "expected": {
+        "kind": "registration_page",
+        "packageId": "fabrikam.json"
+      }
+    },
+    {
+      "name": "a registration leaf",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "path": "/contoso/project/_packaging/feed/nuget/v3/registrations2/fabrikam.json/4.21.0.json"
+      },
+      "expected": {
+        "kind": "registration_leaf",
+        "packageId": "fabrikam.json",
+        "version": "4.21.0"
+      }
+    },
+    {
+      "name": "a catalog entry in the exact shape",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "path": "/contoso/project/_apis/packaging/feed0001/nuget/commitLog/c0de0001"
+      },
+      "expected": {
+        "kind": "catalog_entry"
+      }
+    },
+    {
+      "name": "a catalog entry with anything after the id is unknown",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "path": "/contoso/project/_apis/packaging/feed0001/nuget/commitLog/c0de0001/extra"
+      },
+      "expected": {
+        "kind": "unknown"
+      }
+    },
+    {
+      "name": "search is unknown (fail closed)",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "path": "/contoso/project/_packaging/feed/nuget/v3/query2"
+      },
+      "expected": {
+        "kind": "unknown"
+      }
+    },
+    {
+      "name": "any other path is unknown (fail closed)",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "path": "/contoso/something/else"
+      },
+      "expected": {
+        "kind": "unknown"
+      }
+    }
+  ]
+}

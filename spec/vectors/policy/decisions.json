@@ -1,0 +1,345 @@
+{
+  "description": "One decision about one package version: the rules (internal prefixes, then waivers, then the cooldown) given the tenant's policy, the time and the publish dates the date source returns. publishDates null means the date source failed.",
+  "cases": [
+    {
+      "name": "a version younger than the cooldown is hidden",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14 },
+        "package": { "id": "Fabrikam.Json", "version": "4.21.0" },
+        "publishDates": { "4.21.0": "2026-09-30T12:00:00Z" }
+      },
+      "expected": { "decision": "hide", "reason": "cooldown", "cooldownDaysApplied": 14, "publishedAt": "2026-09-30T12:00:00Z" }
+    },
+    {
+      "name": "a version older than the cooldown is allowed",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14 },
+        "package": { "id": "Fabrikam.Json", "version": "4.20.72" },
+        "publishDates": { "4.20.72": "2025-09-05T12:00:00Z" }
+      },
+      "expected": { "decision": "allow", "reason": "cooldown_elapsed", "cooldownDaysApplied": 14, "publishedAt": "2025-09-05T12:00:00Z" }
+    },
+    {
+      "name": "a version exactly as old as the cooldown is allowed",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14 },
+        "package": { "id": "Fabrikam.Json", "version": "1.0.0" },
+        "publishDates": { "1.0.0": "2026-09-26T12:00:00Z" }
+      },
+      "expected": { "decision": "allow", "reason": "cooldown_elapsed", "cooldownDaysApplied": 14, "publishedAt": "2026-09-26T12:00:00Z" }
+    },
+    {
+      "name": "a version one second younger than the cooldown is hidden",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14 },
+        "package": { "id": "Fabrikam.Json", "version": "1.0.0" },
+        "publishDates": { "1.0.0": "2026-09-26T12:00:01Z" }
+      },
+      "expected": { "decision": "hide", "reason": "cooldown", "cooldownDaysApplied": 14, "publishedAt": "2026-09-26T12:00:01Z" }
+    },
+    {
+      "name": "the same version is hidden on day 10 of a 14-day cooldown",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14 },
+        "package": { "id": "Fabrikam.Json", "version": "1.0.0" },
+        "publishDates": { "1.0.0": "2026-09-30T12:00:00Z" }
+      },
+      "expected": { "decision": "hide", "reason": "cooldown", "cooldownDaysApplied": 14, "publishedAt": "2026-09-30T12:00:00Z" }
+    },
+    {
+      "name": "the same version is allowed on day 15 of a 14-day cooldown",
+      "now": "2026-10-15T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14 },
+        "package": { "id": "Fabrikam.Json", "version": "1.0.0" },
+        "publishDates": { "1.0.0": "2026-09-30T12:00:00Z" }
+      },
+      "expected": { "decision": "allow", "reason": "cooldown_elapsed", "cooldownDaysApplied": 14, "publishedAt": "2026-09-30T12:00:00Z" }
+    },
+    {
+      "name": "a publish date in the future counts as young",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14 },
+        "package": { "id": "Fabrikam.Json", "version": "1.0.0" },
+        "publishDates": { "1.0.0": "2026-10-13T12:00:00Z" }
+      },
+      "expected": { "decision": "hide", "reason": "cooldown", "cooldownDaysApplied": 14, "publishedAt": "2026-10-13T12:00:00Z" }
+    },
+    {
+      "name": "a prerelease follows the same cooldown",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14 },
+        "package": { "id": "Fabrikam.Json", "version": "2.0.0-beta.1" },
+        "publishDates": { "2.0.0-beta.1": "2026-10-08T12:00:00Z" }
+      },
+      "expected": { "decision": "hide", "reason": "cooldown", "cooldownDaysApplied": 14, "publishedAt": "2026-10-08T12:00:00Z" }
+    },
+    {
+      "name": "a version with no publish date is hidden (fail closed)",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14 },
+        "package": { "id": "Fabrikam.Json", "version": "1.0.0" },
+        "publishDates": {}
+      },
+      "expected": { "decision": "hide", "reason": "date_unknown", "cooldownDaysApplied": 14 }
+    },
+    {
+      "name": "a failed date source hides the version and says so (fail closed)",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14 },
+        "package": { "id": "Fabrikam.Json", "version": "1.0.0" },
+        "publishDates": null
+      },
+      "expected": { "decision": "hide", "reason": "date_source_unavailable" }
+    },
+    {
+      "name": "the 1900 placeholder date decides as old and is reported as given",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14 },
+        "package": { "id": "Fabrikam.Json", "version": "1.0.0" },
+        "publishDates": { "1.0.0": "1900-01-01T00:00:00Z" }
+      },
+      "expected": { "decision": "allow", "reason": "cooldown_elapsed", "cooldownDaysApplied": 14, "publishedAt": "1900-01-01T00:00:00Z" }
+    },
+    {
+      "name": "a zero cooldown allows a version with no date, without asking for dates",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 0 },
+        "package": { "id": "Fabrikam.Json", "version": "1.0.0" },
+        "publishDates": null
+      },
+      "expected": { "decision": "allow", "reason": "cooldown_elapsed", "cooldownDaysApplied": 0 }
+    },
+    {
+      "name": "a shorter package override replaces the tenant cooldown",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14, "packageOverrides": [ { "packageId": "Fabrikam.Json", "cooldownDays": 3 } ] },
+        "package": { "id": "fabrikam.json", "version": "4.21.0" },
+        "publishDates": { "4.21.0": "2026-09-30T12:00:00Z" }
+      },
+      "expected": { "decision": "allow", "reason": "cooldown_elapsed", "cooldownDaysApplied": 3, "publishedAt": "2026-09-30T12:00:00Z" }
+    },
+    {
+      "name": "a longer package override replaces the tenant cooldown",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14, "packageOverrides": [ { "packageId": "Fabrikam.Json", "cooldownDays": 60 } ] },
+        "package": { "id": "Fabrikam.Json", "version": "4.20.72" },
+        "publishDates": { "4.20.72": "2026-09-10T12:00:00Z" }
+      },
+      "expected": { "decision": "hide", "reason": "cooldown", "cooldownDaysApplied": 60, "publishedAt": "2026-09-10T12:00:00Z" }
+    },
+    {
+      "name": "a zero package override allows a version with no date",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14, "packageOverrides": [ { "packageId": "Fabrikam.Json", "cooldownDays": 0 } ] },
+        "package": { "id": "Fabrikam.Json", "version": "9.9.9" },
+        "publishDates": {}
+      },
+      "expected": { "decision": "allow", "reason": "cooldown_elapsed", "cooldownDaysApplied": 0 }
+    },
+    {
+      "name": "an override for another package does not apply",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14, "packageOverrides": [ { "packageId": "Northwind.Data", "cooldownDays": 0 } ] },
+        "package": { "id": "Fabrikam.Json", "version": "4.21.0" },
+        "publishDates": { "4.21.0": "2026-10-09T12:00:00Z" }
+      },
+      "expected": { "decision": "hide", "reason": "cooldown", "cooldownDaysApplied": 14, "publishedAt": "2026-10-09T12:00:00Z" }
+    },
+    {
+      "name": "a waiver allows a young version and names itself",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14, "waivers": [ { "id": "w1", "packageId": "Fabrikam.Json", "version": "4.21.0", "expiresAt": "2026-10-11T12:00:00Z" } ] },
+        "package": { "id": "fabrikam.json", "version": "4.21.0" },
+        "publishDates": { "4.21.0": "2026-10-09T12:00:00Z" }
+      },
+      "expected": { "decision": "allow", "reason": "waiver", "waiverId": "w1" }
+    },
+    {
+      "name": "a waiver matches the version however it is written",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14, "waivers": [ { "id": "w1", "packageId": "Fabrikam.Json", "version": "4.21", "expiresAt": "2026-10-11T12:00:00Z" } ] },
+        "package": { "id": "Fabrikam.Json", "version": "4.21.0.0" },
+        "publishDates": { "4.21.0": "2026-10-09T12:00:00Z" }
+      },
+      "expected": { "decision": "allow", "reason": "waiver", "waiverId": "w1" }
+    },
+    {
+      "name": "a waiver for another version does not apply",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14, "waivers": [ { "id": "w1", "packageId": "Fabrikam.Json", "version": "4.21.0", "expiresAt": "2026-10-11T12:00:00Z" } ] },
+        "package": { "id": "Fabrikam.Json", "version": "4.21.1" },
+        "publishDates": { "4.21.1": "2026-10-09T12:00:00Z" }
+      },
+      "expected": { "decision": "hide", "reason": "cooldown", "cooldownDaysApplied": 14, "publishedAt": "2026-10-09T12:00:00Z" }
+    },
+    {
+      "name": "a wildcard waiver covers every version of its package",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14, "waivers": [ { "id": "w1", "packageId": "Fabrikam.Json", "version": "*", "expiresAt": "2026-10-11T12:00:00Z" } ] },
+        "package": { "id": "Fabrikam.Json", "version": "5.0.0" },
+        "publishDates": { "5.0.0": "2026-10-10T09:36:00Z" }
+      },
+      "expected": { "decision": "allow", "reason": "waiver", "waiverId": "w1" }
+    },
+    {
+      "name": "a wildcard waiver does not cover another package",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14, "waivers": [ { "id": "w1", "packageId": "Fabrikam.Json", "version": "*", "expiresAt": "2026-10-11T12:00:00Z" } ] },
+        "package": { "id": "Northwind.Data", "version": "5.0.0" },
+        "publishDates": { "5.0.0": "2026-10-10T09:36:00Z" }
+      },
+      "expected": { "decision": "hide", "reason": "cooldown", "cooldownDaysApplied": 14, "publishedAt": "2026-10-10T09:36:00Z" }
+    },
+    {
+      "name": "a waiver applies until just before it expires",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14, "waivers": [ { "id": "w1", "packageId": "Fabrikam.Json", "version": "4.21.0", "expiresAt": "2026-10-10T13:00:00Z" } ] },
+        "package": { "id": "Fabrikam.Json", "version": "4.21.0" },
+        "publishDates": { "4.21.0": "2026-10-09T12:00:00Z" }
+      },
+      "expected": { "decision": "allow", "reason": "waiver", "waiverId": "w1" }
+    },
+    {
+      "name": "a waiver is ignored after it expires",
+      "now": "2026-10-10T14:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14, "waivers": [ { "id": "w1", "packageId": "Fabrikam.Json", "version": "4.21.0", "expiresAt": "2026-10-10T13:00:00Z" } ] },
+        "package": { "id": "Fabrikam.Json", "version": "4.21.0" },
+        "publishDates": { "4.21.0": "2026-10-09T12:00:00Z" }
+      },
+      "expected": { "decision": "hide", "reason": "cooldown", "cooldownDaysApplied": 14, "publishedAt": "2026-10-09T12:00:00Z" }
+    },
+    {
+      "name": "a waiver is ignored at the exact instant it expires",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14, "waivers": [ { "id": "w1", "packageId": "Fabrikam.Json", "version": "4.21.0", "expiresAt": "2026-10-10T12:00:00Z" } ] },
+        "package": { "id": "Fabrikam.Json", "version": "4.21.0" },
+        "publishDates": { "4.21.0": "2026-10-09T12:00:00Z" }
+      },
+      "expected": { "decision": "hide", "reason": "cooldown", "cooldownDaysApplied": 14, "publishedAt": "2026-10-09T12:00:00Z" }
+    },
+    {
+      "name": "a waiver needs no publish date, so a failed date source does not matter",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14, "waivers": [ { "id": "w1", "packageId": "Fabrikam.Json", "version": "4.21.0", "expiresAt": "2026-10-11T12:00:00Z" } ] },
+        "package": { "id": "Fabrikam.Json", "version": "4.21.0" },
+        "publishDates": null
+      },
+      "expected": { "decision": "allow", "reason": "waiver", "waiverId": "w1" }
+    },
+    {
+      "name": "the first matching waiver in the policy's order is the one reported",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": {
+          "cooldownDays": 14,
+          "waivers": [
+            { "id": "w1", "packageId": "Fabrikam.Json", "version": "*", "expiresAt": "2026-10-11T12:00:00Z" },
+            { "id": "w2", "packageId": "Fabrikam.Json", "version": "4.21.0", "expiresAt": "2026-10-11T12:00:00Z" }
+          ]
+        },
+        "package": { "id": "Fabrikam.Json", "version": "4.21.0" },
+        "publishDates": { "4.21.0": "2026-10-09T12:00:00Z" }
+      },
+      "expected": { "decision": "allow", "reason": "waiver", "waiverId": "w1" }
+    },
+    {
+      "name": "every trailing star of an internal prefix is stripped",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14, "internalPrefixes": [ "Contoso.**" ] },
+        "package": { "id": "Contoso.Core", "version": "1.0.0" },
+        "publishDates": { "1.0.0": "2025-09-05T12:00:00Z" }
+      },
+      "expected": { "decision": "hide", "reason": "internal_namespace" }
+    },
+    {
+      "name": "an internal prefix is never served, even when old",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14, "internalPrefixes": [ "Contoso." ] },
+        "package": { "id": "Contoso.Core", "version": "1.0.0" },
+        "publishDates": { "1.0.0": "2025-09-05T12:00:00Z" }
+      },
+      "expected": { "decision": "hide", "reason": "internal_namespace" }
+    },
+    {
+      "name": "a waiver cannot override an internal prefix",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": {
+          "cooldownDays": 14,
+          "internalPrefixes": [ "Contoso.*" ],
+          "waivers": [ { "id": "w1", "packageId": "Contoso.Core", "version": "*", "expiresAt": "2026-10-11T12:00:00Z" } ]
+        },
+        "package": { "id": "Contoso.Core", "version": "1.0.0" },
+        "publishDates": { "1.0.0": "2026-10-09T12:00:00Z" }
+      },
+      "expected": { "decision": "hide", "reason": "internal_namespace" }
+    },
+    {
+      "name": "an internal prefix matches in any case, and a trailing star is optional",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 0, "internalPrefixes": [ "contoso.*" ] },
+        "package": { "id": "CONTOSO.Utilities", "version": "1.0.0" },
+        "publishDates": { "1.0.0": "2024-04-23T12:00:00Z" }
+      },
+      "expected": { "decision": "hide", "reason": "internal_namespace" }
+    },
+    {
+      "name": "an internal prefix needs no publish date, so a failed date source still hides it as internal",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14, "internalPrefixes": [ "Contoso." ] },
+        "package": { "id": "Contoso.Core", "version": "1.0.0" },
+        "publishDates": null
+      },
+      "expected": { "decision": "hide", "reason": "internal_namespace" }
+    },
+    {
+      "name": "an internal prefix does not hide other packages",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14, "internalPrefixes": [ "Contoso." ] },
+        "package": { "id": "Fabrikam.Json", "version": "13.0.3" },
+        "publishDates": { "13.0.3": "2024-04-23T12:00:00Z" }
+      },
+      "expected": { "decision": "allow", "reason": "cooldown_elapsed", "cooldownDaysApplied": 14, "publishedAt": "2024-04-23T12:00:00Z" }
+    },
+    {
+      "name": "empty and bare-star prefixes are ignored rather than hiding everything",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "policy": { "cooldownDays": 14, "internalPrefixes": [ "", "  ", "*" ] },
+        "package": { "id": "Fabrikam.Json", "version": "13.0.3" },
+        "publishDates": { "13.0.3": "2024-04-23T12:00:00Z" }
+      },
+      "expected": { "decision": "allow", "reason": "cooldown_elapsed", "cooldownDaysApplied": 14, "publishedAt": "2024-04-23T12:00:00Z" }
+    }
+  ]
+}

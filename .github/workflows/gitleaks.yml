@@ -1,0 +1,31 @@
+# Committed secrets (#266): scan every commit with a pinned gitleaks release (checked by sha256), on each pull request and each push to
+# main. The binary, not gitleaks-action: the action needs a paid licence key for an organisation's repositories. Findings are redacted.
+# No secrets, a read-only token, and the checkout keeps no credentials. Every path here is relative to this repository's root.
+name: gitleaks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gitleaks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole history: a secret added in one commit and deleted in the next is still in the repository.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: gitleaks every commit (a pinned release, checked by sha256; findings redacted)
+        run: .github/scripts/gitleaks.sh git .

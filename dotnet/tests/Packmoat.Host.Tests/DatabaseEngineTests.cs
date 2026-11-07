@@ -1,0 +1,121 @@
+using Microsoft.Extensions.DependencyInjection;
+using Packmoat.Host.Modules;
+using Packmoat.Infrastructure;
+
+namespace Packmoat.Host.Tests;
+
+/// <summary>
+/// PACKMOAT_DB_ENGINE (#232 P1): unset (as on the live server) and <c>sqlite</c> compose exactly as before; <c>postgres</c>, which this
+/// build cannot run yet, and any unknown value stop the start with one <c>error:</c> line naming the setting, before anything is written.
+/// </summary>
+[Collection("sqlite-pools")]
+public class DatabaseEngineTests
+{
+    [Theory]   // mutation: the default (unset or empty) is postgres
+    [InlineData(null, DatabaseEngine.Sqlite)]
+    [InlineData("", DatabaseEngine.Sqlite)]
+    [InlineData("sqlite", DatabaseEngine.Sqlite)]
+    [InlineData("postgres", DatabaseEngine.Postgres)]
+    public void Unset_is_sqlite_and_each_engine_is_its_own_word(string? value, DatabaseEngine engine) => Assert.Equal(engine, DatabaseEngines.Parse(value));
+
+    [Theory]   // mutation: an unknown value is taken (as sqlite or as postgres)
+    [InlineData("SQLite")]
+    [InlineData("Postgres")]
+    [InlineData("postgresql")]
+    [InlineData("mysql-xyz")]
+    [InlineData(" sqlite")]
+    [InlineData("sqlite ")]
+    [InlineData("   ")]   // whitespace only is not unset: refused, not read as the default
+    [InlineData("\t")]
+    public void An_unknown_value_is_refused_naming_the_setting_not_the_value(string value)
+    {
+        var ex = Assert.Throws<SettingsException>(() => DatabaseEngines.Parse(value));
+        Assert.Equal("PACKMOAT_DB_ENGINE must be sqlite or postgres.", ex.Message);
+        Assert.Throws<SettingsException>(() => DatabaseEngines.RequireAvailable(value));
+    }
+
+    [Fact]
+    public void Only_sqlite_is_available_in_this_build()
+    {
+        Assert.Equal(DatabaseEngine.Sqlite, DatabaseEngines.RequireAvailable(null));
+        Assert.Equal(DatabaseEngine.Sqlite, DatabaseEngines.RequireAvailable("sqlite"));
+        var ex = Assert.Throws<SettingsException>(() => DatabaseEngines.RequireAvailable("postgres"));
+        Assert.Equal("PACKMOAT_DB_ENGINE=postgres is not available in this build yet.", ex.Message);
+    }
+
+    [Fact]   // the setting is read through the one settings reader, so it can come from a file as every other can
+    public void The_setting_is_read_by_name_through_the_settings_reader()
+    {
+        var reader = new Settings(n => n == DatabaseEngines.Variable + Settings.FileSuffix ? "/run/secrets/engine" : null, _ => "postgres\n");
+        Assert.Equal(DatabaseEngine.Postgres, DatabaseEngines.Parse(reader.Read(DatabaseEngines.Variable)));
+    }
+
+    /// <summary>Notes the engine the core hands the modules.</summary>
+    private sealed class EngineProbe : IPackmoatModule
+    {
+        public DatabaseEngine? Seen;
+        public void ConfigureServices(PackmoatModuleContext context) => Seen = context.Engine;
+        public ModuleSite? ConfigureSite(PackmoatModuleContext context, IReadOnlyCollection<string> takenHosts) => null;
+        public MigrationTrack? Migrations => null;
+    }
+
+    private static void Options(PackmoatOptions o, string dir, string? engine)
+    {
+        o.DatabasePath = Path.Combine(dir, "packmoat.db");
+        o.MasterKeyBase64 = AesGcmSecretProtector.GenerateKeyBase64();
+        o.AllowedHosts = "feeds.example.test";
+        o.DatabaseEngine = engine;
+    }
+
+    private static async Task<(string[] Registrations, DatabaseEngine? Seen)> Compose(string? engine)
+    {
+        var dir = Directory.CreateTempSubdirectory("packmoat-engine-").FullName;
+        try
+        {
+            IServiceCollection? services = null;
+            var probe = new EngineProbe();
+            await using var app = PackmoatApp.Build(["--urls", "http://127.0.0.1:0"], [probe], s => services = s, o => Options(o, dir, engine));
+            var lines = services!.Select(d => $"{d.ServiceType.FullName} {d.Lifetime} {d.ImplementationType?.FullName ?? d.ImplementationInstance?.GetType().FullName ?? d.ImplementationFactory?.Method.ReturnType.FullName}").ToArray();
+            return (lines, probe.Seen);
+        }
+        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch (IOException) { } }
+    }
+
+    [Fact]   // the live server has no PACKMOAT_DB_ENGINE: unset must compose as sqlite does, and the modules are told sqlite
+    public async Task Unset_and_sqlite_compose_the_same_and_the_modules_are_told_sqlite()
+    {
+        var unset = await Compose(null);
+        var sqlite = await Compose("sqlite");
+        Assert.Equal(unset.Registrations, sqlite.Registrations);
+        Assert.Equal(DatabaseEngine.Sqlite, unset.Seen);
+        Assert.Equal(DatabaseEngine.Sqlite, sqlite.Seen);
+    }
+
+    /// <summary>Thrown when the server built, which these tests say it must not.</summary>
+    private sealed class StartedException : Exception;
+
+    [Theory]   // mutations: the server starts on postgres; an unknown value is taken
+    [InlineData("postgres", "error: PACKMOAT_DB_ENGINE=postgres is not available in this build yet.")]
+    [InlineData("mysql-xyz", "error: PACKMOAT_DB_ENGINE must be sqlite or postgres.")]
+    public void Postgres_and_an_unknown_value_stop_the_start_with_one_error_line_before_anything_is_written(string engine, string line)
+    {
+        var dir = Directory.CreateTempSubdirectory("packmoat-engine-bad-").FullName;
+        try
+        {
+            var probe = new EngineProbe();
+            var error = new StringWriter();
+            // A build that succeeds is never run (that would serve until killed): it is disposed and reported as a plain failure.
+            var code = StartupFailure.Run(() =>
+            {
+                var app = PackmoatApp.Build(["--urls", "http://127.0.0.1:0"], [probe], null, o => Options(o, dir, engine));
+                app.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                throw new StartedException();
+            }, error);
+            Assert.Equal(1, code);
+            Assert.Equal(line, error.ToString().TrimEnd());
+            Assert.Null(probe.Seen);   // no module was configured
+            Assert.False(File.Exists(Path.Combine(dir, "packmoat.db")));
+        }
+        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch (IOException) { } }
+    }
+}

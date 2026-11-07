@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+tests/
+**/*.md
+*.pem
+*.pfx
+*.key
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+tokens.json

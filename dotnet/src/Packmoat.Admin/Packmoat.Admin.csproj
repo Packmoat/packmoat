@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Packmoat.Application\Packmoat.Application.csproj" />
+    <ProjectReference Include="..\Packmoat.Domain\Packmoat.Domain.csproj" />
+    <ProjectReference Include="..\Packmoat.Infrastructure\Packmoat.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- A library (#197): the entry points are the core's Packmoat.Cli and the hosted Packmoat.Hosted.Admin. -->
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

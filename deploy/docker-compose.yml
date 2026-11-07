@@ -1,0 +1,46 @@
+# One Linux server. Host networking, so Caddy reaches the app on loopback and the app trusts only loopback for X-Forwarded-*.
+# Install this folder as /opt/packmoat/deploy (restore.sh looks for this file there). See docs/self-hosting.md.
+# Secrets live in /etc/packmoat/packmoat.env (root-only, mode 600) and are never in this repository.
+# Caddy reads a DIFFERENT file, /etc/packmoat/caddy.env, holding only host names and ACME_EMAIL: it must never see the master key.
+services:
+  packmoat:
+    # The image built from dotnet/Dockerfile:  docker build -t packmoat:local dotnet
+    # To run another tag, set PACKMOAT_IMAGE when you call docker compose.
+    image: ${PACKMOAT_IMAGE:-packmoat:local}
+    container_name: packmoat
+    # An init as the first process: the server is not PID 1, so signals and an abort end it as they would anywhere else (#240).
+    init: true
+    network_mode: host
+    restart: unless-stopped
+    env_file: /etc/packmoat/packmoat.env
+    volumes:
+      - /var/lib/packmoat:/data
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    user: "10001:10001"
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  caddy:
+    image: caddy:2@sha256:f2a1290d0463aad60660d4ec134943f183ee2a5f6c3eb7bf32dd984f2f020772
+    container_name: packmoat-caddy
+    network_mode: host
+    restart: unless-stopped
+    env_file: /etc/packmoat/caddy.env
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+volumes:
+  caddy_data:
+  caddy_config:

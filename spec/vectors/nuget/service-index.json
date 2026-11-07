@@ -1,0 +1,218 @@
+{
+  "description": "The feed's service index (v3/index.json). Only the resources a read-only restore needs stay (types starting PackageBaseAddress or RegistrationsBaseUrl), and every upstream URL is pointed back at the proxy.",
+  "cases": [
+    {
+      "name": "only the flat container and registrations stay, pointed at the proxy",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "version": "3.0.0",
+          "resources": [
+            {
+              "@id": "https://upstream.example.com/contoso/_packaging/feed/nuget/v2/",
+              "@type": "PackagePublish/2.0.0"
+            },
+            {
+              "@id": "https://upstream.example.com/contoso/_packaging/feed/nuget/v3/query2/",
+              "@type": "SearchQueryService"
+            },
+            {
+              "@id": "https://upstream.example.com/contoso/_packaging/feed/nuget/v3/flat2/",
+              "@type": "PackageBaseAddress/3.0.0"
+            },
+            {
+              "@id": "https://upstream.example.com/contoso/_packaging/feed/nuget/v3/registrations2/",
+              "@type": "RegistrationsBaseUrl/3.6.0"
+            },
+            {
+              "@id": "https://upstream.example.com/contoso/_packaging/feed/nuget/v3/registrations2/",
+              "@type": "RegistrationsBaseUrl"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "version": "3.0.0",
+          "resources": [
+            {
+              "@id": "https://packmoat.example.com/v3/u/contoso/_packaging/feed/nuget/v3/flat2/",
+              "@type": "PackageBaseAddress/3.0.0"
+            },
+            {
+              "@id": "https://packmoat.example.com/v3/u/contoso/_packaging/feed/nuget/v3/registrations2/",
+              "@type": "RegistrationsBaseUrl/3.6.0"
+            },
+            {
+              "@id": "https://packmoat.example.com/v3/u/contoso/_packaging/feed/nuget/v3/registrations2/",
+              "@type": "RegistrationsBaseUrl"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "other properties stay, other resource types go, and the upstream base matches in any case",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "version": "3.0.0",
+          "@context": {
+            "@vocab": "http://schema.nuget.org/services#"
+          },
+          "resources": [
+            {
+              "@id": "https://upstream.example.com/contoso/_packaging/feed/nuget/v3/query2/",
+              "@type": "SearchAutocompleteService"
+            },
+            {
+              "@id": "https://upstream.example.com/contoso/details/{id}/{version}",
+              "@type": "PackageDetailsUriTemplate/5.1.0"
+            },
+            {
+              "@id": "HTTPS://UPSTREAM.EXAMPLE.COM/contoso/_packaging/feed/nuget/v3/flat2/",
+              "@type": "PackageBaseAddress/3.0.0",
+              "comment": "base address"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "version": "3.0.0",
+          "@context": {
+            "@vocab": "http://schema.nuget.org/services#"
+          },
+          "resources": [
+            {
+              "@id": "https://packmoat.example.com/v3/u/contoso/_packaging/feed/nuget/v3/flat2/",
+              "@type": "PackageBaseAddress/3.0.0",
+              "comment": "base address"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "the @type prefix matches case-sensitively, so a lower-case type is dropped",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "version": "3.0.0",
+          "resources": [
+            {
+              "@id": "https://upstream.example.com/contoso/_packaging/feed/nuget/v3/flat2/",
+              "@type": "packagebaseaddress/3.0.0"
+            },
+            {
+              "@id": "https://upstream.example.com/contoso/_packaging/feed/nuget/v3/registrations2/",
+              "@type": "RegistrationsBaseUrl/3.6.0"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "version": "3.0.0",
+          "resources": [
+            {
+              "@id": "https://packmoat.example.com/v3/u/contoso/_packaging/feed/nuget/v3/registrations2/",
+              "@type": "RegistrationsBaseUrl/3.6.0"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a resource with no @type is dropped",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "version": "3.0.0",
+          "resources": [
+            {
+              "@id": "https://upstream.example.com/contoso/x/"
+            },
+            {
+              "@id": "https://upstream.example.com/contoso/flat2/",
+              "@type": "PackageBaseAddress/3.0.0"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "version": "3.0.0",
+          "resources": [
+            {
+              "@id": "https://packmoat.example.com/v3/u/contoso/flat2/",
+              "@type": "PackageBaseAddress/3.0.0"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a non-string @type is a 502",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "version": "3.0.0",
+          "resources": [
+            {
+              "@id": "https://upstream.example.com/contoso/flat2/",
+              "@type": 3
+            }
+          ]
+        }
+      },
+      "expected": {
+        "status": 502
+      }
+    },
+    {
+      "name": "a service index with no resources is a 502",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "version": "3.0.0"
+        }
+      },
+      "expected": {
+        "status": 502
+      }
+    },
+    {
+      "name": "a service index that is not an object is a 502",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": [
+          {
+            "@type": "PackageBaseAddress/3.0.0"
+          }
+        ]
+      },
+      "expected": {
+        "status": 502
+      }
+    }
+  ]
+}

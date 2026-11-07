@@ -1,0 +1,15 @@
+Packmoat is starting: one copy, its database on {{ if .Values.persistence.enabled }}the claim {{ include "packmoat.claimName" . }}{{ else }}an emptyDir, which is lost whenever the pod goes{{ end }}.
+
+Wait until it is ready:
+  kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ include "packmoat.fullname" . }}
+
+The operator command:
+  kubectl -n {{ .Release.Namespace }} exec deployment/{{ include "packmoat.fullname" . }} -- packmoat-admin tenant list
+{{- if not .Values.ingress.enabled }}
+
+There is no ingress. To try the server from this machine:
+  kubectl -n {{ .Release.Namespace }} port-forward service/{{ include "packmoat.fullname" . }} 8080:{{ .Values.service.port }}
+  curl -H 'Host: localhost' http://127.0.0.1:8080/readyz
+{{- end }}
+
+Backups and upgrades: docs/self-hosting.md, section 10.

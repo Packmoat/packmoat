@@ -1,0 +1,98 @@
+# Packmoat on Kubernetes: one copy of the server. docs/self-hosting.md, section 10, explains each value.
+# Never put the master key, or any other secret, in this file or in --set: the chart refuses one (see existingSecret below).
+
+image:
+  # The core image. Required: ghcr.io/packmoat/packmoat-core (published by this repository), or your own registry's copy.
+  # Run it by digest (image.digest, "sha256:..."), after checking its signature with cosign (docs/self-hosting.md, section 1).
+  repository: ""
+  # Used when digest is empty. Empty: the chart's appVersion.
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# 0 or 1, nothing else: the database is one SQLite file, and only one copy of the server may write it. The chart refuses any other
+# number. Upgrades use Recreate (the old pod stops before the new one starts). What stops two pods sharing the database at any other
+# time (a pod deleted, a node drained, an eviction) is the claim's ReadWriteOncePod access mode: the cluster lets one pod at a time
+# mount it, and a replacement waits until the old pod is gone. 0 stops the server (for a restore).
+replicas: 1
+
+# The feed host names (PACKMOAT_HOSTS). Required. Not the admin or customer site host: set those in env below.
+hosts: []
+
+# The Secret, in the release's namespace, that holds the server's secrets. Required. The chart never makes it: create it yourself, for
+# example with kubectl create secret generic (docs/self-hosting.md, section 10). Its keys are mounted as files, read only, and the server
+# reads each through its _FILE variable, so no secret is ever in the pod's environment.
+existingSecret: ""
+# The key in that Secret for each file. masterKey is required; the others are for the admin and customer sites, and are left out when empty.
+existingSecretKeys:
+  masterKey: master-key
+  adminClientSecret: ""
+  # The customer site's sign-in certificate and its private key, as a PEM file.
+  appCert: ""
+
+# PACKMOAT_TRUSTED_PROXIES: the addresses or networks of whatever forwards requests to the pod: the ingress controller's pods.
+# Separated by spaces. Only these may pass on the client's address and scheme in X-Forwarded-For, -Proto and -Host, so every pod
+# inside these networks can claim any client address. Name the ingress controller's own pod addresses, or a network only they use. A
+# wider range, such as the whole pod network, is safe only with networkPolicy below turned on, so that no other pod can reach the
+# server. Required when ingress.enabled is true. Never 0.0.0.0/0 or ::/0: the server refuses them.
+trustedProxies: ""
+
+# A NetworkPolicy that lets in only the ingress controller's namespace (and, if set, only its pods with these labels), on the server's
+# port. Off by default: it needs a network plugin that enforces NetworkPolicy, and the namespace's name.
+networkPolicy:
+  enabled: false
+  # The ingress controller's namespace, such as ingress-nginx. Required when enabled.
+  ingressNamespace: ""
+  # The ingress controller's pod labels, such as {app.kubernetes.io/name: ingress-nginx}. Empty: every pod in that namespace.
+  ingressPodLabels: {}
+
+# Other settings, by name: PACKMOAT_ADMIN_HOST, PACKMOAT_APP_HOST, PACKMOAT_OPERATOR_NAME and so on (docs/self-hosting.md, section 4).
+# The chart sets PORT, PACKMOAT_DB, PACKMOAT_HOSTS, PACKMOAT_TRUSTED_PROXIES and the secrets itself, and refuses them here, as it refuses
+# any name ending in _FILE.
+env: {}
+#  PACKMOAT_ADMIN_HOST: admin.contoso.example
+#  PACKMOAT_OPERATOR_NAME: Contoso IT
+
+# The port the server listens on inside the pod (PORT). The Service listens on service.port.
+containerPort: 8080
+
+service:
+  type: ClusterIP
+  port: 80
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  # It routes every name in hosts, and PACKMOAT_ADMIN_HOST and PACKMOAT_APP_HOST when env sets them, to the Service.
+  # The certificates, for example: [{secretName: packmoat-tls, hosts: [packages.contoso.example]}]
+  tls: []
+
+persistence:
+  # false: an emptyDir, which loses the database whenever the pod goes. For a quick test only.
+  enabled: true
+  # A claim you made yourself. It must be ReadWriteOncePod, and nothing else (install and upgrade refuse one that is not). Empty: the
+  # chart makes one, named after the release, and keeps it when the release is uninstalled. Never change nameOverride or
+  # fullnameOverride after the install: the chart's claim would get a new name, and the server a new, empty database.
+  existingClaim: ""
+  # The storage class must support ReadWriteOncePod, as CSI drivers do. Empty: the cluster's default class.
+  storageClass: ""
+  size: 5Gi
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+nameOverride: ""
+fullnameOverride: ""

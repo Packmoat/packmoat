@@ -1,0 +1,59 @@
+# A one-off pod that restores a backup into the chart's data claim (docs/self-hosting.md, section 10). Run it only while the release
+# has replicas: 0: the claim is ReadWriteOncePod, so it stays Pending while the server's pod still holds it.
+# Fill in the four placeholders, then apply it:
+#   __IMAGE__   the image the release runs, by digest (helm get values shows it), such as ghcr.io/packmoat/packmoat-core@sha256:...
+#   __CLAIM__   the data claim: <release>-packmoat-data, or the release name plus -data when it holds "packmoat", or your existingClaim
+#   __SECRET__  existingSecret
+#   __KEY__     existingSecretKeys.masterKey (master-key unless you changed it)
+# It checks /data/backups/restore-candidate.db against the master key, then puts it in place of /data/packmoat.db, keeping the old
+# database beside it, and exits.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: packmoat-restore
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  enableServiceLinks: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: restore
+      image: "__IMAGE__"
+      command: [packmoat-admin, restore, /data/backups/restore-candidate.db, --force]
+      env:
+        - name: PACKMOAT_DB
+          value: /data/packmoat.db
+        - name: PACKMOAT_MASTER_KEY_FILE
+          value: /run/secrets/packmoat/master-key
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: tmp
+          mountPath: /tmp
+        - name: secrets
+          mountPath: /run/secrets/packmoat
+          readOnly: true
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: "__CLAIM__"
+    - name: tmp
+      emptyDir: {}
+    - name: secrets
+      secret:
+        secretName: "__SECRET__"
+        defaultMode: 0440
+        items:
+          - key: "__KEY__"
+            path: master-key

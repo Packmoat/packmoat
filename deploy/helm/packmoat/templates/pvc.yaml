@@ -1,0 +1,21 @@
+{{- if and .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "packmoat.claimName" . }}
+  labels:
+    {{- include "packmoat.labels" . | nindent 4 }}
+  annotations:
+    # The database outlives the release: helm uninstall leaves this claim. Delete it yourself, once you have a backup.
+    helm.sh/resource-policy: keep
+spec:
+  # ReadWriteOncePod: one pod at a time, enforced by the cluster. ReadWriteOnce would let a replacement pod on the same node mount
+  # the database while the old pod is still terminating (a pod delete, a drain, an eviction), and SQLite would have two writers.
+  accessModes: [ReadWriteOncePod]
+  {{- with .Values.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size | quote }}
+{{- end }}

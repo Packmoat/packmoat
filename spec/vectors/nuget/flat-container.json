@@ -1,0 +1,148 @@
+{
+  "description": "A flat-container version list (flat2/{id}/index.json) filtered by the verdicts for its versions. Only versions whose verdict allows them stay. A version with no verdict is hidden. Any date_source_unavailable verdict makes the whole answer a 503 (try again).",
+  "cases": [
+    {
+      "name": "hidden versions are dropped and allowed ones kept in order",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "versions": [
+            "1.0.0",
+            "2.0.0",
+            "3.0.0-beta"
+          ]
+        },
+        "verdicts": {
+          "1.0.0": "cooldown_elapsed",
+          "2.0.0": "cooldown",
+          "3.0.0-beta": "waiver"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "versions": [
+            "1.0.0",
+            "3.0.0-beta"
+          ]
+        }
+      }
+    },
+    {
+      "name": "a version with no verdict is hidden (fail closed)",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "versions": [
+            "1.0.0",
+            "2.0.0"
+          ]
+        },
+        "verdicts": {
+          "1.0.0": "cooldown_elapsed"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "versions": [
+            "1.0.0"
+          ]
+        }
+      }
+    },
+    {
+      "name": "every version hidden leaves an empty list",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "versions": [
+            "1.0.0",
+            "2.0.0"
+          ]
+        },
+        "verdicts": {
+          "1.0.0": "internal_namespace",
+          "2.0.0": "date_unknown"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "versions": []
+        }
+      }
+    },
+    {
+      "name": "a failed date source makes the list a 503, never a shorter list",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "versions": [
+            "1.0.0",
+            "2.0.0"
+          ]
+        },
+        "verdicts": {
+          "1.0.0": "cooldown_elapsed",
+          "2.0.0": "date_source_unavailable"
+        }
+      },
+      "expected": {
+        "status": 503
+      }
+    },
+    {
+      "name": "verdicts for versions not in the list change nothing",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "versions": [
+            "1.0.0"
+          ]
+        },
+        "verdicts": {
+          "1.0.0": "cooldown_elapsed",
+          "2.0.0": "cooldown"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body": {
+          "versions": [
+            "1.0.0"
+          ]
+        }
+      }
+    },
+    {
+      "name": "a list whose versions are not strings is a 502",
+      "now": "2026-10-10T12:00:00Z",
+      "input": {
+        "upstreamBase": "https://upstream.example.com/",
+        "proxyBase": "https://packmoat.example.com/v3/u/",
+        "body": {
+          "versions": [
+            1
+          ]
+        },
+        "verdicts": {
+          "1": "cooldown_elapsed"
+        }
+      },
+      "expected": {
+        "status": 502
+      }
+    }
+  ]
+}

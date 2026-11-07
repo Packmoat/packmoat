@@ -1,0 +1,156 @@
+# TLS terminates here. PACKMOAT_HOSTS (space-separated, for example "packages.contoso.example") and ACME_EMAIL come from /etc/packmoat/caddy.env.
+# Each hostname is its own A record in DNS and gets its own certificate by the HTTP-01 challenge, which needs no DNS credential.
+# Caddy obtains and renews the certificate automatically and redirects http to https.
+{
+	# No admin API. With host networking it would listen on the server's 127.0.0.1:2019, where any local process could change the
+	# configuration. So a change to this file takes effect only when the caddy container is restarted.
+	admin off
+	email {$ACME_EMAIL}
+	servers {
+		timeouts {
+			read_header 15s # slow-request protection
+			read_body 15s
+			idle 5m
+		}
+	}
+}
+
+# The feed: the NuGet endpoint that developers and build agents use.
+{$PACKMOAT_HOSTS} {
+	# Only small GETs are ever needed.
+	request_body {
+		max_size 1KB
+	}
+
+	# Compress JSON only; packages are already zipped.
+	encode {
+		zstd
+		gzip
+		match {
+			header Content-Type application/json*
+		}
+	}
+
+	reverse_proxy 127.0.0.1:8080 {
+		flush_interval -1 # stream large downloads, never buffer them
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 60s
+		}
+	}
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+	}
+
+	# Access log without credentials: the Authorization header and cookies are removed before writing.
+	log {
+		output file /data/access.log {
+			roll_size 50MiB
+			roll_keep 5
+		}
+		format filter {
+			wrap json
+			fields {
+				request>headers>Authorization delete
+				request>headers>Cookie delete
+			}
+		}
+	}
+}
+
+# The operator admin site: the SAME app on its OWN hostname (for example admin.contoso.example). One more A record, and Caddy gets its
+# certificate by the same HTTP-01 challenge. PACKMOAT_ADMIN_HOST comes from /etc/packmoat/caddy.env. When it is not set, this block serves
+# the placeholder admin.localhost (a name nobody outside the machine can reach, signed by Caddy's own local CA), and the app has no admin site.
+{$PACKMOAT_ADMIN_HOST:admin.localhost} {
+	# The sign-in forms are a few hundred bytes. The app enforces its own 4 KB limit on this hostname as well.
+	request_body {
+		max_size 8KB
+	}
+
+	reverse_proxy 127.0.0.1:8080 {
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 30s
+		}
+	}
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+	}
+
+	# Own access log. Credentials never reach it: cookies are removed, and so are the sign-in return values in the query string.
+	log {
+		output file /data/admin-access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+		format filter {
+			wrap json
+			fields {
+				request>headers>Authorization delete
+				request>headers>Cookie delete
+				resp_headers>Set-Cookie delete
+				resp_headers>Location delete
+				request>uri query {
+					delete code
+					delete state
+					delete session_state
+					delete id_token
+					delete error_description
+				}
+			}
+		}
+	}
+}
+
+# The customer site: the SAME app on its OWN hostname (for example app.contoso.example), like the admin site.
+# PACKMOAT_APP_HOST comes from /etc/packmoat/caddy.env. When it is not set, this block serves the placeholder app.localhost
+# (unreachable from outside, signed by Caddy's local CA) and the app has no customer site.
+{$PACKMOAT_APP_HOST:app.localhost} {
+	# The sign-in and sign-out forms are a few hundred bytes.
+	request_body {
+		max_size 8KB
+	}
+
+	reverse_proxy 127.0.0.1:8080 {
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 30s
+		}
+	}
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+	}
+
+	# Own access log. Credentials never reach it: cookies are removed, and so are the sign-in return values in the query string.
+	log {
+		output file /data/app-access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+		format filter {
+			wrap json
+			fields {
+				request>headers>Authorization delete
+				request>headers>Cookie delete
+				resp_headers>Set-Cookie delete
+				resp_headers>Location delete
+				request>uri query {
+					delete code
+					delete state
+					delete session_state
+					delete id_token
+					delete error_description
+				}
+			}
+		}
+	}
+}

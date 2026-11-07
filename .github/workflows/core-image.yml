@@ -1,0 +1,118 @@
+# The core image (#266): on a merge to main, build dotnet/Dockerfile for linux/amd64 and linux/arm64, push it to
+# ghcr.io/packmoat/packmoat-core by digest only, smoke-test the pushed amd64 image, SIGN it with cosign keyless (GitHub's OIDC identity
+# for THIS workflow on main), and only then tag it.
+# Nothing is stored in GitHub: the built-in token pushes, and no secret or key is used.
+# The image name is written out: a registry name must be lower case, and the owner of this repository is Packmoat, with a capital P.
+# It is the only workflow here that may write packages or ask for an identity token (CoreWorkflowTests). It never runs on a pull request,
+# and the one guard on its job means a fork, or a run by hand from another branch, publishes nothing.
+name: core-image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-image
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish
+    # Only this repository's main branch is published under the main tag and signed.
+    if: github.repository == 'Packmoat/packmoat' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    env:
+      IMAGE: ghcr.io/packmoat/packmoat-core
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # arm64's runtime stage (adding the user, writing the packmoat-admin wrapper) runs under emulation; .NET builds natively.
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+          cache-image: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Pushed by digest only, with no tag: until it is smoke-tested and signed, nothing names it, so :main never points at an unchecked
+      # or unsigned image. An image that fails below stays untagged in the registry.
+      - name: Build and push by digest (linux/amd64 and linux/arm64 under one index; no provenance or SBOM entries in it; no tags yet)
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: dotnet
+          platforms: linux/amd64,linux/arm64
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          provenance: false
+          sbom: false
+          build-args: |
+            PACKMOAT_COMMIT=${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+      # The smoke tests run the pushed linux/amd64 image itself, pulled by its digest, so the image tested is the image published.
+      - name: Pull the pushed linux/amd64 image by digest for the smoke tests
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          index="$(docker buildx imagetools inspect --raw "${IMAGE}@${DIGEST}")"
+          if [[ "$(jq '.manifests | length' <<< "${index}")" -ne 2 ]]; then echo "expected 2 platform images in ${DIGEST}" >&2; exit 1; fi
+          amd64="$(jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest' <<< "${index}")"
+          docker pull "${IMAGE}@${amd64}"
+          docker tag "${IMAGE}@${amd64}" packmoat-core:smoke
+          echo "smoke-testing ${IMAGE}@${amd64} (linux/amd64 in ${DIGEST})"
+      - name: Image smoke (Entrypoint, packmoat-admin --help, /healthz 200 with dummy settings)
+        run: .github/scripts/image-smoke.sh packmoat-core:smoke /app/host/Packmoat.Server.dll
+      - name: Image PORT smoke (PORT=9090 moves the server and its health check; PORT=0 stops it)
+        run: .github/scripts/port-smoke.sh packmoat-core:smoke 9090
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign the index and each platform's image (keyless), then check every signature straight away
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cosign sign --yes --recursive "${IMAGE}@${DIGEST}"
+          platforms="$(docker buildx imagetools inspect --raw "${IMAGE}@${DIGEST}" | jq -r '.manifests[].digest')"
+          if [[ "$(wc -l <<< "${platforms}")" -ne 2 ]]; then echo "expected 2 platform images, got: ${platforms}" >&2; exit 1; fi
+          for d in "${DIGEST}" ${platforms}; do
+            cosign verify \
+              --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/core-image.yml@refs/heads/main" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "${IMAGE}@${d}" > /dev/null
+            echo "verified ${IMAGE}@${d}"
+          done
+      # Only now is the image named. With one source, imagetools create copies the index as it is, so each tag names the signed digest;
+      # the check below fails the run if it ever did not.
+      - name: Tag the signed index sha-<commit> and main
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          docker buildx imagetools create --tag "${IMAGE}:sha-${GITHUB_SHA}" --tag "${IMAGE}:main" "${IMAGE}@${DIGEST}"
+          for tag in "sha-${GITHUB_SHA}" main; do
+            got="$(docker buildx imagetools inspect --format '{{json .Manifest}}' "${IMAGE}:${tag}" | jq -r .digest)"
+            if [[ "${got}" != "${DIGEST}" ]]; then echo "${IMAGE}:${tag} is ${got}, not the signed ${DIGEST}" >&2; exit 1; fi
+            echo "${IMAGE}:${tag} is ${DIGEST}"
+          done
+      - name: Summary
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            echo "### Published the core image"
+            echo "- image: \`${IMAGE}@${DIGEST}\` (linux/amd64 and linux/arm64)"
+            echo "- tags: \`sha-${GITHUB_SHA}\`, \`main\`"
+            echo "- signed by: \`https://github.com/${GITHUB_REPOSITORY}/.github/workflows/core-image.yml@refs/heads/main\`"
+          } >> "$GITHUB_STEP_SUMMARY"

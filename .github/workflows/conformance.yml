@@ -1,0 +1,54 @@
+# The shared conformance vectors (spec/README.md, section 6). Every implementation is held to spec/vectors:
+# - schemas: every vector file is checked against its JSON Schema in spec/schema by a tool that is not .NET (spec/check, Node and Ajv,
+#   installed from its lockfile), so the schemas are proven to work for any implementation;
+# - conformance-dotnet: the .NET implementation runs every vector through its production code.
+# No secrets, a read-only token. Actions are pinned to full commit SHAs. Every path here is relative to this repository's root.
+name: conformance
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conformance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  schemas:
+    name: schemas
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false   # no cache: every run installs from the lockfile
+      - name: Install the checker's dependencies from its lockfile (no install scripts)
+        working-directory: spec/check
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Every vector file matches its schema (Ajv, strict), with unique names and real times
+        working-directory: spec/check
+        run: npm run check
+
+  conformance-dotnet:
+    name: conformance-dotnet
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: dotnet/global.json
+      - name: The .NET implementation against every vector
+        working-directory: dotnet
+        run: dotnet test tests/Packmoat.Host.Tests/Packmoat.Host.Tests.csproj -c Release --nologo --filter "FullyQualifiedName~Conformance"

@@ -1,0 +1,178 @@
+{{- include "packmoat.checks" . -}}
+{{- $secrets := include "packmoat.secretsDir" . -}}
+{{- $keys := .Values.existingSecretKeys -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "packmoat.fullname" . }}
+  labels:
+    {{- include "packmoat.labels" . | nindent 4 }}
+spec:
+  # 0 or 1 (packmoat.checks, in _helpers.tpl): one SQLite writer.
+  replicas: {{ int .Values.replicas }}
+  # Recreate: an upgrade stops the old pod before it starts the new one. That orders rollouts only: what keeps a second pod off the
+  # database when a pod is deleted, drained or evicted is the claim's ReadWriteOncePod access mode (pvc.yaml).
+  strategy:
+    type: Recreate
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "packmoat.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "packmoat.selectorLabels" . | nindent 8 }}
+        {{- /* podLabels may not replace the selector's own labels, or the pods would not match their Deployment. */}}
+        {{- with omit .Values.podLabels "app.kubernetes.io/name" "app.kubernetes.io/instance" }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      # The pod's pause process is PID 1, as the compose kit's init is (#240): the server is not PID 1, so signals and an abort end it as
+      # they would anywhere else.
+      shareProcessNamespace: true
+      # No Kubernetes API token: the server never calls the API.
+      automountServiceAccountToken: false
+      # No PACKMOAT_SERVICE_HOST, PACKMOAT_PORT and the like from the Services in the namespace: only the settings below reach the server.
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        # The data volume and the secret files belong to group 10001, so the server can write the one and read the other.
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: packmoat
+          image: {{ include "packmoat.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          env:
+            # PORT moves the server off the image's 127.0.0.1:8080 to this port on every address, so the Service can reach it.
+            - name: PORT
+              value: {{ int .Values.containerPort | toString | quote }}
+            - name: PACKMOAT_DB
+              value: /data/packmoat.db
+            - name: PACKMOAT_HOSTS
+              value: {{ join " " .Values.hosts | quote }}
+            {{- with .Values.trustedProxies }}
+            - name: PACKMOAT_TRUSTED_PROXIES
+              value: {{ . | quote }}
+            {{- end }}
+            # The secrets, as files: the server reads each through its _FILE variable.
+            - name: PACKMOAT_MASTER_KEY_FILE
+              value: {{ printf "%s/%s" $secrets $keys.masterKey | quote }}
+            {{- with $keys.adminClientSecret }}
+            - name: PACKMOAT_ADMIN_CLIENT_SECRET_FILE
+              value: {{ printf "%s/%s" $secrets . | quote }}
+            {{- end }}
+            {{- with $keys.appCert }}
+            # PACKMOAT_APP_CERT is itself a path: the PEM file's.
+            - name: PACKMOAT_APP_CERT
+              value: {{ printf "%s/%s" $secrets . | quote }}
+            {{- end }}
+            {{- range $name, $value := .Values.env }}
+            - name: {{ $name | quote }}
+              value: {{ $value | toString | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ int .Values.containerPort }}
+              protocol: TCP
+          # The server answers only its own host names and localhost: the kubelet would send the pod's address, which gets 400.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: localhost
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: localhost
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # ready only when the database opens, its migrations are all in place and the master key matches it.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: localhost
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+            - name: secrets
+              mountPath: {{ $secrets }}
+              readOnly: true
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "packmoat.claimName" . | quote }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: secrets
+          secret:
+            secretName: {{ .Values.existingSecret | quote }}
+            # Group 10001 (fsGroup) may read; nobody may write.
+            defaultMode: 0440
+            items:
+              {{- range $what, $key := $keys }}
+              {{- if $key }}
+              - key: {{ $key | quote }}
+                path: {{ $key | quote }}
+              {{- end }}
+              {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
