@@ -110,11 +110,11 @@ public class MigrationStatementTests
         Assert.Equal(SqliteDatabase.LatestVersion, SqliteDatabase.Migrations.Length);
         foreach (var track in new[] { SqliteDatabase.Core }.Concat(TestTracks.Modules))   // the hosted track: HostedMigrationStatementTests
         {
-            for (var m = 0; m < track.Migrations.Length; m++)
+            for (var m = 0; m < track.StatementsFor(DatabaseEngine.Sqlite).Length; m++)
             {
-                if (track == SqliteDatabase.Core && EmptiedBySplit.Contains(m + 1)) Assert.Empty(track.Migrations[m]);
-                else Assert.NotEmpty(track.Migrations[m]);
-                foreach (var statement in track.Migrations[m])
+                if (track == SqliteDatabase.Core && EmptiedBySplit.Contains(m + 1)) Assert.Empty(track.StatementsFor(DatabaseEngine.Sqlite)[m]);
+                else Assert.NotEmpty(track.StatementsFor(DatabaseEngine.Sqlite)[m]);
+                foreach (var statement in track.StatementsFor(DatabaseEngine.Sqlite)[m])
                 {
                     var where = $"{track.Name} migration {m + 1}: {statement}";
                     var s = statement.Trim();

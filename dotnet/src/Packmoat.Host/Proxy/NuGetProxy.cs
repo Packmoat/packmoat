@@ -6,7 +6,7 @@ using Packmoat.Protocols.NuGet;
 
 namespace Packmoat.Host.Proxy;
 
-/// <summary>The request lifecycle from docs/ARCHITECTURE.md section 5. Fails closed: anything unrecognised is a 404.</summary>
+/// <summary>The request lifecycle from docs/architecture.md section 2 ("One NuGet request"). Fails closed: anything unrecognised is a 404.</summary>
 public sealed class NuGetProxy
 {
     private const string ProxyPrefix = "/v3/u/";

@@ -111,6 +111,7 @@ public class DeveloperCountingHostTests
             var active = await app.Services.GetRequiredService<Packmoat.Infrastructure.SqliteTokenActivity>().GetAsync("acme", 2, default);
             Assert.Equal(new[] { token.TokenId }, active.Tokens.Select(x => x.TokenId));
         }
-        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch { } }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 }

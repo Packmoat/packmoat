@@ -23,7 +23,7 @@ public abstract class SharedAppIdentityContract : StoreContract
     public async Task The_store_refuses_a_tenant_id_with_a_colon()
     {
         await using var t = await CreateDbAsync();
-        await Assert.ThrowsAsync<ArgumentException>(() => t.Tenants.CreateAsync(new NewTenant("shared-app:active", "x", "https://x/", "o/", "https://x/o/i.json", 1, TenantOrigin.Operator), default));
+        await Assert.ThrowsAsync<ArgumentException>(() => Engine.Tenants(t).CreateAsync(new NewTenant("shared-app:active", "x", "https://x/", "o/", "https://x/o/i.json", 1, TenantOrigin.Operator), default));
     }
 
     // ---- choosing the sign-in
@@ -93,12 +93,12 @@ public abstract class SharedAppIdentityContract : StoreContract
     public async Task The_credential_source_fails_closed_for_a_shared_tenant_without_a_shared_credential()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync();
-        await t.Tenants.BindSharedIdentityAsync("acme", Dir, default);
-        var source = new EntraCertificateCredentialSource(t.Tenants, t.Clock, Engine.SharedApp(t));
-        var tenant = (await t.Tenants.GetAsync("acme", default))!;
+        await AddTenantAsync(t);
+        await Engine.Tenants(t).BindSharedIdentityAsync("acme", Dir, default);
+        var source = new EntraCertificateCredentialSource(Engine.Tenants(t), t.Clock, Engine.SharedApp(t));
+        var tenant = (await Engine.Tenants(t).GetAsync("acme", default))!;
         await Assert.ThrowsAsync<InvalidOperationException>(async () => await source.GetAsync(tenant, default));
-        var noStore = new EntraCertificateCredentialSource(t.Tenants, t.Clock);
+        var noStore = new EntraCertificateCredentialSource(Engine.Tenants(t), t.Clock);
         await Assert.ThrowsAsync<InvalidOperationException>(async () => await noStore.GetAsync(tenant, default));
     }
 

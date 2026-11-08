@@ -30,7 +30,8 @@ public sealed class SqliteHostFixture : IAsyncDisposable
     public RecordingPackageGate DecisionRecorder => (RecordingPackageGate)_app.Services.GetRequiredService<IPackageGate>();
     public string BaseUrl { get; private set; } = "";
     public string SourceUrl => BaseUrl + "/v3/index.json";
-    public string DbDir { get; } = Directory.CreateTempSubdirectory("packmoat-host-db-").FullName;
+    private readonly TempDir _temp = TempDir.Create("packmoat-host-db-", clearSqlitePools: true);
+    public string DbDir => _temp.Path;
     private WebApplication _app = null!;
 
     /// <summary>The host's own audit log (production wiring), when the fixture was started with <c>queuedAudit</c> or <c>auditStore</c>.</summary>
@@ -41,7 +42,23 @@ public sealed class SqliteHostFixture : IAsyncDisposable
     public static async Task<SqliteHostFixture> StartAsync(int cooldown = 14, ITokenActivityLog? activityLog = null, bool queuedAudit = false,
         IDecisionRecordLog? decisionLog = null, IAuditBatchLog? auditStore = null)
     {
-        var f = new SqliteHostFixture { Upstream = await FakeUpstream.StartAsync() };
+        var f = new SqliteHostFixture();
+        try
+        {
+            await f.BuildAndStartAsync(cooldown, activityLog, queuedAudit, decisionLog, auditStore);
+            return f;
+        }
+        catch
+        {
+            await f.DisposeAsync();   // the folder, and whatever started before the failure (#292)
+            throw;
+        }
+    }
+
+    private async Task BuildAndStartAsync(int cooldown, ITokenActivityLog? activityLog, bool queuedAudit, IDecisionRecordLog? decisionLog, IAuditBatchLog? auditStore)
+    {
+        var f = this;
+        f.Upstream = await FakeUpstream.StartAsync();
         f.Db = new SqliteDatabase(Path.Combine(f.DbDir, "packmoat.db"));
         await f.Db.MigrateAsync(TestTracks.Modules);
         f.Tenants = new SqliteTenantStore(f.Db, f.Clock, AesGcmSecretProtector.FromBase64(AesGcmSecretProtector.GenerateKeyBase64()), TestLifecycle.Participants);
@@ -64,7 +81,6 @@ public sealed class SqliteHostFixture : IAsyncDisposable
         });
         await f._app.StartAsync();
         f.BaseUrl = f._app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First().Replace("localhost", "127.0.0.1").TrimEnd('/');
-        return f;
     }
 
     public void Publish(string id, string version, double ageDays)
@@ -73,13 +89,25 @@ public sealed class SqliteHostFixture : IAsyncDisposable
         Dates.Set(id, version, Clock.UtcNow - TimeSpan.FromDays(ageDays));
     }
 
+    /// <summary>Stops what <see cref="StartAsync"/> started (a failed start may have got only part way) and deletes the folder.</summary>
     public async ValueTask DisposeAsync()
     {
-        await _app.StopAsync();
-        Recorder.Dispose();
-        await _app.DisposeAsync();
-        await Upstream.DisposeAsync();
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        try { Directory.Delete(DbDir, true); } catch { /* best effort */ }
+        try
+        {
+            if (_app is not null)
+            {
+                try { await _app.StopAsync(); }
+                finally
+                {
+                    Recorder?.Dispose();
+                    await _app.DisposeAsync();
+                }
+            }
+        }
+        finally
+        {
+            try { if (Upstream is not null) await Upstream.DisposeAsync(); }
+            finally { _temp.Dispose(); }
+        }
     }
 }

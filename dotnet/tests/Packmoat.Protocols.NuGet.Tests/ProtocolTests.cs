@@ -3,7 +3,7 @@ using Packmoat.Protocols.NuGet;
 namespace Packmoat.Protocols.NuGet.Tests;
 
 // The version filters and the service index rewrite are conformance vectors, run by the host's tests:
-// core/spec/vectors/nuget (#209).
+// spec/vectors/nuget (#209).
 
 public class RouteParserTests
 {

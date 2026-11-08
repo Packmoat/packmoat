@@ -133,7 +133,8 @@ public class PublicFixtureTests
             named[$"twice.cs: support@{Hosted}"] = 1;
             Assert.Equal(["b.md: " + At("me", "gmail.com"), $"twice.cs: support@{Hosted} (2 times, 1 allowed)"], Offenders(dir, TextFiles(dir), named));
         }
-        finally { Directory.Delete(dir, true); }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir); }
     }
 
     [Fact]   // mutation: Skipped passes .git again
@@ -154,6 +155,7 @@ public class PublicFixtureTests
             Assert.Equal(["ok.md"], TextFiles(dir).Select(f => Path.GetRelativePath(dir, f).Replace('\\', '/')).ToArray());
             Assert.Empty(Offenders(dir, TextFiles(dir), new Dictionary<string, int>()));
         }
-        finally { Directory.Delete(dir, true); }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir); }
     }
 }

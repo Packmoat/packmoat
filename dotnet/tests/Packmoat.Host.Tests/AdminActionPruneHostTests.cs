@@ -72,7 +72,8 @@ public class AdminActionPruneHostTests
             Assert.Equal(RetentionService.StartupDelay, retention.FirstPass);
             Assert.True(RetentionService.StartupDelay < RetentionService.Interval);
         }
-        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch { } }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 
     [Fact]
@@ -97,6 +98,7 @@ public class AdminActionPruneHostTests
 
             Assert.Equal(new[] { IAdminActionLog.PruneAction, "prefix.add" }, (await log.LatestAsync(10, default)).Select(r => r.Action));
         }
-        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch { } }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 }

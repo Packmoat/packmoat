@@ -1,0 +1,44 @@
+# Code scanning (#276): CodeQL reads the C# in dotnet/ on each pull request, each push to main, and weekly (new queries find old code).
+# build-mode none: CodeQL reads the source and its NuGet references without building it, so it needs no build command to keep in step
+# with dotnet.yml. No cache of any kind, as everywhere here. Its findings go to the repository's code scanning alerts. Its one job alone
+# may upload them (CoreWorkflowTests); it is not a required check yet. Every path here is relative to this repository's root.
+name: codeql
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 3 * * 2'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  codeql:
+    name: codeql
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The SDK dotnet/global.json names, so CodeQL resolves the references as the build does.
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: dotnet/global.json
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: csharp
+          build-mode: none
+          trap-caching: false
+          dependency-caching: false
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1

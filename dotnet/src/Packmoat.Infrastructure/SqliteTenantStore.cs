@@ -27,45 +27,6 @@ public sealed class SqliteTenantStore : ITenantStore
         _participants = participants;
     }
 
-    private const string KeyCheckName = "key_check";
-    internal const string KeyCheckPlaintext = "packmoat-master-key-check-v1";
-
-    /// <summary>
-    /// Makes sure the master key in use is the one this database was made with. The first run records an encrypted marker;
-    /// every later run must be able to read it. A wrong key stops the server instead of failing later, one customer at a time.
-    /// </summary>
-    public async Task EnsureKeyCheckAsync(CancellationToken ct)
-    {
-        await using var c = await _db.OpenAsync(ct);
-        await using var read = c.CreateCommand();
-        read.CommandText = "SELECT value FROM meta WHERE key=@k";
-        read.Parameters.AddWithValue("@k", KeyCheckName);
-        if (await read.ExecuteScalarAsync(ct) is byte[] stored)
-        {
-            if (!SqliteBackup.KeyMatches(_protector, stored))
-                throw new InvalidOperationException("The master key does not match this database. Refusing to continue: customer identities would not decrypt.");
-            return;
-        }
-        await using var write = c.CreateCommand();
-        write.CommandText = "INSERT OR IGNORE INTO meta(key, value) VALUES(@k, @v)";
-        write.Parameters.AddWithValue("@k", KeyCheckName);
-        write.Parameters.AddWithValue("@v", _protector.Protect(KeyCheckPlaintext, KeyCheckName));
-        await write.ExecuteNonQueryAsync(ct);
-    }
-
-    /// <summary>
-    /// True when the master key in use reads this database's key marker (#233: the readiness check). Read only: unlike
-    /// <see cref="EnsureKeyCheckAsync"/> it never records a marker, and a database with none is false (the start always records one).
-    /// </summary>
-    public async Task<bool> KeyMatchesAsync(CancellationToken ct)
-    {
-        await using var c = await _db.OpenReadOnlyAsync(ct);
-        await using var read = c.CreateCommand();
-        read.CommandText = "SELECT value FROM meta WHERE key=@k";
-        read.Parameters.AddWithValue("@k", KeyCheckName);
-        return await read.ExecuteScalarAsync(ct) is byte[] stored && SqliteBackup.KeyMatches(_protector, stored);
-    }
-
     public async Task<Tenant?> GetAsync(string tenantId, CancellationToken ct)
     {
         await using var c = await _db.OpenAsync(ct);

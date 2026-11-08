@@ -1,0 +1,15 @@
+<Project>
+  <!-- #292: every temporary folder a test makes is deleted, and TempLeakGuard fails the run when one is left behind. Imported by
+       dotnet/tests/Directory.Build.props, and by that of every tests folder built on the core, so every test project there runs under
+       the guard without naming it: a new project cannot forget it, and one cannot drop it by editing its own project file. -->
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)TempDir.cs" Link="Shared\TempDir.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)TempLeakGuard.cs" Link="Shared\TempLeakGuard.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)TempLeakGuardTests.cs" Link="Shared\TempLeakGuardTests.cs" />
+    <Using Include="Packmoat.TestSupport" />
+    <AssemblyAttribute Include="Xunit.TestFrameworkAttribute">
+      <_Parameter1>Packmoat.TestSupport.TempLeakGuard</_Parameter1>
+      <_Parameter2>$(AssemblyName)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>

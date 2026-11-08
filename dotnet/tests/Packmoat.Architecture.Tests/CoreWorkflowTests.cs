@@ -1,4 +1,6 @@
 using System.Text.RegularExpressions;
+using YamlDotNet.Core;
+using YamlDotNet.RepresentationModel;
 
 namespace Packmoat.Architecture.Tests;
 
@@ -69,8 +71,9 @@ public class CoreWorkflowTests
     }
 
     [Fact]   // mutation: a release.yml added
-    public void The_core_has_its_conformance_image_dotnet_gitleaks_and_helm_workflows() =>
-        Assert.Equal(["conformance.yml", "core-image.yml", "dotnet.yml", "gitleaks.yml", "helm.yml"], Workflows().Select(w => w.Name).ToArray());
+    public void The_core_has_its_codeql_conformance_image_dotnet_gitleaks_helm_and_scorecard_workflows() =>
+        Assert.Equal(["codeql.yml", "conformance.yml", "core-image.yml", "dotnet.yml", "gitleaks.yml", "helm.yml", "scorecard.yml"],
+            Workflows().Select(w => w.Name).ToArray());
 
     [Fact]   // mutation: working-directory: ../hosted/dotnet in core/.github/workflows/dotnet.yml
     public void The_core_workflows_name_only_paths_inside_core()
@@ -134,11 +137,13 @@ public class CoreWorkflowTests
             Assert.Single(OutsidePaths("        global-json-file: global.json\n", root));                 // the root's, not dotnet/'s
             Assert.Single(OutsidePaths("        run: docker build -f deploy/Dockerfile .\n", root));
             Assert.Single(OutsidePaths("        run: dotnet test tests/x.csproj\n", root));               // no working directory holds tests/
-            Assert.Equal(2, OutsidePaths("        working-directory: core/dotnet\n", root).Count);   // the path, and the working directory
+            // The private repository's folder name, put together so that this file names no such path itself (CorePathTests, #274).
+            Assert.Equal(2, OutsidePaths("        working-directory: " + "core" + "/dotnet\n", root).Count);   // the path, and the working directory
             Assert.Single(OutsidePaths("        run: dotnet build Packmoat.Hosted.sln\n", root));
             Assert.Single(OutsidePaths("        # the hosted image\n", root));
         }
-        finally { Directory.Delete(root, true); }
+        catch when (TempDir.Failing(root)) { throw; }
+        finally { TempDir.Delete(root); }
     }
 
     [Fact]
@@ -153,6 +158,16 @@ public class CoreWorkflowTests
     /// <summary>The only events a core workflow may run on. Anything else (issue_comment, pull_request_target, workflow_run, ...) can run
     /// with more than a pull request's read-only token, or on text an outsider wrote.</summary>
     private static readonly string[] AllowedTriggers = ["pull_request", "push", "workflow_dispatch"];
+
+    /// <summary>
+    /// The two scanners' extra events (#276), neither of which an outsider can start: <c>schedule</c> runs main's workflow, and
+    /// <c>branch_protection_rule</c> runs it when an administrator changes a rule. <see cref="ScannerProblems"/> pins each scanner's whole list.
+    /// </summary>
+    private static readonly Dictionary<string, string[]> ExtraTriggers = new()
+    {
+        ["codeql.yml"] = ["schedule"],
+        ["scorecard.yml"] = ["schedule", "branch_protection_rule"],
+    };
 
     /// <summary>Workflows allowed a cache (actions/cache, or a setup action's cache input). None: a cache is shared state an outside pull
     /// request could poison, and the builds are small.</summary>
@@ -193,7 +208,8 @@ public class CoreWorkflowTests
         var found = new List<string>();
         var triggers = Triggers(workflow);
         if (triggers.Count == 0) found.Add("no on: triggers found");
-        found.AddRange(triggers.Where(t => !AllowedTriggers.Contains(t)).Select(t => $"trigger {t} is not one of {string.Join(", ", AllowedTriggers)}"));
+        var allowed = AllowedTriggers.Concat(ExtraTriggers.GetValueOrDefault(name, [])).ToArray();
+        found.AddRange(triggers.Where(t => !allowed.Contains(t)).Select(t => $"trigger {t} is not one of {string.Join(", ", allowed)}"));
 
         if (!Regex.IsMatch(workflow, @"^permissions:\s*\n\s+contents:\s*read\s*\n(?!\s)", RegexOptions.Multiline)) found.Add("the top-level permissions are not exactly contents: read");
         foreach (var bad in new[] { ": write", "write-all", "id-token", "push: true" })   // push: true: core-image.yml publishes, by digest only
@@ -221,11 +237,94 @@ public class CoreWorkflowTests
         problem is "says : write" or "says id-token"
         || Regex.IsMatch(problem, @"^line \d+: a secret or token: password: \$\{\{ secrets\.GITHUB_TOKEN \}\}$", RegexOptions.CultureInvariant);
 
+    /// <summary>
+    /// The workflows that may write anything, each with the one job that may and that job's whole permissions block, exactly (#276): the
+    /// publisher (packages for the image, an identity token to sign, attestations for its SBOM and provenance); CodeQL (security events, to
+    /// upload its findings); and Scorecard (security events, and an identity token to publish its results). See <see cref="WriterProblems"/>.
+    /// </summary>
+    private static readonly Dictionary<string, (string Job, string[] Permissions)> Writers = new()
+    {
+        [Publisher] = ("publish", ["contents: read", "packages: write", "id-token: write", "attestations: write"]),
+        ["codeql.yml"] = ("codeql", ["contents: read", "security-events: write"]),
+        ["scorecard.yml"] = ("scorecard", ["contents: read", "security-events: write", "id-token: write"]),
+    };
+
+    /// <summary>
+    /// What a workflow in <see cref="Writers"/> may write beyond its entry, one line each: permissions anywhere but the top (exactly
+    /// contents read) and its one job; that job's block not exactly its entry; a write or an identity token said anywhere else, comments
+    /// included. Any other workflow may write nothing at all (<see cref="HygieneProblems"/>).
+    /// </summary>
+    internal static IReadOnlyList<string> WriterProblems(string name, string workflow)
+    {
+        if (!Writers.TryGetValue(name, out var writer)) return [];
+        var found = new List<string>();
+        var lines = workflow.Replace("\r\n", "\n").Split('\n');
+        var text = string.Join('\n', lines);
+        if (!Regex.IsMatch(text, @"(?m)^permissions:\n  contents: read\n(?![ \t])")) found.Add("the top-level permissions are not exactly contents: read");
+        if (Regex.Matches(text, @"(?m)^\s*permissions:").Count != 2) found.Add("permissions are set somewhere other than the top and one job");
+        var at = Array.FindIndex(lines, l => Regex.IsMatch(l, @"^    permissions:\s*$"));
+        if (at < 0) found.Add($"the {writer.Job} job sets no permissions of its own");
+        else
+        {
+            var job = lines.Take(at).LastOrDefault(l => Regex.IsMatch(l, @"^  [\w-]+:\s*$"))?.Trim().TrimEnd(':');
+            if (job != writer.Job) found.Add($"the job with permissions is {job}, not {writer.Job}");
+            var block = lines.Skip(at + 1).TakeWhile(l => l.StartsWith("      ", StringComparison.Ordinal)).Select(l => l.Trim()).ToArray();
+            if (!block.SequenceEqual(writer.Permissions))
+                found.Add($"the {writer.Job} job's permissions are not exactly {string.Join(", ", writer.Permissions)}: they are {string.Join(", ", block)}");
+        }
+        if (Regex.Matches(text, ": write").Count != writer.Permissions.Count(p => p.EndsWith(": write", StringComparison.Ordinal)))
+            found.Add("a write is said somewhere other than the job's permissions");
+        if (Regex.Matches(text, "id-token").Count != writer.Permissions.Count(p => p.StartsWith("id-token:", StringComparison.Ordinal)))
+            found.Add("id-token is said somewhere other than the job's permissions");
+        if (text.Contains("write-all", StringComparison.Ordinal)) found.Add("says write-all");
+        return found;
+    }
+
+    /// <summary>The hygiene problems a workflow in <see cref="Writers"/> may have, because <see cref="WriterProblems"/> pins them: a write,
+    /// an identity token if its entry has one, and for the publisher the registry login's password (<see cref="PublisherMayHave"/>).</summary>
+    private static bool MayHave(string name, string problem) =>
+        Writers.TryGetValue(name, out var w)
+        && (problem == "says : write" || (problem == "says id-token" && w.Permissions.Contains("id-token: write")) || (name == Publisher && PublisherMayHave(problem)));
+
+    [Fact]   // mutations (#276): attestations: write in codeql.yml; contents: write in scorecard.yml; id-token: write in codeql.yml
+    public void Only_the_publisher_and_the_scanners_may_write_and_each_exactly_what_its_one_job_needs() =>
+        Assert.All(Workflows(), w => Assert.True(WriterProblems(w.Name, w.Text).Count == 0, $"{w.Name}:\n" + string.Join("\n", WriterProblems(w.Name, w.Text))));
+
+    [Fact]
+    public void The_writer_check_catches_each_wider_permission()
+    {
+        foreach (var (name, (job, permissions)) in Writers)
+        {
+            var text = Workflows().Single(w => w.Name == name).Text.Replace("\r\n", "\n");
+            Assert.Empty(WriterProblems(name, text));
+            void Catches(string from, string to, string expect) => CatchesIn(t => WriterProblems(name, t), text, from, to, expect);
+            var last = "      " + permissions[^1] + "\n";
+            Catches(last, last + "      actions: write\n", "permissions are not exactly");
+            Catches(last, last + "      attestations: read\n", "permissions are not exactly");
+            Catches("      contents: read\n", "      contents: write\n", "permissions are not exactly");
+            Catches("      contents: read\n", "", "permissions are not exactly");
+            Catches("permissions:\n  contents: read\n", "permissions:\n  contents: read\n  security-events: write\n", "the top-level permissions");
+            Catches("permissions:\n  contents: read\n", "permissions: write-all\n", "write-all");
+            Catches("jobs:\n", "jobs:\n  second:\n    runs-on: ubuntu-24.04\n    permissions:\n      contents: read\n", "permissions are set somewhere other");
+            Catches($"\n  {job}:\n", "\n  renamed:\n", $"not {job}");
+            Catches("      - uses: actions/checkout@", "      - env:\n          X: \"id-token\"\n        uses: actions/checkout@", "id-token is said");
+            Catches("      - uses: actions/checkout@", "      # attestations: write\n      - uses: actions/checkout@", "a write is said");
+        }
+        // Any other workflow may write nothing, and only the scanners may run on a schedule or on a rule change: the hygiene check says so.
+        var dotnet = Workflows().Single(w => w.Name == "dotnet.yml").Text.Replace("\r\n", "\n");
+        Assert.Contains("says : write", HygieneProblems("dotnet.yml", dotnet.Replace("  contents: read\n", "  contents: read\n  attestations: write\n")));
+        Assert.Contains("says id-token", HygieneProblems("gitleaks.yml", dotnet.Replace("  contents: read\n", "  contents: read\n  id-token: write\n")));
+        Assert.Contains("says id-token", HygieneProblems("codeql.yml", dotnet.Replace("  contents: read\n", "  contents: read\n  id-token: write\n")).Where(p => !MayHave("codeql.yml", p)));
+        Assert.Contains(HygieneProblems("dotnet.yml", dotnet.Replace("  workflow_dispatch:\n", "  workflow_dispatch:\n  schedule:\n")), p => p.StartsWith("trigger schedule", StringComparison.Ordinal));
+        Assert.Contains(HygieneProblems("codeql.yml", dotnet.Replace("  workflow_dispatch:\n", "  workflow_dispatch:\n  branch_protection_rule:\n")),
+            p => p.StartsWith("trigger branch_protection_rule", StringComparison.Ordinal));
+    }
+
     [Fact]   // mutations, each in a copy of dotnet.yml: issue_comment; the PR title in a run step; ${{ env.TITLE }} in a run step; secrets['NPM_TOKEN']; github.token; cache: npm
              // (#266): packages: write in dotnet.yml; secrets.NPM_TOKEN in core-image.yml
     public void The_core_workflows_are_safe_for_outside_pull_requests()
     {
-        var offenders = Workflows().SelectMany(w => HygieneProblems(w.Name, w.Text).Where(p => w.Name != Publisher || !PublisherMayHave(p))
+        var offenders = Workflows().SelectMany(w => HygieneProblems(w.Name, w.Text).Where(p => !MayHave(w.Name, p))
             .Select(p => $"{w.Name}: {p}")).ToArray();
         Assert.True(offenders.Length == 0, "The public repository takes outside pull requests; these workflows would let one do too much:\n" + string.Join("\n", offenders));
     }
@@ -336,9 +435,12 @@ public class CoreWorkflowTests
     /// <summary>
     /// What <see cref="Publisher"/> does beyond publishing the signed core image from main, one line each. It runs only on a push to main or
     /// by hand, never on a pull request; one job, under the one guard <see cref="PublishGuard"/>; a read-only token at the top and only
-    /// contents read, packages write and id-token write on the job; the built-in token only as the registry login's password; one image
-    /// name, <see cref="CoreImage"/>; nothing tagged by the build or pushed by tag, and nothing that lets a failed command pass; and the
-    /// steps in order: push by digest, pull that image, smoke it, check PORT, sign, verify as <see cref="SignerTemplate"/>, then tag.
+    /// contents read, packages write, id-token write and attestations write on the job; the built-in token only as the registry login's
+    /// password; one image name, <see cref="CoreImage"/>; nothing tagged by the build or pushed by tag, and nothing that lets a failed
+    /// command pass; each platform's SBOM attested to that platform's digest and the build provenance to the index digest (#276), with
+    /// nothing more pushed to the registry; and the steps in order: push by digest, pull that image, smoke it, check PORT, sign, verify as
+    /// <see cref="SignerTemplate"/>, the SBOMs, the attestations, then tag. The attestations come before the tags, as the signature does,
+    /// so a tag never names an image without its SBOM and provenance; a failure there leaves the image untagged, as a failed signature does.
     /// </summary>
     internal static IReadOnlyList<string> PublisherProblems(string workflow)
     {
@@ -357,10 +459,31 @@ public class CoreWorkflowTests
         Require(Regex.IsMatch(text, "(?m)^    " + Regex.Escape(PublishGuard) + "$"), $"the job's guard is not exactly {PublishGuard}");
 
         Require(Regex.IsMatch(text, @"(?m)^permissions:\n  contents: read\n(?![ \t])"), "the top-level permissions are not exactly contents: read");
-        Require(Regex.IsMatch(text, @"(?m)^    permissions:\n      contents: read\n      packages: write\n      id-token: write\n(?!      )"),
-            "the job's permissions are not exactly contents read, packages write and id-token write");
+        Require(Regex.IsMatch(text, @"(?m)^    permissions:\n      contents: read\n      packages: write\n      id-token: write\n      attestations: write\n(?!      )"),
+            "the job's permissions are not exactly contents read, packages write, id-token write and attestations write");
         Require(Regex.Matches(text, @"(?m)^\s*permissions:").Count == 2, "permissions are set somewhere other than the top and the job");
-        Require(Regex.Matches(text, "packages: write").Count == 1 && Regex.Matches(text, "id-token").Count == 1, "packages: write or id-token is said more than once");
+        Require(Regex.Matches(text, "packages: write").Count == 1 && Regex.Matches(text, "id-token").Count == 1 && Regex.Matches(text, "attestations").Count == 1,
+            "packages: write, id-token or attestations is said more than once");
+
+        // #276: two SBOMs (syft), one per platform, each attested to its platform's digest; one build provenance, attested to the index digest
+        // the tags name. The attestations are kept by GitHub, not pushed to the registry.
+        Require(Regex.Matches(code, @"uses: anchore/sbom-action@").Count == 2 && Regex.Matches(code, @"uses: actions/attest@").Count == 3,
+            "not exactly two SBOM steps and three attest steps");
+        Require(Regex.Matches(code, @"(?m)^\s+subject-name: \$\{\{ env\.IMAGE \}\}$").Count == 3 && Regex.Matches(code, @"subject-(name|path|checksums):").Count == 3,
+            "an attestation names a subject other than IMAGE by digest");
+        foreach (var arch in new[] { "amd64", "arm64" })
+        {
+            Require(code.Contains($"          image: registry:${{{{ env.IMAGE }}}}@${{{{ steps.platforms.outputs.{arch} }}}}\n", StringComparison.Ordinal)
+                    && code.Contains($"          SYFT_PLATFORM: linux/{arch}\n", StringComparison.Ordinal)
+                    && code.Contains($"          output-file: ${{{{ runner.temp }}}}/sbom-{arch}.spdx.json\n", StringComparison.Ordinal),
+                $"the linux/{arch} SBOM is not made from that platform's image in the registry");
+            Require(code.Contains($"          subject-digest: ${{{{ steps.platforms.outputs.{arch} }}}}\n          sbom-path: ${{{{ runner.temp }}}}/sbom-{arch}.spdx.json\n", StringComparison.Ordinal),
+                $"the linux/{arch} SBOM is not attested to that platform's digest");
+        }
+        Require(Regex.Matches(code, @"subject-digest:").Count == 3 && Regex.Matches(code, @"sbom-path:").Count == 2
+                && Regex.IsMatch(code, @"\n          subject-digest: \$\{\{ steps\.build\.outputs\.digest \}\}\n\s*- name: Tag"),
+            "the build provenance is not attested to the index digest, as the last step before the tags");
+        Require(!Regex.IsMatch(code, @"push-to-registry|predicate"), "an attestation is pushed to the registry, or is not the SBOM or the build provenance");
 
         var lines = text.Split('\n');
         var secretLines = lines.Select((l, i) => (l, i)).Where(x => SecretReference.IsMatch(x.l)).ToArray();
@@ -396,10 +519,15 @@ public class CoreWorkflowTests
         Require(code.Contains("if [[ \"${got}\" != \"${DIGEST}\" ]]; then", StringComparison.Ordinal), "the tags are not checked against the signed digest");
 
         string[] order = ["id: build", "docker pull \"${IMAGE}@${amd64}\"", "image-smoke.sh packmoat-core:smoke", "port-smoke.sh packmoat-core:smoke",
-                          "cosign sign", "cosign verify", "imagetools create"];
+                          "cosign sign", "cosign verify", "id: platforms", "uses: anchore/sbom-action@", "uses: actions/attest@", "imagetools create"];
         var at = order.Select(s => code.IndexOf(s, StringComparison.Ordinal)).ToArray();
         Require(at.All(i => i >= 0) && at.Zip(at.Skip(1)).All(p => p.First < p.Second),
-            "the steps are not in order: push by digest, pull that image, smoke, PORT smoke, sign, verify, then tag");
+            "the steps are not in order: push by digest, pull that image, smoke, PORT smoke, sign, verify, SBOMs, attestations, then tag");
+        // Every SBOM and attest step, not only the first, is between the signature's check and the tags.
+        var verify = code.IndexOf("cosign verify", StringComparison.Ordinal);
+        var tag = code.IndexOf("imagetools create", StringComparison.Ordinal);
+        Require(Regex.Matches(code, @"uses: (anchore/sbom-action|actions/attest)@").All(m => m.Index > verify && m.Index < tag),
+            "an SBOM or attest step is not between the signature's check and the tags");
         return found;
     }
 
@@ -452,10 +580,30 @@ public class CoreWorkflowTests
         Catches(Pull, Pull + "          oras copy x y\n", "another registry tool");
         Catches(Pull, Pull + "          docker buildx imagetools create --tag \"${IMAGE}:early\" \"${IMAGE}@${DIGEST}\"\n", "imagetools create more than once");
         Catches("          persist-credentials: false\n", "", "the checkout keeps its credentials");
+        // #276: the SBOMs and the provenance, each to the right digest, kept by GitHub, between the signature's check and the tags.
+        Catches("      attestations: write\n", "", "the job's permissions");
+        Catches("          sbom-path: ${{ runner.temp }}/sbom-arm64.spdx.json\n", "          sbom-path: ${{ runner.temp }}/sbom-arm64.spdx.json\n          push-to-registry: true\n",
+            "pushed to the registry");
+        Catches("          sbom-path: ${{ runner.temp }}/sbom-amd64.spdx.json\n", "          sbom-path: ${{ runner.temp }}/sbom-arm64.spdx.json\n", "the linux/amd64 SBOM is not attested");
+        Catches("          SYFT_PLATFORM: linux/arm64\n", "          SYFT_PLATFORM: linux/amd64\n", "the linux/arm64 SBOM is not made");
+        Catches("          image: registry:${{ env.IMAGE }}@${{ steps.platforms.outputs.amd64 }}\n", "          image: ${{ env.IMAGE }}:main\n", "the linux/amd64 SBOM is not made");
+        Catches("          subject-digest: ${{ steps.build.outputs.digest }}\n", "          subject-digest: ${{ steps.platforms.outputs.amd64 }}\n", "the build provenance is not attested");
+        Catches("          subject-name: ${{ env.IMAGE }}\n          subject-digest: ${{ steps.build.outputs.digest }}\n",
+            "          subject-name: ghcr.io/evil/core\n          subject-digest: ${{ steps.build.outputs.digest }}\n", "an attestation names a subject");
+        const string Summary = "      - name: Summary\n";
+        Catches(Summary, "      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2\n        with:\n          subject-path: x\n" + Summary,
+            "three attest steps");
+        // An attestation moved after the tags: the provenance step, cut and put back after the tag step.
+        var provenance = Regex.Match(text, @"      - name: Attest the build provenance[^\n]*\n(?:        [^\n]*\n)+").Value;
+        Assert.NotEmpty(provenance);
+        Catches(provenance, "", "not exactly two SBOM steps and three attest steps");
+        Assert.Contains(PublisherProblems(text.Replace(provenance, "").Replace(Summary, provenance + Summary)),
+            p => p.StartsWith("an SBOM or attest step is not between", StringComparison.Ordinal));
     }
 
-    [Fact]   // mutations: the doc's signer in lower case (cosign compares it exactly); the doc's image under <owner>
-    public void The_self_hosting_guide_names_the_published_image_and_its_signer()
+    [Fact]   // mutations: the guide's signer in lower case (cosign compares it exactly); the guide's image under <owner>; the image name changed
+             // in the Kubernetes guide
+    public void The_deploy_guides_name_the_published_image_and_its_signer()
     {
         var workflow = Workflows().Single(w => w.Name == Publisher).Text;
         var repository = Regex.Match(PublishGuard, "github.repository == '([^']+)'").Groups[1].Value;
@@ -463,17 +611,19 @@ public class CoreWorkflowTests
         Assert.Contains(SignerTemplate, workflow);
         var signer = SignerTemplate.Replace("${GITHUB_REPOSITORY}", repository, StringComparison.Ordinal);
 
-        var doc = File.ReadAllText(Path.Combine(CoreRoot(), "docs", "self-hosting.md"));
-        var identities = Regex.Matches(doc, @"--certificate-identity\s+(\S+)").Select(m => m.Groups[1].Value).ToArray();
-        Assert.NotEmpty(identities);
-        Assert.All(identities, i => Assert.Equal(signer, i));
-        // The guide and the Helm chart (its values, its refusal message and the restore pod) name the published image and no other.
-        foreach (var file in new[] { "docs/self-hosting.md", "deploy/helm/packmoat/values.yaml", "deploy/helm/packmoat/templates/_helpers.tpl", "deploy/helm/restore-pod.yaml" })
-        {
-            var images = Regex.Matches(File.ReadAllText(Path.Combine(CoreRoot(), file)), @"ghcr\.io/[^\s`:@,""')]+").Select(m => m.Value).ToArray();
-            Assert.True(images.Length > 0, $"{file} names no ghcr.io image");
-            Assert.All(images, i => Assert.Equal(CoreImage, i));
-        }
+        // Every doc: each cosign identity is the signer, and the single-server guide, which shows the check, has at least one.
+        var docs = SelfHostingDocTests.MarkdownFiles(CoreRoot());
+        var identities = docs.SelectMany(d => Regex.Matches(File.ReadAllText(Path.Combine(CoreRoot(), d)), @"--certificate-identity\s+(\S+)").Select(m => (Doc: d, Identity: m.Groups[1].Value))).ToArray();
+        Assert.Contains(identities, x => x.Doc == "docs/deploy/single-server.md");
+        Assert.All(identities, x => Assert.Equal(signer, x.Identity));
+        // Every doc and the Helm chart (its values, its refusal message and the restore pod) name the published image and no other; the
+        // two guides that run it, and the chart, must name it.
+        static string[] Images(string text) => Regex.Matches(text, @"ghcr\.io/[^\s`:@,""')]+").Select(m => m.Value).ToArray();
+        foreach (var file in new[] { "docs/deploy/single-server.md", "docs/deploy/kubernetes.md", "deploy/helm/packmoat/values.yaml",
+                     "deploy/helm/packmoat/templates/_helpers.tpl", "deploy/helm/restore-pod.yaml" })
+            Assert.True(Images(File.ReadAllText(Path.Combine(CoreRoot(), file))).Length > 0, $"{file} names no ghcr.io image");
+        foreach (var file in docs.Concat(["deploy/helm/packmoat/values.yaml", "deploy/helm/packmoat/templates/_helpers.tpl", "deploy/helm/restore-pod.yaml"]))
+            Assert.All(Images(File.ReadAllText(Path.Combine(CoreRoot(), file))), i => Assert.True(i == CoreImage, $"{file} names {i}, not {CoreImage}"));
     }
 
     [Fact]   // mutations: --strict dropped; --redact dropped; fetch-depth: 0 removed; (#268 review) || true after the hash check; set -- in the script;
@@ -497,6 +647,193 @@ public class CoreWorkflowTests
         var code = Regex.Replace(workflow, @"(?m)^\s*#.*$", "");
         Assert.DoesNotContain("continue-on-error", code);
         Assert.DoesNotMatch(@"\|\||set\s+\+e", code);
+    }
+
+    /// <summary>The actions each scanner may use (#276). Scorecard publishes its results only from a workflow whose job uses its approved
+    /// actions, and neither scanner needs more.</summary>
+    private static readonly Dictionary<string, string[]> ScannerActions = new()
+    {
+        ["codeql.yml"] = ["actions/checkout", "actions/setup-dotnet", "github/codeql-action/init", "github/codeql-action/analyze"],
+        ["scorecard.yml"] = ["actions/checkout", "ossf/scorecard-action", "github/codeql-action/upload-sarif"],
+    };
+
+    /// <summary>
+    /// What a scanner (#276) does beyond scanning, one line each. CodeQL: on a pull request, a push to main, weekly and by hand; C# read
+    /// without a build (build-mode none); no cache (TRAP or dependency). Scorecard: on a push to main, weekly and on a branch rule change,
+    /// never a pull request; publishes its results; no env: or defaults: at the top or in its job, no container or service (Scorecard's
+    /// own rules for publishing). Both: one job, the checkout keeps no credentials, only the actions in <see cref="ScannerActions"/>, and
+    /// no run: step, and nothing that lets a failure pass. Their permissions are <see cref="WriterProblems"/>'.
+    /// </summary>
+    internal static IReadOnlyList<string> ScannerProblems(string name, string workflow)
+    {
+        var found = new List<string>();
+        var text = workflow.Replace("\r\n", "\n");
+        var code = Regex.Replace(text, @"(?m)^\s*#.*$", "");
+        void Require(bool ok, string problem) { if (!ok) found.Add(problem); }
+        var jobs = text.IndexOf("\njobs:\n", StringComparison.Ordinal);
+        Require(jobs >= 0 && Regex.Matches(text[jobs..], @"(?m)^  [\w-]+:\s*$").Count == 1, "not exactly one job");
+        Require(Regex.Matches(code, "persist-credentials: false").Count == 1 && Regex.Matches(code, "uses: actions/checkout@").Count == 1,
+            "the checkout keeps its credentials (persist-credentials: false is missing)");
+        var uses = Regex.Matches(code, @"(?m)^\s*-?\s*uses:\s*([^@\s]+)@").Select(m => m.Groups[1].Value).Distinct().ToArray();
+        Require(uses.All(ScannerActions[name].Contains) && ScannerActions[name].All(uses.Contains),
+            $"the actions are not exactly {string.Join(", ", ScannerActions[name])}: {string.Join(", ", uses)}");
+        Require(!code.Contains("continue-on-error", StringComparison.Ordinal) && !Regex.IsMatch(code, @"\|\||set \+e"), "a failure can pass");
+        // Only actions, no commands of their own: a run: step would run with the job's write (and, in Scorecard, its identity token), and
+        // Scorecard refuses to publish from a job with one.
+        Require(!Regex.IsMatch(code, @"(?m)^\s*-?\s*[""']?run[""']?\s*:"), "a run: step");
+        Require(Regex.IsMatch(text, @"(?m)^    branches: \[main\]$") && Regex.Matches(text, "branches").Count == 1, "the push is not exactly to main");
+        Require(Regex.IsMatch(text, @"(?m)^  schedule:\n    - cron: '\d+ \d+ \* \* [0-6]'\n"), "not weekly (one cron, on one day of the week)");
+        if (name == "codeql.yml")
+        {
+            Require(Triggers(text).SequenceEqual(["pull_request", "push", "schedule", "workflow_dispatch"]),
+                "the triggers are not exactly a pull request, a push to main, weekly and by hand");
+            Require(Regex.IsMatch(code, @"(?m)^          languages: csharp\n          build-mode: none\n          trap-caching: false\n          dependency-caching: false\n"),
+                "CodeQL does not read C# with build-mode none and no cache");
+        }
+        else
+        {
+            Require(Triggers(text).SequenceEqual(["push", "schedule", "branch_protection_rule"]),
+                "the triggers are not exactly a push to main, weekly and a branch rule change");
+            Require(code.Contains("          publish_results: true\n", StringComparison.Ordinal), "the results are not published");
+            Require(!Regex.IsMatch(code, @"(?m)^(env|defaults):") && !Regex.IsMatch(code, @"(?m)^    (env|defaults|container|services):"),
+                "env:, defaults:, a container or a service, which Scorecard refuses to publish from");
+            Require(Regex.IsMatch(code, @"(?m)^    runs-on: ubuntu-[\d.]+$"), "the job does not run on an Ubuntu runner");
+        }
+        return found;
+    }
+
+    [Fact]   // mutations (#276): scorecard on pull_request; codeql with build-mode autobuild; an unpinned github/codeql-action/upload-sarif@v4
+    public void The_scanners_scan_and_do_nothing_more() =>
+        Assert.All(ScannerActions.Keys, n => Assert.Empty(ScannerProblems(n, Workflows().Single(w => w.Name == n).Text)));
+
+    [Fact]
+    public void The_scanner_check_catches_each_way_to_do_more()
+    {
+        var codeql = Workflows().Single(w => w.Name == "codeql.yml").Text.Replace("\r\n", "\n");
+        var scorecard = Workflows().Single(w => w.Name == "scorecard.yml").Text.Replace("\r\n", "\n");
+        void Catches(string name, string text, string from, string to, string expect) => CatchesIn(t => ScannerProblems(name, t), text, from, to, expect);
+        foreach (var (name, text) in new[] { ("codeql.yml", codeql), ("scorecard.yml", scorecard) })
+        {
+            Assert.Empty(ScannerProblems(name, text));
+            Catches(name, text, "  schedule:\n", "  schedule:\n  issues:\n", "the triggers are not exactly");
+            Catches(name, text, "    branches: [main]\n", "    branches: [main, dev]\n", "the push is not exactly to main");
+            Catches(name, text, "  schedule:\n    - cron: '", "  schedule:\n    - cron: '*/5 * * * *'\n    - cron: '", "not weekly");
+            Catches(name, text, "          persist-credentials: false\n", "", "the checkout keeps its credentials");
+            Catches(name, text, "      - uses: actions/checkout@", "      - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4\n      - uses: actions/checkout@", "the actions are not exactly");
+            Catches(name, text, "    timeout-minutes:", "    continue-on-error: true\n    timeout-minutes:", "a failure can pass");
+            Catches(name, text, "      - uses: actions/checkout@", "      - run: curl -fsSL https://example.com/x.sh | sh\n      - uses: actions/checkout@", "a run: step");
+            Catches(name, text, "      - uses: actions/checkout@", "      - name: x\n        run: echo hi\n      - uses: actions/checkout@", "a run: step");
+            Catches(name, text, "jobs:\n", "jobs:\n  second:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi\n", "not exactly one job");
+        }
+        Catches("codeql.yml", codeql, "build-mode: none", "build-mode: autobuild", "build-mode none");
+        Catches("codeql.yml", codeql, "trap-caching: false", "trap-caching: true", "no cache");
+        Catches("codeql.yml", codeql, "languages: csharp", "languages: csharp,javascript", "C#");
+        Catches("scorecard.yml", scorecard, "on:\n", "on:\n  pull_request:\n", "the triggers are not exactly");
+        Catches("scorecard.yml", scorecard, "publish_results: true", "publish_results: false", "not published");
+        Catches("scorecard.yml", scorecard, "\njobs:\n", "\nenv:\n  X: y\n\njobs:\n", "env:, defaults:");
+        Catches("scorecard.yml", scorecard, "    timeout-minutes:", "    services:\n      x:\n        image: alpine\n    timeout-minutes:", "env:, defaults:");
+        Catches("scorecard.yml", scorecard, "    runs-on: ubuntu-24.04\n", "    runs-on: windows-2025\n", "Ubuntu");
+    }
+
+    /// <summary>The ecosystems Dependabot keeps up to date (#276), each with its folder: the workflows' actions, the .NET packages, the
+    /// schema check's npm packages, and the Dockerfile's base images (pinned by digest).</summary>
+    private static readonly string[] DependabotEcosystems = ["github-actions /", "nuget /dotnet", "npm /spec/check", "docker /dotnet"];
+
+    /// <summary>
+    /// The one cooldown exception (#276 review): Microsoft's .NET base images, whose rebuilds carry the OS and runtime security fixes and
+    /// which Dependabot has no security advisories for, so a cooldown would only hold those fixes back. Dependabot names a Docker image by
+    /// its repository; the docs do not say whether the registry host is part of the name, so both forms are listed. Nothing else is excluded.
+    /// </summary>
+    private static readonly string?[] DockerCooldownExclude = ["dotnet/*", "mcr.microsoft.com/dotnet/*"];
+
+    /// <summary>
+    /// What .github/dependabot.yml leaves out, one line each: exactly the ecosystems in <see cref="DependabotEcosystems"/>, each weekly,
+    /// each with a cooldown of at least 7 days (a release waits a week before it is proposed, as dotnet/aspire does; security updates are not
+    /// held back), minor and patch updates grouped into one pull request, and at most 5 open pull requests.
+    /// </summary>
+    internal static IReadOnlyList<string> DependabotProblems(string yaml)
+    {
+        var found = new List<string>();
+        YamlMappingNode root;
+        try
+        {
+            var stream = new YamlStream();
+            using (var reader = new StringReader(yaml)) stream.Load(reader);
+            root = (YamlMappingNode)stream.Documents.Single().RootNode;
+        }
+        catch (Exception e) when (e is YamlException or InvalidCastException or InvalidOperationException) { return [$"not YAML this check can read: {e.Message}"]; }
+
+        static YamlNode? Get(YamlNode? node, string key) =>
+            node is YamlMappingNode m && m.Children.TryGetValue(new YamlScalarNode(key), out var v) ? v : null;
+        static string? Text(YamlNode? node) => (node as YamlScalarNode)?.Value;
+
+        if (Text(Get(root, "version")) != "2") found.Add("version is not 2");
+        var updates = (Get(root, "updates") as YamlSequenceNode)?.Children ?? [];
+        var seen = updates.Select(u => $"{Text(Get(u, "package-ecosystem"))} {Text(Get(u, "directory"))}").ToArray();
+        if (!seen.Order(StringComparer.Ordinal).SequenceEqual(DependabotEcosystems.Order(StringComparer.Ordinal)))
+            found.Add($"the ecosystems are not exactly {string.Join(", ", DependabotEcosystems)}: {string.Join(", ", seen)}");
+        foreach (var (u, id) in updates.Zip(seen))
+        {
+            if (Text(Get(Get(u, "schedule"), "interval")) != "weekly") found.Add($"{id}: not weekly");
+            if (!int.TryParse(Text(Get(Get(u, "cooldown"), "default-days")), out var days) || days < 7) found.Add($"{id}: no cooldown of at least 7 days (default-days)");
+            if (Get(Get(u, "cooldown"), "include") is not null) found.Add($"{id}: a cooldown include: list (the cooldown must cover every dependency)");
+            var exclude = Get(Get(u, "cooldown"), "exclude") is { } ex ? (ex as YamlSequenceNode)?.Children.Select(Text).ToArray() ?? ["(not a list)"] : [];
+            var expected = id == "docker /dotnet" ? DockerCooldownExclude : [];
+            if (!exclude.SequenceEqual(expected))
+                found.Add($"{id}: the cooldown's exclude: is not exactly [{string.Join(", ", expected)}]: [{string.Join(", ", exclude)}]");
+            if (!int.TryParse(Text(Get(u, "open-pull-requests-limit")), out var limit) || limit < 1 || limit > 5) found.Add($"{id}: open-pull-requests-limit is not 1 to 5");
+            static string?[] List(YamlNode? node) => (node as YamlSequenceNode)?.Children.Select(Text).Order(StringComparer.Ordinal).ToArray() ?? [];
+            var groups = (Get(u, "groups") as YamlMappingNode)?.Children.Values ?? [];
+            if (!groups.Any(g => List(Get(g, "update-types")).SequenceEqual(["minor", "patch"]) && List(Get(g, "patterns")).SequenceEqual(["*"])))
+                found.Add($"{id}: minor and patch updates are not grouped (a group of patterns [\"*\"] and update-types minor and patch)");
+        }
+        return found;
+    }
+
+    private static string DependabotFile => Path.Combine(CoreRoot(), ".github", "dependabot.yml");
+
+    [Fact]   // mutations (#276): the docker entry dropped; a cooldown removed; a pip entry added; the npm folder misspelt
+    public void Dependabot_updates_the_four_ecosystems_weekly_after_a_cooldown()
+    {
+        Assert.True(File.Exists(DependabotFile), ".github/dependabot.yml is missing");
+        var problems = DependabotProblems(File.ReadAllText(DependabotFile));
+        Assert.True(problems.Count == 0, string.Join("\n", problems));
+        // Each folder is there (Dependabot reports a missing one only in its own logs) and holds what it updates.
+        Assert.True(File.Exists(Path.Combine(CoreRoot(), "dotnet", "Dockerfile")));
+        Assert.True(File.Exists(Path.Combine(CoreRoot(), "dotnet", "Packmoat.sln")));
+        Assert.True(File.Exists(Path.Combine(CoreRoot(), "spec", "check", "package-lock.json")));
+        Assert.NotEmpty(Directory.GetFiles(Path.Combine(CoreRoot(), ".github", "workflows")));
+    }
+
+    [Fact]
+    public void The_dependabot_check_catches_each_gap()
+    {
+        var text = File.ReadAllText(DependabotFile).Replace("\r\n", "\n");
+        Assert.Empty(DependabotProblems(text));
+        void Catches(string from, string to, string expect) => CatchesIn(DependabotProblems, text, from, to, expect);
+        var cooldown = Regex.Match(text, @"\n    cooldown:\n      default-days: 7\n").Value;
+        Assert.NotEmpty(cooldown);
+        // One ecosystem's cooldown removed (the first), the others left: that one is named.
+        Assert.Contains(DependabotProblems(new Regex(Regex.Escape(cooldown)).Replace(text, "\n", 1)), p => p == "github-actions /: no cooldown of at least 7 days (default-days)");
+        Catches("default-days: 7", "default-days: 3", "no cooldown");
+        Catches("directory: /spec/check", "directory: /spec", "the ecosystems are not exactly");
+        Catches("package-ecosystem: docker", "package-ecosystem: pip", "the ecosystems are not exactly");
+        Catches("interval: weekly", "interval: daily", "not weekly");
+        Catches("open-pull-requests-limit: 3", "open-pull-requests-limit: 50", "open-pull-requests-limit");
+        Catches("          - minor\n          - patch\n", "          - major\n          - minor\n          - patch\n", "not grouped");
+        Catches("version: 2", "version: 1", "version is not 2");
+        // The docker entry's exclusion is exactly the .NET images: not widened, not dropped, and no other entry has one.
+        const string Exclude = "        - \"mcr.microsoft.com/dotnet/*\"\n";
+        Catches(Exclude, "        - \"*\"\n", "docker /dotnet: the cooldown's exclude: is not exactly");
+        Catches(Exclude, Exclude + "        - \"mcr.microsoft.com/*\"\n", "docker /dotnet: the cooldown's exclude: is not exactly");
+        Catches("        - \"dotnet/*\"\n" + Exclude, "", "docker /dotnet: the cooldown's exclude: is not exactly");
+        Catches("  - package-ecosystem: nuget\n    directory: /dotnet\n    schedule:\n      interval: weekly\n    cooldown:\n      default-days: 7\n",
+            "  - package-ecosystem: nuget\n    directory: /dotnet\n    schedule:\n      interval: weekly\n    cooldown:\n      default-days: 7\n      exclude:\n        - \"Microsoft.*\"\n",
+            "nuget /dotnet: the cooldown's exclude: is not exactly");
+        Catches("  - package-ecosystem: npm\n    directory: /spec/check\n    schedule:\n      interval: weekly\n    cooldown:\n      default-days: 7\n",
+            "  - package-ecosystem: npm\n    directory: /spec/check\n    schedule:\n      interval: weekly\n    cooldown:\n      default-days: 7\n      include:\n        - \"ajv\"\n",
+            "npm /spec/check: a cooldown include:");
+        Catches("updates:", "updates: [", "not YAML");
     }
 
     // The review cases for #228, #230, #234 and #236 (b, c, n, r, p), each a job header or a step added to dotnet.yml, as the reviews'
@@ -590,11 +927,70 @@ public class CoreWorkflowTests
     public void The_expression_check_catches_each_review_case_for_the_right_reason(string name, string job, string step, params string[] expected)
     {
         const string JobLine = "    timeout-minutes: 30\n";
-        var dotnet = Workflows().Single(w => w.Name == "dotnet.yml").Text;
+        // Without the postgres service (#288): some cases add a services: of their own, and a job may have only one.
+        var dotnet = PostgresService.WithoutServices(Workflows().Single(w => w.Name == "dotnet.yml").Text);
         Assert.Contains(JobLine, dotnet);
         var problems = WorkflowExpressions.Problems(dotnet.Replace(JobLine, JobLine + job) + step);
         if (expected.Length == 0) Assert.True(problems.Count == 0, $"{name} must pass, got:\n" + string.Join("\n", problems));
         foreach (var e in expected)
             Assert.True(problems.Any(p => p.Contains(e, StringComparison.Ordinal)), $"{name}: expected \"{e}\", got:\n" + string.Join("\n", problems));
+    }
+
+    // ---- #288: the PostgreSQL service the test job runs beside, and dotnet/tools/postgres-tests.sh, on one image.
+
+    private static string Script() => File.ReadAllText(Path.Combine(CoreRoot(), "dotnet", "tools", "postgres-tests.sh")).Replace("\r\n", "\n");
+
+    // mutations: the digest dropped from dotnet.yml's image; PACKMOAT_TEST_POSTGRES removed from its test step; the script on another digest
+    [Fact]
+    public void The_test_job_runs_beside_a_postgres_service_pinned_by_digest_on_the_scripts_image()
+    {
+        var dotnet = Workflows().Single(w => w.Name == "dotnet.yml").Text.Replace("\r\n", "\n");
+        Assert.Equal(["dotnet"], PostgresService.TestJobs(dotnet));
+        var (image, problems) = PostgresService.Check(dotnet, "dotnet");
+        Assert.True(problems.Count == 0, string.Join("\n", problems));
+        Assert.Equal(image, PostgresService.ScriptImage(Script()));
+        // No other core workflow runs a whole solution's tests, so none needs the service.
+        Assert.All(Workflows().Where(w => w.Name != "dotnet.yml"), w => Assert.Empty(PostgresService.TestJobs(w.Text)));
+    }
+
+    [Fact]
+    public void The_postgres_service_check_catches_each_gap()
+    {
+        var dotnet = Workflows().Single(w => w.Name == "dotnet.yml").Text.Replace("\r\n", "\n");
+        var image = PostgresService.Check(dotnet, "dotnet").Image!;
+        void Catches(string from, string to, string expect)
+        {
+            Assert.Contains(from, dotnet);
+            var problems = PostgresService.Check(dotnet.Replace(from, to), "dotnet").Problems;
+            Assert.True(problems.Any(p => p.Contains(expect, StringComparison.Ordinal)), $"{to.Trim()}: expected \"{expect}\", got:\n" + string.Join("\n", problems));
+        }
+        Catches($"image: {image}", $"image: {image[..image.IndexOf('@')]}", "not postgres:17.x pinned by digest");
+        Catches($"image: {image}", $"image: {image.Replace("postgres:17.", "postgres:16.")}", "not postgres:17.x pinned by digest");
+        Catches($"image: {image}", $"image: {image[..^1]}", "not postgres:17.x pinned by digest");
+        Catches("--health-cmd \"pg_isready", "--health-cmd \"true", "no pg_isready health check");
+        Catches("          - 5432:5432\n", "          - 5433:5432\n", "does not publish port 5432");
+        Catches("          PACKMOAT_TEST_POSTGRES: ", "          PACKMOAT_TEST_POSTGRESQL: ", "does not set PACKMOAT_TEST_POSTGRES");
+        Catches("pm-ci-throwaway   # gitleaks:allow\n", "pm-ci-throwaway\n", "a password without gitleaks:allow");
+        Catches("    services:\n      postgres:\n", "    services:\n      pg:\n", "no postgres service");
+        Assert.Null(PostgresService.ScriptImage("image=postgres:17\n"));
+        Assert.Equal("postgres:17.1@sha256:x", PostgresService.ScriptImage("# x\nimage=\"postgres:17.1@sha256:x\"\n"));
+    }
+
+    // mutations: the trap removed; --rm dropped; the wait cut to 60; dotnet called directly (not through DOTNET)
+    [Fact]
+    public void The_postgres_tests_script_runs_the_image_throwaway_waits_and_stops_it()
+    {
+        var script = Script();
+        Assert.StartsWith("#!/usr/bin/env bash\n", script);
+        Assert.Contains("\nset -euo pipefail\n", script);
+        Assert.Contains("docker run --rm -d -p \"127.0.0.1:${port}:5432\"", script);
+        Assert.Contains("\nport=55432\n", script);
+        Assert.Contains("\ntrap 'docker stop \"$container\" > /dev/null' EXIT\n", script);
+        Assert.Contains("for _ in $(seq 1 120); do", script);
+        Assert.Contains("pg_isready -h 127.0.0.1", script);
+        Assert.Contains("\nexport PACKMOAT_TEST_POSTGRES=", script);
+        Assert.Contains("\n\"${DOTNET:-dotnet}\" test \"$dotnet_dir/Packmoat.sln\" --filter Category=Postgres \"$@\"\n", script);
+        Assert.All(script.Split('\n').Where(l => l.Contains("password=\"", StringComparison.Ordinal) || l.Contains("Password=", StringComparison.Ordinal)),
+            l => Assert.Contains("gitleaks:allow", l));
     }
 }

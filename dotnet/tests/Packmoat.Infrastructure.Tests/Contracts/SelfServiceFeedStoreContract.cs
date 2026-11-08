@@ -29,7 +29,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
 
     protected sealed class Setup : IAsyncDisposable
     {
-        public required TestDb T { get; init; }
+        public required IEngineDb T { get; init; }
         public required IStoreEngine Engine { get; init; }
         public ValueTask DisposeAsync() => T.DisposeAsync();
         public IFeedCheckStore Checks => Engine.FeedChecks(T);
@@ -55,13 +55,13 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         return s;
     }
 
-    protected async Task AddSelfMadeAsync(TestDb t, string tenant, string dir)
+    protected async Task AddSelfMadeAsync(IEngineDb t, string tenant, string dir)
     {
         if (Flagged)
-            await t.Tenants.CreateAsync(new NewTenant(tenant, tenant.ToUpperInvariant(), "", "", "", 14, TenantOrigin.Operator) { FeedSetup = FeedSetup.Customer }, default);
+            await Engine.Tenants(t).CreateAsync(new NewTenant(tenant, tenant.ToUpperInvariant(), "", "", "", 14, TenantOrigin.Operator) { FeedSetup = FeedSetup.Customer }, default);
         else
         {
-            await t.Tenants.CreateAsync(new NewTenant(tenant, tenant.ToUpperInvariant(), "https://pkgs.dev.azure.com/", "", "", 14, TenantOrigin.Self) { CreatedByOid = Admin }, default);
+            await Engine.Tenants(t).CreateAsync(new NewTenant(tenant, tenant.ToUpperInvariant(), "https://pkgs.dev.azure.com/", "", "", 14, TenantOrigin.Self) { CreatedByOid = Admin }, default);
             await ExecAsync(t, $"UPDATE tenants SET upstream_base='' WHERE id='{tenant}'");   // as self sign-up leaves it: no URLs at all
         }
         await Engine.SignInDirectory(t).BindAsync(new DirectoryBinding(dir, tenant, t.Clock.UtcNow, Flagged ? "op" : "self-signup"), default);
@@ -71,17 +71,17 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
     /// An operator write of the identity takes a flagged tenant's feed over (#207), so Connect then refuses at its first step. To reach
     /// the later check a test is about, the flag is put back by hand (nothing in the product does this). A self-made tenant: no change.
     /// </summary>
-    protected async Task KeepShapeAsync(TestDb t, string tenant = "selfco")
+    protected async Task KeepShapeAsync(IEngineDb t, string tenant = "selfco")
     {
         if (Flagged) await ExecAsync(t, $"UPDATE tenants SET feed_setup='customer' WHERE id='{tenant}'");
     }
 
-    protected static FeedCheck SettingsCheck(TestDb t, string tenant = "selfco", TimeSpan? age = null, IReadOnlyList<CheckResult>? results = null,
+    protected static FeedCheck SettingsCheck(IEngineDb t, string tenant = "selfco", TimeSpan? age = null, IReadOnlyList<CheckResult>? results = null,
         string dir = Dir, string feed = Feed, FeedCheckOutcome outcome = FeedCheckOutcome.Passed) =>
         new FeedCheck(tenant, t.Clock.UtcNow - (age ?? TimeSpan.FromHours(1)), dir, Admin, "Ada Lovelace", dir, feed, Client, outcome,
             results ?? Pass(SettingsIds), new[] { "Ada Lovelace" });
 
-    protected static FeedCheck DeveloperCheck(TestDb t, string tenant = "selfco", TimeSpan? age = null, string oid = Dev, string dir = Dir) =>
+    protected static FeedCheck DeveloperCheck(IEngineDb t, string tenant = "selfco", TimeSpan? age = null, string oid = Dev, string dir = Dir) =>
         new FeedCheck(tenant, t.Clock.UtcNow - (age ?? TimeSpan.FromHours(2)), dir, oid, "Grace Hopper", dir, Feed, Client, FeedCheckOutcome.Passed,
             Pass("developer"), Array.Empty<string>()) { Kind = FeedCheckKind.Developer };
 
@@ -91,7 +91,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
             new AdminActionRecord(s.T.Clock.UtcNow, dir, Admin, "Ada Lovelace", ConnectRules.ConnectAction, tenant, $"feed={feed}", "app"));
 
     /// <summary>Everything Connect could write, as text: compare before and after a refusal.</summary>
-    protected async Task<string> Snapshot(TestDb t)
+    protected async Task<string> Snapshot(IEngineDb t)
     {
         var parts = new List<string>();
         foreach (var sql in new[]
@@ -137,10 +137,10 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         var revision = (long)(await ScalarAsync(s.T, "SELECT policy_revision FROM tenants WHERE id='selfco'"))!;
         Assert.Equal(ConnectResult.Connected, await s.Store.ConnectSelfServiceFeedAsync(Request(s), default));
 
-        var tenant = (await s.T.Tenants.GetAsync("selfco", default))!;
+        var tenant = (await Engine.Tenants(s.T).GetAsync("selfco", default))!;
         Assert.Equal(("https://pkgs.dev.azure.com/", Prefix, Feed), (tenant.UpstreamBase, tenant.AllowedPathPrefix, tenant.UpstreamFeedIndexUrl));
         Assert.Equal(revision + 1, await ScalarAsync(s.T, "SELECT policy_revision FROM tenants WHERE id='selfco'"));
-        var binding = await s.T.Tenants.GetUpstreamBindingAsync("selfco", default);
+        var binding = await Engine.Tenants(s.T).GetUpstreamBindingAsync("selfco", default);
         Assert.Equal(new UpstreamBinding(IdentityKind.Shared, Dir, null), binding);
         Assert.Equal("wizard", await ScalarAsync(s.T, "SELECT verified_via FROM shared_app_verifications WHERE tenant_id='selfco'"));
         Assert.Equal(s.SettingsId, await ScalarAsync(s.T, "SELECT feed_check_id FROM shared_app_verifications WHERE tenant_id='selfco'"));
@@ -229,7 +229,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         }
         await using (var s = await StartAsync())
         {
-            await s.T.Tenants.SetActiveAsync("selfco", false, default);
+            await Engine.Tenants(s.T).SetActiveAsync("selfco", false, default);
             await Refused(s, ConnectResult.NotSelfMade);
         }
         await using (var s = await StartAsync())
@@ -261,27 +261,27 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
     public async Task An_own_app_identity_is_never_overwritten()
     {
         await using var s = await StartAsync();
-        await s.T.Tenants.SetUpstreamIdentityAsync("selfco", new UpstreamIdentity(Dir, "99999999-9999-4999-8999-999999999999", "-----BEGIN PRIVATE KEY-----\nOWN\n-----END PRIVATE KEY-----"), default);
+        await Engine.Tenants(s.T).SetUpstreamIdentityAsync("selfco", new UpstreamIdentity(Dir, "99999999-9999-4999-8999-999999999999", "-----BEGIN PRIVATE KEY-----\nOWN\n-----END PRIVATE KEY-----"), default);
         await KeepShapeAsync(s.T);
         await Refused(s, ConnectResult.OwnApp);
-        Assert.NotNull(await s.T.Tenants.GetUpstreamIdentityAsync("selfco", default));
+        Assert.NotNull(await Engine.Tenants(s.T).GetUpstreamIdentityAsync("selfco", default));
     }
 
     [Fact]
     public async Task A_directory_another_tenant_uses_is_refused_explicitly()
     {
         await using var s = await StartAsync();
-        await s.T.AddTenantAsync("e2e-shared");   // operator-made
-        await s.T.Tenants.BindSharedIdentityAsync("e2e-shared", Dir.ToUpperInvariant(), default);
+        await AddTenantAsync(s.T, "e2e-shared");   // operator-made
+        await Engine.Tenants(s.T).BindSharedIdentityAsync("e2e-shared", Dir.ToUpperInvariant(), default);
         await Refused(s, ConnectResult.DirectoryTaken);
-        Assert.Equal(new UpstreamBinding(IdentityKind.Shared, Dir.ToUpperInvariant(), null), await s.T.Tenants.GetUpstreamBindingAsync("e2e-shared", default));
+        Assert.Equal(new UpstreamBinding(IdentityKind.Shared, Dir.ToUpperInvariant(), null), await Engine.Tenants(s.T).GetUpstreamBindingAsync("e2e-shared", default));
     }
 
     [Fact]
     public async Task A_shared_binding_of_this_tenant_in_another_directory_is_refused()
     {
         await using var s = await StartAsync();
-        await s.T.Tenants.BindSharedIdentityAsync("selfco", OtherDir, default);
+        await Engine.Tenants(s.T).BindSharedIdentityAsync("selfco", OtherDir, default);
         await KeepShapeAsync(s.T);
         await Refused(s, ConnectResult.DirectoryTaken);
     }
@@ -361,8 +361,8 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         Assert.Null(await s.Shared.GetVerificationAsync("selfco", default));
         Assert.Equal(ConnectRules.WithdrawnAction, (await Engine.AdminActions(s.T).LatestAsync(1, default))[0].Action);
         // the URLs and binding stay: the tenant is simply not verified any more, so it serves nothing
-        var tenant = (await s.T.Tenants.GetAsync("selfco", default))!;
-        Assert.Equal(UpstreamReadiness.NotVerified, UpstreamReadiness.Of(tenant, await s.T.Tenants.GetUpstreamBindingAsync("selfco", default), null, Client));
+        var tenant = (await Engine.Tenants(s.T).GetAsync("selfco", default))!;
+        Assert.Equal(UpstreamReadiness.NotVerified, UpstreamReadiness.Of(tenant, await Engine.Tenants(s.T).GetUpstreamBindingAsync("selfco", default), null, Client));
         Assert.False(await s.Store.WithdrawAsync(v, action, default));   // only once
     }
 
@@ -404,13 +404,13 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         await using var s = await StartAsync();
         foreach (var id in new[] { "canary", "e2e-test" })
         {
-            await s.T.AddTenantAsync(id);
+            await AddTenantAsync(s.T, id);
             await s.Checks.RecordAsync(SettingsCheck(s.T, id), default);
         }
-        await s.T.Tenants.SetUpstreamIdentityAsync("e2e-test", new UpstreamIdentity(OtherDir, "99999999-9999-4999-8999-999999999999", "PEM"), default);
+        await Engine.Tenants(s.T).SetUpstreamIdentityAsync("e2e-test", new UpstreamIdentity(OtherDir, "99999999-9999-4999-8999-999999999999", "PEM"), default);
         var canaryCheck = (await s.Checks.LatestAsync("canary", FeedCheckKind.Settings, default))!.Id;
         await Refused(s, ConnectResult.NotSelfMade, Request(s, tenant: "canary", settings: canaryCheck));
         await Refused(s, ConnectResult.NotSelfMade, Request(s, tenant: "e2e-test"));
-        Assert.Equal("https://pkgs.dev.azure.com/example-org/example-project/_packaging/f/nuget/v3/index.json", (await s.T.Tenants.GetAsync("canary", default))!.UpstreamFeedIndexUrl);
+        Assert.Equal("https://pkgs.dev.azure.com/example-org/example-project/_packaging/f/nuget/v3/index.json", (await Engine.Tenants(s.T).GetAsync("canary", default))!.UpstreamFeedIndexUrl);
     }
 }

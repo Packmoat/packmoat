@@ -33,6 +33,20 @@ public class SettingsArchitectureTests
     [InlineData("Packmoat.Host/Modules/ICustomerSiteModule.cs", "public interface ICustomerSiteModule")]
     [InlineData("Packmoat.Host/Modules/IAdminSiteModule.cs", "public interface IAdminSiteModule")]
     [InlineData("Packmoat.Admin/IAdminCliModule.cs", "public interface IAdminCliModule")]
+    // #278 step 0: the engine-neutral seam types and the lifecycle's ports a module implements
+    [InlineData("Packmoat.Admin/IAdminCliModule.cs", "public sealed record AdminCliContext")]
+    [InlineData("Packmoat.Infrastructure/IRelationalDatabase.cs", "public interface IRelationalDatabase")]
+    [InlineData("Packmoat.Infrastructure/DbCommandParameters.cs", "public static class DbCommandParameters")]
+    // #278 step 0, PR 3: the schema and key-check ports, and the track a module hands over
+    [InlineData("Packmoat.Infrastructure/ISchemaMigrator.cs", "public interface ISchemaMigrator")]
+    [InlineData("Packmoat.Application/MasterKeyCheck.cs", "public interface IMasterKeyCheck")]
+    [InlineData("Packmoat.Infrastructure/MigrationTrack.cs", "public sealed partial class MigrationTrack")]
+    [InlineData("Packmoat.Infrastructure/DatabaseEngine.cs", "public enum DatabaseEngine")]
+    [InlineData("Packmoat.Infrastructure/Lifecycle/TenantLifecycle.cs", "public interface ITenantCreationParticipant")]
+    [InlineData("Packmoat.Infrastructure/Lifecycle/TenantLifecycle.cs", "public interface IPurgeContributor")]
+    [InlineData("Packmoat.Infrastructure/Lifecycle/TenantLifecycle.cs", "public interface IPurgeRecheck")]
+    [InlineData("Packmoat.Infrastructure/Lifecycle/TenantLifecycle.cs", "public sealed record TenantLifecycle(")]
+    [InlineData("Packmoat.Infrastructure/Lifecycle/TenantLifecycle.cs", "public sealed record TenantLifecycleFactory")]
     public void Each_module_api_type_is_marked_unstable(string file, string declaration)
     {
         var source = File.ReadAllText(Path.Combine(Src(), file)).Replace("\r\n", "\n");
@@ -43,11 +57,11 @@ public class SettingsArchitectureTests
         Assert.Contains(lines, l => l.Contains(Unstable, StringComparison.Ordinal));
     }
 
-    [Fact]   // mutation: drop the sentence from ARCHITECTURE.md's Modules line
+    [Fact]   // mutation: drop the sentence from architecture.md's Modules paragraph
     public void The_architecture_doc_marks_the_module_api_unstable()
     {
-        var modules = CoreRoot.Read("docs", "ARCHITECTURE.md").Split('\n').Single(l => l.StartsWith("- **Modules** (`IPackmoatModule`", StringComparison.Ordinal));
-        Assert.Contains(Unstable, modules);
+        var modules = CoreRoot.Read("docs", "architecture.md").Split('\n').Single(l => l.StartsWith("**Modules** add ", StringComparison.Ordinal));
+        Assert.Contains("The module interfaces may change in any release before 1.0.", modules);
     }
 
     [Fact]   // no [Experimental]: a module author is told in words, not stopped by a compiler error

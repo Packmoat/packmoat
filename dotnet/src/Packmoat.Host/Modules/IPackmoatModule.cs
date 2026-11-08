@@ -38,7 +38,7 @@ public interface IPackmoatModule
 /// A module that can run on only one engine refuses to start on any other. A module reads its own settings itself.
 /// <para>Unstable: may change in any release before 1.0.</para>
 /// </summary>
-public sealed record PackmoatModuleContext(WebApplicationBuilder Builder, PackmoatOptions Options, SqliteDatabase? Database, DatabaseEngine Engine)
+public sealed record PackmoatModuleContext(WebApplicationBuilder Builder, PackmoatOptions Options, IRelationalDatabase? Database, DatabaseEngine Engine)
 {
     /// <summary>
     /// The job lease a module's scheduled jobs take (#232 M2), through the core's port: the one the core's retention pass takes, over the

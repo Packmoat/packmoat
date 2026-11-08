@@ -3,27 +3,29 @@ using System.Globalization;
 using System.Reflection;
 using Microsoft.Data.Sqlite;
 using Packmoat.Application;
+using Packmoat.Infrastructure.Lifecycle;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// One database engine as the store contracts see it (#232 S1): a fresh database at the current schema, each store's adapter as its port,
-/// and the few raw operations a contract test needs where a port has no way in (setting up or reading back a row). The SQL a contract passes
-/// must mean the same on every engine: plain SELECT, INSERT, UPDATE and DELETE on the shared schema, no engine functions, no catalog tables.
+/// One database engine as SQL sees it (#232 S1, #288): a fresh database at the current schema, and the few raw operations a contract test
+/// needs where a port has no way in (setting up or reading back a row). The SQL a contract passes must mean the same on every engine: plain
+/// SELECT, INSERT, UPDATE and DELETE on the shared schema, no engine functions, no catalog tables.
 /// </summary>
-public interface IStoreEngine
+public interface ISqlEngine
 {
-    /// <summary>A fresh database at the current schema, with the engine's stores.</summary>
-    Task<TestDb> CreateAsync();
+    /// <summary>A fresh database at the current schema, with the engine's stores; the handle carries nothing of the engine.</summary>
+    Task<IEngineDb> CreateAsync();
 
     /// <summary>Runs one statement.</summary>
-    Task ExecAsync(TestDb t, string sql);
+    Task ExecAsync(IEngineDb t, string sql);
 
     /// <summary>The first column of the first row, or null for no row (<see cref="DBNull"/> for a NULL value); integers read as long.</summary>
-    Task<object?> ScalarAsync(TestDb t, string sql);
+    Task<object?> ScalarAsync(IEngineDb t, string sql);
 
     /// <summary>The first column of every row, as invariant text ("NULL" for a NULL value).</summary>
-    Task<List<string>> ColumnAsync(TestDb t, string sql);
+    Task<List<string>> ColumnAsync(IEngineDb t, string sql);
 
     /// <summary>The engine's refusal of a write (a constraint, a trigger, a foreign key): asserts <paramref name="write"/> throws it.</summary>
     Task<DbException> RefusedAsync(Func<Task> write);
@@ -31,22 +33,79 @@ public interface IStoreEngine
     /// <summary>The engine's SQL for a blob column as hex text, for comparing rows as text.</summary>
     string HexSql(string column);
 
-    IFeedCheckStore FeedChecks(TestDb t);
-    IDecisionRecordLog DecisionRecords(TestDb t);
-    IDecisionRecordQuery DecisionQuery(TestDb t);
-    ISharedAppCredentialStore SharedApp(TestDb t);
-    IAutoJoinSettingStore AutoJoin(TestDb t);
-    ISignInDirectoryStore SignInDirectory(TestDb t);
-    IMemberStore Members(TestDb t);
-    IAdminActionLog AdminActions(TestDb t);
-    ISelfServiceFeedStore SelfServiceFeeds(TestDb t);
-    IAuditLog Audit(TestDb t);
-    IAuditBatchLog AuditBatch(TestDb t);
-    IAuditRetention AuditRetention(TestDb t);
-    IAuditQuery AuditQuery(TestDb t);
-    TokenActivityPorts TokenActivity(TestDb t);
-    IJobLease JobLease(TestDb t);
-    ICookieKeyStore CookieKeys(TestDb t);
+    /// <summary>The schema's tables by name, in ordinal order, without the engine's own bookkeeping tables.</summary>
+    Task<List<string>> TablesAsync(IEngineDb t);
+
+    /// <summary>
+    /// SQL for a time column's value <paramref name="ago"/> before now by the clock the schema's rules read (#288 P2, PR 6), so a row can
+    /// be dated just either side of a retention floor.
+    /// </summary>
+    string TimeAgoSql(TimeSpan ago);
+
+    /// <summary>SQL for a blob literal holding the bytes <paramref name="hex"/> spells.</summary>
+    string BlobSql(string hex);
+
+    /// <summary>
+    /// Whether <paramref name="refusal"/> is the CHECK constraint's named <paramref name="name"/> (an engine that names constraints) or
+    /// written <paramref name="check"/> (one that reports the text): not a NOT NULL's, a key's, a trigger's or another CHECK's.
+    /// </summary>
+    bool IsCheckViolation(DbException refusal, string name, string check);
+}
+
+/// <summary>
+/// One database engine's master-key check (#288 P2, PR 5): its SQL and its <see cref="IMasterKeyCheck"/>. PostgreSQL has this before it has
+/// the stores (<see cref="MasterKeyCheckContract"/>).
+/// </summary>
+public interface IMasterKeyEngine : ISqlEngine
+{
+    /// <summary>The engine's master-key check over <paramref name="t"/>'s database, with <paramref name="key"/> as the master key.</summary>
+    IMasterKeyCheck MasterKeyCheck(IEngineDb t, AesGcmSecretProtector key);
+
+    /// <summary>
+    /// Test only (#295): adds a BEFORE INSERT trigger on meta to <paramref name="t"/>'s database alone, so the next insert of a key_check
+    /// row while none exists first inserts <paramref name="rivalMarker"/>: a rival first start, with another key, writing between this
+    /// start's read and its write, every time.
+    /// </summary>
+    Task ArrangeRivalMarkerAsync(IEngineDb t, byte[] rivalMarker);
+}
+
+/// <summary>
+/// One database engine as the store contracts see it (#232 S1): its SQL (<see cref="ISqlEngine"/>) and each store's adapter as its port.
+/// </summary>
+public interface IStoreEngine : IMasterKeyEngine
+{
+    /// <summary>The tenant store: the one the token service checks against, so a tenant made or deactivated here is seen by
+    /// <see cref="Tokens"/>.</summary>
+    ITenantStore Tenants(IEngineDb t);
+
+    /// <summary>The token service and its authenticator, over the tenant store <see cref="Tenants"/> gives.</summary>
+    TokenPorts Tokens(IEngineDb t);
+
+    /// <summary>
+    /// The tenant purge, built from <paramref name="lifecycle"/> as production builds it: its eligibility (none: every purge refused) and
+    /// its contributors. Its creation participants play no part in a purge.
+    /// </summary>
+    ITenantPurgeStore Purge(IEngineDb t, TenantLifecycle lifecycle);
+
+    /// <summary>The organisation creation, with the same lifecycle participants as <see cref="Tenants"/> (the core's tests: none).</summary>
+    IOrganisationStore Organisations(IEngineDb t);
+
+    IFeedCheckStore FeedChecks(IEngineDb t);
+    IDecisionRecordLog DecisionRecords(IEngineDb t);
+    IDecisionRecordQuery DecisionQuery(IEngineDb t);
+    ISharedAppCredentialStore SharedApp(IEngineDb t);
+    IAutoJoinSettingStore AutoJoin(IEngineDb t);
+    ISignInDirectoryStore SignInDirectory(IEngineDb t);
+    IMemberStore Members(IEngineDb t);
+    IAdminActionLog AdminActions(IEngineDb t);
+    ISelfServiceFeedStore SelfServiceFeeds(IEngineDb t);
+    IAuditLog Audit(IEngineDb t);
+    IAuditBatchLog AuditBatch(IEngineDb t);
+    IAuditRetention AuditRetention(IEngineDb t);
+    IAuditQuery AuditQuery(IEngineDb t);
+    TokenActivityPorts TokenActivity(IEngineDb t);
+    IJobLease JobLease(IEngineDb t);
+    ICookieKeyStore CookieKeys(IEngineDb t);
 }
 
 /// <summary>The SQLite engine: <see cref="TestDb"/> and the <c>Sqlite*</c> adapters.</summary>
@@ -54,27 +113,33 @@ public sealed class SqliteStoreEngine : IStoreEngine
 {
     public static SqliteStoreEngine Instance { get; } = new();
 
-    public Task<TestDb> CreateAsync() => TestDb.CreateAsync();
+    public async Task<IEngineDb> CreateAsync() => await TestDb.CreateAsync();
 
-    public async Task ExecAsync(TestDb t, string sql)
+    /// <summary>
+    /// The one place a contract's handle is taken back to the SQLite <see cref="TestDb"/> it is: this engine's own adapters need its
+    /// connection and its stores. A handle from another engine is refused.
+    /// </summary>
+    private static TestDb Sql(IEngineDb t) => t as TestDb ?? throw new ArgumentException($"Not a SQLite test database: {t.GetType().Name}.", nameof(t));
+
+    public async Task ExecAsync(IEngineDb t, string sql)
     {
-        await using var c = await t.Db.OpenAsync();
+        await using var c = await Sql(t).Db.OpenAsync();
         await using var cmd = c.CreateCommand();
         cmd.CommandText = sql;
         await cmd.ExecuteNonQueryAsync();
     }
 
-    public async Task<object?> ScalarAsync(TestDb t, string sql)
+    public async Task<object?> ScalarAsync(IEngineDb t, string sql)
     {
-        await using var c = await t.Db.OpenAsync();
+        await using var c = await Sql(t).Db.OpenAsync();
         await using var cmd = c.CreateCommand();
         cmd.CommandText = sql;
         return await cmd.ExecuteScalarAsync();
     }
 
-    public async Task<List<string>> ColumnAsync(TestDb t, string sql)
+    public async Task<List<string>> ColumnAsync(IEngineDb t, string sql)
     {
-        await using var c = await t.Db.OpenAsync();
+        await using var c = await Sql(t).Db.OpenAsync();
         await using var cmd = c.CreateCommand();
         cmd.CommandText = sql;
         var rows = new List<string>();
@@ -87,24 +152,58 @@ public sealed class SqliteStoreEngine : IStoreEngine
 
     public string HexSql(string column) => $"hex({column})";
 
-    public IFeedCheckStore FeedChecks(TestDb t) => new SqliteFeedCheckStore(t.Db);
-    public IDecisionRecordLog DecisionRecords(TestDb t) => new SqliteDecisionRecordLog(t.Db);
-    public IDecisionRecordQuery DecisionQuery(TestDb t) => new SqliteDecisionRecordQuery(t.Db);
-    public ISharedAppCredentialStore SharedApp(TestDb t) => new SqliteSharedAppCredentialStore(t.Db, t.Clock, t.Protector);
-    public IAutoJoinSettingStore AutoJoin(TestDb t) => new SqliteAutoJoinSettingStore(t.Db);
-    public ISignInDirectoryStore SignInDirectory(TestDb t) => new SqliteSignInDirectoryStore(t.Db);
-    public IMemberStore Members(TestDb t) => new SqliteMemberStore(t.Db);
-    public IAdminActionLog AdminActions(TestDb t) => new SqliteAdminActionLog(t.Db);
-    public ISelfServiceFeedStore SelfServiceFeeds(TestDb t) => new SqliteSelfServiceFeedStore(t.Db);
-    public IAuditLog Audit(TestDb t) => new SqliteAuditLog(t.Db);
-    public IAuditBatchLog AuditBatch(TestDb t) => new SqliteAuditLog(t.Db);
-    public IAuditRetention AuditRetention(TestDb t) => new SqliteAuditLog(t.Db);
-    public IAuditQuery AuditQuery(TestDb t) => new SqliteAuditLog(t.Db);
-    public IJobLease JobLease(TestDb t) => new SqliteJobLease(t.Db, t.Clock);
-    public ICookieKeyStore CookieKeys(TestDb t) => new SqliteCookieKeyStore(t.Db, t.Clock, t.Protector);
-    public TokenActivityPorts TokenActivity(TestDb t)
+    public async Task<List<string>> TablesAsync(IEngineDb t) =>
+        (await ColumnAsync(t, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite%'")).Order(StringComparer.Ordinal).ToList();
+
+    /// <summary>The time as the writers store it ("O" format, UTC): the triggers read julianday('now'), this machine's clock.</summary>
+    public string TimeAgoSql(TimeSpan ago) => $"'{(DateTimeOffset.UtcNow - ago).ToString("O", CultureInfo.InvariantCulture)}'";
+
+    public string BlobSql(string hex) => $"X'{hex}'";
+
+    /// <summary>
+    /// SQLITE_CONSTRAINT_CHECK, the extended result code, with the constraint's text in the message ("CHECK constraint failed: …"; SQLite
+    /// names an unnamed CHECK by its text), spaces and line breaks compared as one space.
+    /// </summary>
+    public bool IsCheckViolation(DbException refusal, string name, string check) =>
+        refusal is SqliteException { SqliteExtendedErrorCode: 275 }
+        && OneSpace(refusal.Message).EndsWith($"CHECK constraint failed: {OneSpace(check)}'.", StringComparison.Ordinal);
+
+    private static string OneSpace(string text) => System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
+
+    public ITenantStore Tenants(IEngineDb t) => Sql(t).Tenants;
+    public TokenPorts Tokens(IEngineDb t) => new(Sql(t).Tokens, Sql(t).Tokens);
+    public ITenantPurgeStore Purge(IEngineDb t, TenantLifecycle lifecycle) => Sql(t).Stores.PurgeStore(lifecycle);
+    public IOrganisationStore Organisations(IEngineDb t) => Sql(t).Stores.Organisations(TestDb.Lifecycle);
+    public IFeedCheckStore FeedChecks(IEngineDb t) => new SqliteFeedCheckStore(Sql(t).Db);
+    public IDecisionRecordLog DecisionRecords(IEngineDb t) => new SqliteDecisionRecordLog(Sql(t).Db);
+    public IDecisionRecordQuery DecisionQuery(IEngineDb t) => new SqliteDecisionRecordQuery(Sql(t).Db);
+    public ISharedAppCredentialStore SharedApp(IEngineDb t) => new SqliteSharedAppCredentialStore(Sql(t).Db, t.Clock, t.Protector);
+    public IAutoJoinSettingStore AutoJoin(IEngineDb t) => new SqliteAutoJoinSettingStore(Sql(t).Db);
+    public ISignInDirectoryStore SignInDirectory(IEngineDb t) => new SqliteSignInDirectoryStore(Sql(t).Db);
+    public IMemberStore Members(IEngineDb t) => new SqliteMemberStore(Sql(t).Db);
+    public IAdminActionLog AdminActions(IEngineDb t) => new SqliteAdminActionLog(Sql(t).Db);
+    public ISelfServiceFeedStore SelfServiceFeeds(IEngineDb t) => new SqliteSelfServiceFeedStore(Sql(t).Db);
+    public IAuditLog Audit(IEngineDb t) => new SqliteAuditLog(Sql(t).Db);
+    public IAuditBatchLog AuditBatch(IEngineDb t) => new SqliteAuditLog(Sql(t).Db);
+    public IAuditRetention AuditRetention(IEngineDb t) => new SqliteAuditLog(Sql(t).Db);
+    public IAuditQuery AuditQuery(IEngineDb t) => new SqliteAuditLog(Sql(t).Db);
+    public IJobLease JobLease(IEngineDb t) => new SqliteJobLease(Sql(t).Db, t.Clock);
+    public ICookieKeyStore CookieKeys(IEngineDb t) => new SqliteCookieKeyStore(Sql(t).Db, t.Clock, t.Protector);
+    public IMasterKeyCheck MasterKeyCheck(IEngineDb t, AesGcmSecretProtector key) => new SqliteMasterKeyCheck(Sql(t).Db, key);
+
+    /// <summary>A plain trigger. Its own insert does not fire it again (recursive triggers are off, and the value test stops it anyway).</summary>
+    public async Task ArrangeRivalMarkerAsync(IEngineDb t, byte[] rivalMarker)
     {
-        var activity = new SqliteTokenActivity(t.Db, t.Clock);
+        var rival = BlobSql(Convert.ToHexString(rivalMarker));
+        await ExecAsync(t, $"""
+            CREATE TRIGGER test_rival_marker BEFORE INSERT ON meta
+            WHEN NEW.key = 'key_check' AND NEW.value <> {rival} AND NOT EXISTS (SELECT 1 FROM meta WHERE key = 'key_check')
+            BEGIN INSERT INTO meta(key, value) VALUES('key_check', {rival}); END
+            """);
+    }
+    public TokenActivityPorts TokenActivity(IEngineDb t)
+    {
+        var activity = new SqliteTokenActivity(Sql(t).Db, t.Clock);
         return new(activity, activity, activity);
     }
 }
@@ -118,22 +217,62 @@ public sealed class TokenActivityPorts(ITokenActivityLog log, IActiveDeveloperQu
     public Task<int> PruneAsync(DateOnly keepFrom, CancellationToken cancellationToken) => retention.PruneAsync(keepFrom, cancellationToken);
 }
 
+/// <summary>The token service and its authenticator as one object, the way the tests use them (the SQLite adapter is one class with both).</summary>
+public sealed class TokenPorts(ITokenService service, ITenantAuthenticator authenticator) : ITokenService, ITenantAuthenticator
+{
+    public Task<IssuedToken> IssueAsync(string tenantId, string label, CancellationToken cancellationToken, TokenKind kind = TokenKind.Developer) =>
+        service.IssueAsync(tenantId, label, cancellationToken, kind);
+    public Task<bool> RevokeAsync(string tokenId, CancellationToken cancellationToken) => service.RevokeAsync(tokenId, cancellationToken);
+    public Task<bool> RevokeAsync(string tenantId, string tokenId, CancellationToken cancellationToken) => service.RevokeAsync(tenantId, tokenId, cancellationToken);
+    public Task<IReadOnlyList<TokenInfo>> ListAsync(string tenantId, CancellationToken cancellationToken) => service.ListAsync(tenantId, cancellationToken);
+    public Task<IssuedToken?> IssueForMemberAsync(string tenantId, string ownerTid, string ownerOid, string label, DateTimeOffset expiresAt, TokenKind kind, int maxActive,
+        CancellationToken cancellationToken) => service.IssueForMemberAsync(tenantId, ownerTid, ownerOid, label, expiresAt, kind, maxActive, cancellationToken);
+    public Task<IReadOnlyList<TokenInfo>> ListForMemberAsync(string tenantId, string ownerTid, string ownerOid, CancellationToken cancellationToken) =>
+        service.ListForMemberAsync(tenantId, ownerTid, ownerOid, cancellationToken);
+    public Task<bool> RevokeForMemberAsync(string tenantId, string ownerTid, string ownerOid, string tokenId, string revokedBy, CancellationToken cancellationToken) =>
+        service.RevokeForMemberAsync(tenantId, ownerTid, ownerOid, tokenId, revokedBy, cancellationToken);
+    public Task<bool> RevokeInTenantAsync(string tenantId, string tokenId, string revokedBy, CancellationToken cancellationToken) =>
+        service.RevokeInTenantAsync(tenantId, tokenId, revokedBy, cancellationToken);
+    public ValueTask<AuthResult?> AuthenticateAsync(string token, CancellationToken cancellationToken) => authenticator.AuthenticateAsync(token, cancellationToken);
+}
+
 /// <summary>
 /// The base of every store contract (#232 S1). A contract is an abstract class holding the tests every adapter of a store's port must pass.
-/// It reaches the database only through <see cref="Engine"/>: never through an engine's own types (<c>t.Db</c>, a <c>Sqlite*</c> constructor,
-/// <c>SqliteException</c>), the database file, or SQL only one engine understands. Each contract has one concrete subclass per engine: today
+/// It reaches the database only through <see cref="SqlContract{TEngine}.Engine"/>: never through an engine's own types (<c>t.Db</c>, a <c>Sqlite*</c> constructor,
+/// <c>SqliteException</c>, the handle's SQLite-typed <c>t.Tenants</c> and <c>t.Tokens</c>), the database file, or SQL only one engine understands. Each contract has one concrete subclass per engine: today
 /// the SQLite one (<c>TenantStoreTests</c> for <c>TenantStoreContract</c>, and so on), which also keeps the tests that only make sense on
 /// SQLite (migrations from older versions, triggers, catalog tables, bytes on disk). A Postgres adapter adds an engine and a second subclass
-/// of each contract, and runs the same tests.
+/// of each contract, and runs the same tests. A contract whose port an engine has before it has the stores (the master-key check on
+/// PostgreSQL, #288 P2) derives from <see cref="SqlContract{TEngine}"/> over a smaller engine instead.
 /// </summary>
-public abstract class StoreContract
+public abstract class StoreContract : SqlContract<IStoreEngine>
 {
-    protected abstract IStoreEngine Engine { get; }
 
-    protected Task<TestDb> CreateDbAsync() => Engine.CreateAsync();
-    protected Task ExecAsync(TestDb t, string sql) => Engine.ExecAsync(t, sql);
-    protected Task<object?> ScalarAsync(TestDb t, string sql) => Engine.ScalarAsync(t, sql);
-    protected Task<List<string>> ColumnAsync(TestDb t, string sql) => Engine.ColumnAsync(t, sql);
+    /// <summary>
+    /// The trait on a contract test that rests on the schema's own rules, its triggers (the append-only logs, the retention floors, the
+    /// purge and dropped-row rules) rather than the adapter's code or a constraint. Both engines have the triggers (PostgreSQL since #288 P2
+    /// PR 6, where SchemaRulesContract checks each one), so nothing skips them; the mark says which store tests a change to a trigger can
+    /// break, on either engine. The list is pinned in <see cref="StoreContractCoverageTests.TriggerTests"/>.
+    /// </summary>
+    public const string Needs = "Needs";
+    public const string Triggers = "Triggers";
+
+    /// <summary>An operator-made tenant (<see cref="TestTenants.Operator"/>), through the engine's tenant store.</summary>
+    protected Task AddTenantAsync(IEngineDb t, string id = "acme", int cooldown = 14) => Engine.Tenants(t).CreateAsync(TestTenants.Operator(id, cooldown), default);
+}
+
+/// <summary>
+/// The root of every contract (#288 P2, PR 5): the engine it runs on and the raw SQL helpers, all through <see cref="Engine"/>. A contract
+/// is an abstract subclass (through <see cref="StoreContract"/> for the stores), held to the same rules.
+/// </summary>
+public abstract class SqlContract<TEngine> where TEngine : ISqlEngine
+{
+    protected abstract TEngine Engine { get; }
+
+    protected Task<IEngineDb> CreateDbAsync() => Engine.CreateAsync();
+    protected Task ExecAsync(IEngineDb t, string sql) => Engine.ExecAsync(t, sql);
+    protected Task<object?> ScalarAsync(IEngineDb t, string sql) => Engine.ScalarAsync(t, sql);
+    protected Task<List<string>> ColumnAsync(IEngineDb t, string sql) => Engine.ColumnAsync(t, sql);
     protected Task<DbException> RefusedAsync(Func<Task> write) => Engine.RefusedAsync(write);
 }
 
@@ -144,12 +283,43 @@ public abstract class StoreContract
 [Collection("sqlite-pools")]
 public class StoreContractCoverageTests
 {
-    private static readonly Type[] Types = typeof(StoreContract).Assembly.GetTypes();
+    internal static readonly Type[] Types = typeof(StoreContract).Assembly.GetTypes();
 
-    private static List<string> ContractNames() =>
-        Types.Where(t => t.IsAbstract && t != typeof(StoreContract) && typeof(StoreContract).IsAssignableFrom(t)).Select(t => t.Name).Order(StringComparer.Ordinal).ToList();
+    /// <summary>An abstract class under <see cref="SqlContract{TEngine}"/>, other than the bases themselves: one contract.</summary>
+    internal static bool IsContract(Type t)
+    {
+        if (!t.IsAbstract || t == typeof(StoreContract) || t.IsGenericTypeDefinition) return false;
+        for (var b = t.BaseType; b is not null; b = b.BaseType)
+            if (b.IsGenericType && b.GetGenericTypeDefinition() == typeof(SqlContract<>)) return true;
+        return false;
+    }
+
+    private static List<string> ContractNames() => Types.Where(IsContract).Select(t => t.Name).Order(StringComparer.Ordinal).ToList();
 
     public static TheoryData<string> Contracts() => new(ContractNames());
+
+    /// <summary>
+    /// The contracts that may have a PostgreSQL fixture as well as their SQLite one (#288 P2): the ones whose port PostgreSQL has before
+    /// its stores (P3 to P5): the master-key check (PR 5) and the schema's rules (PR 6).
+    /// </summary>
+    internal static readonly string[] PostgresFixturesAllowed = ["MasterKeyCheckContract", "SchemaRulesContract"];
+
+    /// <summary>
+    /// A fixture's engine: its Engine override, the nearest one up its classes. (Asked of the fixture alone, the name is ambiguous: the
+    /// generic base's abstract property and the override are both found.)
+    /// </summary>
+    internal static object? EngineOf(Type fixture)
+    {
+        for (var type = fixture; type is not null; type = type.BaseType)
+            if (type.GetProperty("Engine", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly) is { } property)
+                return property.GetValue(Activator.CreateInstance(fixture));
+        return null;
+    }
+
+    /// <summary>Whether <paramref name="fixture"/> carries [Trait("Category", "Postgres")], the trait tools/postgres-tests.sh picks.</summary>
+    internal static bool IsPostgresFixture(Type fixture) =>
+        fixture.GetCustomAttributesData().Any(a => a.AttributeType == typeof(TraitAttribute)
+            && (string?)a.ConstructorArguments[0].Value == "Category" && (string?)a.ConstructorArguments[1].Value == PostgresTestServer.Category);
 
     [Theory]
     [MemberData(nameof(Contracts))]
@@ -162,10 +332,24 @@ public class StoreContractCoverageTests
         Assert.Contains(fixtures, f => f.Name == contract[..^"Contract".Length] + "Tests");
         foreach (var fixture in fixtures)
         {
-            // Every fixture builds databases, so it runs alone (see SqlitePoolsCollection), on the SQLite engine.
-            Assert.Equal("sqlite-pools", fixture.GetCustomAttributesData().Single(a => a.AttributeType == typeof(CollectionAttribute)).ConstructorArguments[0].Value);
-            var engine = fixture.GetProperty("Engine", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(Activator.CreateInstance(fixture));
+            var collection = fixture.GetCustomAttributesData().Single(a => a.AttributeType == typeof(CollectionAttribute)).ConstructorArguments[0].Value;
+            var engine = EngineOf(fixture);
+            if (engine is PostgresSqlEngine)
+            {
+                // A PostgreSQL fixture (#288 P2): only for the allowed contracts, in the Postgres collection with its trait, named after the
+                // SQLite one, and every test an [EngineFact], so it skips as [PostgresFact] does when there is no server.
+                Assert.Contains(contract, PostgresFixturesAllowed);
+                Assert.Equal(PostgresCollection.Name, collection);
+                Assert.True(IsPostgresFixture(fixture), $"{fixture.Name} has no [Trait(\"Category\", \"Postgres\")]");
+                Assert.Equal("Postgres" + contract[..^"Contract".Length] + "Tests", fixture.Name);
+                Assert.All(type.GetMethods(BindingFlags.Instance | BindingFlags.Public).Where(m => m.GetCustomAttributes<FactAttribute>().Any()),
+                    m => Assert.NotNull(m.GetCustomAttribute<EngineFactAttribute>()));
+                continue;
+            }
+            // Every SQLite fixture builds databases, so it runs alone (see SqlitePoolsCollection), on the SQLite engine.
+            Assert.Equal("sqlite-pools", collection);
             Assert.IsType<SqliteStoreEngine>(engine);
+            Assert.False(IsPostgresFixture(fixture));
         }
     }
 
@@ -176,8 +360,9 @@ public class StoreContractCoverageTests
         [
             "AdminActionLogContract", "AuditContract", "AuditRetentionStoreContract", "AutoJoinStoreContract", "CookieKeyStoreContract", "CustomerDirectoryContract",
             "DecisionRecordQueryContract", "DecisionRecordStoreContract", "DeveloperCountingContract", "FeedCheckStoreContract", "JobLeaseContract",
-            "MemberTokenContract", "SelfServiceFeedStoreContract", "SharedAppIdentityContract", "TenantStoreContract", "TokenContract",
-            "WaiverStoreContract",
+            "MasterKeyCheckContract", "MemberTokenContract", "OrganisationStoreContract", "SchemaRulesContract", "SelfServiceFeedStoreContract", "SharedAppIdentityContract",
+            "TenantPurgeStoreContract",
+            "TenantStoreContract", "TokenContract", "WaiverStoreContract",
         ];
         Assert.Equal(expected, ContractNames());
     }
@@ -198,11 +383,26 @@ public class StoreContractCoverageTests
         Assert.Equal(ContractNames().Count, files.Count);
         foreach (var file in files)
         {
-            var code = File.ReadAllLines(file).Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)).Select(l => TrailingComment.Replace(l, ""));
-            var offences = Offences(string.Join('\n', code));
+            var offences = Offences(Code(File.ReadAllLines(file)));
             Assert.True(offences.Count == 0, $"{System.IO.Path.GetFileName(file)} uses {string.Join(", ", offences.Select(o => $"\"{o}\""))}: move the test to the SQLite fixture");
         }
+
+        // The base classes' helpers (AddTenantAsync and the rest) run in every contract, so they are held to the same rule. The rest of
+        // StoreContract.cs is the SQLite engine and this check, which name SQLite by design.
+        var lines = File.ReadAllLines(System.IO.Path.Combine(ContractsDir(), "StoreContract.cs"));
+        foreach (var declaration in new[] { "public abstract class StoreContract : SqlContract<IStoreEngine>", "public abstract class SqlContract<TEngine> where TEngine : ISqlEngine" })
+        {
+            var start = Array.IndexOf(lines, declaration);
+            var end = Array.IndexOf(lines, "}", start);
+            Assert.True(start >= 0 && end > start, $"The class body of \"{declaration}\" was not found");
+            var helpers = Offences(Code(lines[start..end]));
+            Assert.True(helpers.Count == 0, $"\"{declaration}\"'s helpers use {string.Join(", ", helpers.Select(o => $"\"{o}\""))}: reach the database through Engine");
+        }
     }
+
+    /// <summary>Source lines as code: whole-line and trailing comments left out.</summary>
+    private static string Code(IEnumerable<string> lines) =>
+        string.Join('\n', lines.Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)).Select(l => TrailingComment.Replace(l, "")));
 
     /// <summary>The check above on single lines: each of these reaches past the engine and must be caught.</summary>
     [Theory]
@@ -220,13 +420,37 @@ public class StoreContractCoverageTests
     [InlineData("PRAGMA integrity_check")]
     [InlineData("var bytes = await t.RawBytesAsync();")]
     [InlineData("await t.Db.MigrateAsync([]);")]
+    [InlineData("await t.Tenants.GetAsync(\"acme\", default);")]
+    [InlineData("await s.T.Tenants.SetActiveAsync(\"selfco\", false, default);")]
+    [InlineData("var issued = await t.Tokens.IssueAsync(\"acme\", \"ci\", default);")]
+    [InlineData("var cached = new CachedTenantAuthenticator(t.Tokens, t.Clock);")]
+    [InlineData("var commands = new AdminCommands(t.Tenants, t.Tokens, t.Clock);")]
+    [InlineData("await t.AddTenantAsync(\"globex\");")]
+    [InlineData("await s.T.AddTenantAsync();")]
+    [InlineData("await t.AddCoreTenantAsync();")]
+    [InlineData("await t.AddLegacyTenantAsync();")]
+    [InlineData("var stores = t.Stores;")]
+    [InlineData("await t.Stores.Tenants(t.Clock, TestDb.Lifecycle).GetAsync(\"acme\", default);")]
+    [InlineData("await t.Audit.AppendAsync(e, default);")]
+    [InlineData("var log = s.T.Audit;")]
+    [InlineData("var tokens = t.Tokens;")]
+    [InlineData("var s = (TestDb)t;")]
+    [InlineData("var s = t as TestDb;")]
+    [InlineData("if (t is TestDb s) { }")]
+    [InlineData("await using var t = await TestDb.CreateAsync();")]
     public void The_engine_check_catches(string line) => Assert.NotEmpty(Offences(line));
 
     /// <summary>And these are ordinary contract code, which it must let through.</summary>
     [Theory]
     [InlineData("await using var t = await CreateDbAsync();")]
     [InlineData("var store = Engine.FeedChecks(t);")]
-    [InlineData("await t.Tenants.GetAsync(\"acme\", default);")]
+    [InlineData("await Engine.Tenants(t).GetAsync(\"acme\", default);")]
+    [InlineData("var cached = new CachedTenantAuthenticator(Engine.Tokens(t), t.Clock);")]
+    [InlineData("await AddTenantAsync(t, \"globex\");")]
+    [InlineData("Assert.Equal(\"ann\", r.Tokens.Single().Label);")]
+    [InlineData("Assert.Empty(r.Tokens);")]
+    [InlineData("foreach (var x in r.Tokens)")]
+    [InlineData("await Engine.Audit(t).AppendAsync(e, default);")]
     [InlineData("var p = System.IO.Path.Combine(a, b);")]
     [InlineData("var d = t.Dbx + t.Directory;")]
     [InlineData("await ExecAsync(t, \"DELETE FROM audit_events WHERE request_id='old'\");")]
@@ -236,10 +460,18 @@ public class StoreContractCoverageTests
     [
         "Sqlite", "sqlite_", "PRAGMA", "pragma_", "group_concat", "GROUP_CONCAT", "julianday", "datetime(", "DATETIME(", "strftime", "VACUUM",
         "rowid", "ROWID", "AUTOINCREMENT", "RawBytesAsync", "MigrateAsync",
+        "TestDb",   // the SQLite handle by name: a cast, an "as" or "is", or a database made around the engine
     ];
 
-    /// <summary>TestDb's SQLite members (the connection, the file, its folder) through any variable; System.IO.Path is not one.</summary>
-    private static readonly System.Text.RegularExpressions.Regex SqliteMember = new(@"\.(?:Db|Dir)\b|(?<!\bIO)\.Path\b");
+    /// <summary>
+    /// TestDb's SQLite members through any variable, a second line behind the handle's type (<see cref="IEngineDb"/> has none of them):
+    /// the connection, the file, its folder (System.IO.Path is not one), its SQLite stores, the SQLite tenant store, audit log and token
+    /// service, and the helpers that make a tenant through them. <c>.Tenants</c> and <c>.Audit</c> are properties there, so never called
+    /// (<c>Engine.Tenants(t)</c> is). <c>.Tokens</c> is also a result's list (<c>ActiveDevelopers.Tokens</c>), so it counts only where the
+    /// token service is used: an "Async" call on it, or handed on with a comma, assigned or ended with a semicolon.
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex SqliteMember = new(
+        @"\.(?:Db|Dir|Stores)\b|(?<!\bIO)\.Path\b|\.(?:Tenants|Audit)\b(?!\s*\()|\.Tokens\b(?=\s*(?:\.\s*\w*Async\b|[,;]))|\.Add(?:Core|Legacy)?TenantAsync\b");
 
     private static List<string> Offences(string code) =>
         SqliteOnlyWords.Where(w => code.Contains(w, StringComparison.Ordinal))
@@ -252,13 +484,46 @@ public class StoreContractCoverageTests
     private static string ContractsDir([System.Runtime.CompilerServices.CallerFilePath] string self = "") => System.IO.Path.GetDirectoryName(self)!;
 
     /// <summary>
+    /// The contract tests marked as resting on triggers (<see cref="StoreContract.Triggers"/>), by Contract.Method, in ordinal order: the
+    /// purge's (#288 P2, PR 2), the audit log's and its retention's, and the decision records' late write (PR 6). No test of the admin-action
+    /// log, auto-join, customer directory, member token or feed-check contracts rests on a trigger (their refusals are constraints' and
+    /// foreign keys'; the admin_actions floor is SchemaRulesContract's), so none of theirs is here.
+    /// A test marked or unmarked changes this list in the same pull request.
+    /// </summary>
+    public static readonly string[] TriggerTests =
+    [
+        "AuditContract.The_audit_table_refuses_updates_and_deletes",
+        "AuditRetentionStoreContract.A_batch_is_stored_in_order_and_a_purged_tenants_events_are_dropped",
+        "AuditRetentionStoreContract.A_row_89_days_old_cannot_be_deleted_and_one_91_days_old_can",
+        "AuditRetentionStoreContract.A_running_purge_still_deletes_the_tenants_young_rows_and_only_those",
+        "AuditRetentionStoreContract.No_row_can_be_changed_however_old",
+        "AuditRetentionStoreContract.The_floor_is_90_days_to_the_minute_by_the_databases_utc_clock",
+        "AuditRetentionStoreContract.With_the_clock_ahead_the_database_refuses_and_keeps_the_young_rows",
+        "DecisionRecordStoreContract.A_late_write_for_a_purged_tenant_is_dropped_and_a_live_tenants_is_kept",
+        "TenantPurgeStoreContract.A_late_audit_event_or_decision_record_for_a_purged_tenant_is_dropped_and_another_tenants_is_kept",
+        "TenantPurgeStoreContract.A_purged_id_is_never_used_again_and_its_record_cannot_be_written_twice",
+    ];
+
+    [Fact]
+    public void The_tests_that_need_triggers_are_the_pinned_list()
+    {
+        var marked = Types.Where(IsContract)
+            .SelectMany(t => t.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
+                .Where(m => m.GetCustomAttributesData().Any(a => a.AttributeType == typeof(TraitAttribute)
+                    && (string?)a.ConstructorArguments[0].Value == StoreContract.Needs && (string?)a.ConstructorArguments[1].Value == StoreContract.Triggers))
+                .Select(m => t.Name + "." + m.Name))
+            .Order(StringComparer.Ordinal).ToList();
+        Assert.Equal(TriggerTests, marked);
+    }
+
+    /// <summary>
     /// Every contract's test methods, pinned in Contracts/contract-tests.txt: deleting or renaming one fails here unless the list changes in
     /// the same pull request, so a contract cannot lose a test (and a second engine the check it brings) without anyone seeing it.
     /// </summary>
     [Fact]
     public void The_contract_tests_are_the_pinned_list()
     {
-        var actual = Types.Where(t => t.IsAbstract && t != typeof(StoreContract) && typeof(StoreContract).IsAssignableFrom(t))
+        var actual = Types.Where(IsContract)
             .SelectMany(t => t.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
                 .Where(m => m.GetCustomAttributes<FactAttribute>().Any())
                 .Select(m => t.Name + "." + m.Name))
@@ -270,8 +535,11 @@ public class StoreContractCoverageTests
     }
 
     /// <summary>
-    /// <see cref="IStoreEngine.RefusedAsync"/> is what every contract's refusal checks rest on, so it is checked itself, on every fixture's
-    /// engine: a write that succeeds must fail it, and a write that is refused must give back the very exception the engine threw.
+    /// <see cref="ISqlEngine.RefusedAsync"/> is what every contract's refusal checks rest on, so it is checked itself, on every fixture's
+    /// engine: a write that succeeds must fail it, and a write that is refused must give back the very exception the engine threw. This
+    /// theory takes every fixture but the PostgreSQL ones ([Trait("Category", "Postgres")]): theirs need the test server, so they are
+    /// checked in <see cref="PostgresStoreContractCoverageTests"/>, which carries the trait. cd.yml runs Category!=Postgres with no server,
+    /// so a test here that reached one would fail every deploy (#297).
     /// </summary>
     [Theory]
     [MemberData(nameof(Contracts))]
@@ -280,20 +548,48 @@ public class StoreContractCoverageTests
         var type = Types.Single(t => t.Name == contract);
         foreach (var fixture in Types.Where(t => !t.IsAbstract && type.IsAssignableFrom(t)))
         {
-            var engine = (IStoreEngine)fixture.GetProperty("Engine", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(Activator.CreateInstance(fixture))!;
-            await using var t = await engine.CreateAsync();
-
-            await Assert.ThrowsAnyAsync<Xunit.Sdk.XunitException>(() => engine.RefusedAsync(() => Task.CompletedTask));
-            await Assert.ThrowsAnyAsync<Xunit.Sdk.XunitException>(() => engine.RefusedAsync(() => engine.ExecAsync(t, "UPDATE schema_migrations SET applied_at = applied_at")));
-
-            Exception? thrown = null;
-            var refusal = await engine.RefusedAsync(async () =>
-            {
-                try { await engine.ExecAsync(t, "INSERT INTO schema_migrations(version, applied_at) VALUES(1, 'again')"); }   // version 1 is there
-                catch (Exception e) { thrown = e; throw; }
-            });
-            Assert.NotNull(thrown);
-            Assert.Same(thrown, refusal);
+            if (IsPostgresFixture(fixture)) continue;
+            await AssertRefusalCheckAsync((ISqlEngine)EngineOf(fixture)!);
         }
+    }
+
+    /// <summary>The refusal check on one engine: a write that succeeds fails it, and a refused write gives back the engine's own exception.</summary>
+    internal static async Task AssertRefusalCheckAsync(ISqlEngine engine)
+    {
+        await using var t = await engine.CreateAsync();
+
+        await Assert.ThrowsAnyAsync<Xunit.Sdk.XunitException>(() => engine.RefusedAsync(() => Task.CompletedTask));
+        await Assert.ThrowsAnyAsync<Xunit.Sdk.XunitException>(() => engine.RefusedAsync(() => engine.ExecAsync(t, "UPDATE schema_migrations SET applied_at = applied_at")));
+
+        Exception? thrown = null;
+        var refusal = await engine.RefusedAsync(async () =>
+        {
+            // version 1 is there (a time both engines read, so the refusal is the primary key's)
+            try { await engine.ExecAsync(t, "INSERT INTO schema_migrations(version, applied_at) VALUES(1, '2026-01-01T00:00:00+00:00')"); }
+            catch (Exception e) { thrown = e; throw; }
+        });
+        Assert.NotNull(thrown);
+        Assert.Same(thrown, refusal);
+    }
+}
+
+/// <summary>
+/// The refusal check (<see cref="StoreContractCoverageTests.AssertRefusalCheckAsync"/>) on every PostgreSQL contract fixture's engine
+/// (#297). It needs the test server, so it carries the Postgres trait and collection: tools/postgres-tests.sh and ci.yml run it, and
+/// cd.yml's Category!=Postgres leaves it out.
+/// </summary>
+[Collection(PostgresCollection.Name)]
+[Trait("Category", PostgresTestServer.Category)]
+public class PostgresStoreContractCoverageTests
+{
+    [PostgresFact]
+    public async Task Every_postgres_fixtures_engine_passes_the_refusal_check()
+    {
+        var types = StoreContractCoverageTests.Types;
+        var fixtures = types.Where(t => !t.IsAbstract && StoreContractCoverageTests.IsPostgresFixture(t)
+            && types.Any(c => StoreContractCoverageTests.IsContract(c) && c.IsAssignableFrom(t))).ToList();
+        Assert.NotEmpty(fixtures);
+        foreach (var fixture in fixtures)
+            await StoreContractCoverageTests.AssertRefusalCheckAsync((ISqlEngine)StoreContractCoverageTests.EngineOf(fixture)!);
     }
 }

@@ -70,21 +70,4 @@ public class CachedAuthenticatorTests
         cached.Clear();
         Assert.Null(await cached.AuthenticateAsync(issued.Plaintext, default));
     }
-
-    [Fact]
-    public async Task Tenant_scoped_revoke_cannot_touch_another_tenants_token()
-    {
-        await using var t = await TestDb.CreateAsync();
-        await t.AddTenantAsync("acme");
-        await t.AddTenantAsync("other");
-        var mine = await t.Tokens.IssueAsync("acme", "mine", default);
-        var theirs = await t.Tokens.IssueAsync("other", "theirs", default);
-
-        Assert.False(await t.Tokens.RevokeAsync("acme", theirs.TokenId, default));   // wrong tenant: nothing changes
-        Assert.NotNull(await t.Tokens.AuthenticateAsync(theirs.Plaintext, default));
-        Assert.False(await t.Tokens.RevokeAsync("other", "tok_nope", default));
-        Assert.True(await t.Tokens.RevokeAsync("acme", mine.TokenId, default));
-        Assert.Null(await t.Tokens.AuthenticateAsync(mine.Plaintext, default));
-        Assert.False(await t.Tokens.RevokeAsync("acme", mine.TokenId, default));      // already revoked
-    }
 }

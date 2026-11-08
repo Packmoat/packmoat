@@ -47,7 +47,8 @@ public class ReviewFixesM4HostTests
             }));
             Assert.Contains("master key does not match", ex.Message);
         }
-        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch { } }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 
     [Fact]
@@ -59,7 +60,8 @@ public class ReviewFixesM4HostTests
             var ex = Assert.Throws<InvalidOperationException>(() => Start(dir, NewKey(), null).GetAwaiter().GetResult());
             Assert.Contains("PACKMOAT_HOSTS", ex.Message);
         }
-        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch { } }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 
     [Fact]
@@ -86,6 +88,7 @@ public class ReviewFixesM4HostTests
             Assert.Equal(HttpStatusCode.BadRequest, await Get("/v3/index.json", "evil.example", forwardedHost: "feeds.example.test"));
             Assert.Equal(HttpStatusCode.OK, await Get("/healthz", AddressOf(app)["http://".Length..]));         // the container health check uses the loopback address
         }
-        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch { } }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 }

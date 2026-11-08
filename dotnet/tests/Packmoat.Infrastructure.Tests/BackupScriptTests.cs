@@ -12,7 +12,8 @@ namespace Packmoat.Infrastructure.Tests;
 [UnsupportedOSPlatform("windows")]
 public sealed class BackupHarness : IDisposable
 {
-    public string Root { get; } = Directory.CreateTempSubdirectory("packmoat-backup-").FullName;
+    private readonly TempDir _temp = TempDir.Create("packmoat-backup-");
+    public string Root => _temp.Path;
     public string Bin => Path.Combine(Root, "bin");
     public string Stub => Path.Combine(Root, "stub");
     public string Data => Path.Combine(Root, "data");
@@ -124,7 +125,7 @@ public sealed class BackupHarness : IDisposable
         return dir?.FullName ?? throw new InvalidOperationException("the core's root (dotnet/Packmoat.sln and deploy/backup.sh) not found.");
     }
 
-    public void Dispose() { try { Directory.Delete(Root, true); } catch { /* best effort */ } }
+    public void Dispose() => _temp.Dispose();
 }
 
 [UnsupportedOSPlatform("windows")]

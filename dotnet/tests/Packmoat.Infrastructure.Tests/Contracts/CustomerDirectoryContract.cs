@@ -16,8 +16,8 @@ public abstract class CustomerDirectoryContract : StoreContract
     public async Task One_directory_maps_to_at_most_one_tenant_and_ids_are_stored_lower_case()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
-        await t.AddTenantAsync("globex");
+        await AddTenantAsync(t, "acme");
+        await AddTenantAsync(t, "globex");
         var store = Engine.SignInDirectory(t);
         Assert.True(await store.BindAsync(new DirectoryBinding(Dir.ToUpperInvariant(), "acme", t.Clock.UtcNow, "op"), default));
         Assert.False(await store.BindAsync(new DirectoryBinding(Dir, "globex", t.Clock.UtcNow, "op"), default));

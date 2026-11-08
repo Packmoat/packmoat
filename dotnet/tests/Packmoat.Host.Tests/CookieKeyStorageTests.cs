@@ -53,6 +53,61 @@ public class CookieKeyStorageTests
         Assert.Equal(CookieKeyStorage.Database, CookieKeyStorages.Parse(reader.Read(CookieKeyStorages.Variable)));
     }
 
+    // ---------------------------------------------------------------- the rule (#278 step 0, D11)
+
+    [Theory]   // mutations: either refusal dropped; the folder allowed for another engine
+    [InlineData(CookieKeyStorage.Folder, DatabaseEngine.Sqlite, true)]
+    [InlineData(CookieKeyStorage.Folder, DatabaseEngine.Sqlite, false)]   // a test host or a key folder set: the site's own check decides
+    [InlineData(CookieKeyStorage.Database, DatabaseEngine.Sqlite, true)]
+    [InlineData(CookieKeyStorage.Database, DatabaseEngine.Postgres, true)]
+    public void The_rule_allows_the_folder_on_sqlite_and_the_database_with_a_database(CookieKeyStorage storage, DatabaseEngine engine, bool database) =>
+        CookieKeyStorages.Require(storage, engine, database);
+
+    [Theory]   // mutation: the moved message reworded (an operator's runbook quotes it)
+    [InlineData(DatabaseEngine.Sqlite)]
+    [InlineData(DatabaseEngine.Postgres)]
+    public void The_rule_refuses_database_storage_without_a_database(DatabaseEngine engine)
+    {
+        var ex = Assert.Throws<SettingsException>(() => CookieKeyStorages.Require(CookieKeyStorage.Database, engine, databaseConfigured: false));
+        Assert.Equal("PACKMOAT_COOKIE_KEYS=database needs a database: PACKMOAT_DB is not set.", ex.Message);
+    }
+
+    [Theory]   // mutation: a non-SQLite engine keeps its keys in a folder (each copy would mint its own keys and sign everyone out)
+    [InlineData(true)]
+    [InlineData(false)]
+    public void The_rule_refuses_postgres_with_folder_storage(bool database)
+    {
+        var ex = Assert.Throws<SettingsException>(() => CookieKeyStorages.Require(CookieKeyStorage.Folder, DatabaseEngine.Postgres, database));
+        Assert.Equal("PACKMOAT_DB_ENGINE=postgres needs PACKMOAT_COOKIE_KEYS=database: its PACKMOAT_DB is no file to keep a key folder next to.", ex.Message);
+    }
+
+    [Fact]   // mutation: a key folder derived from a non-SQLite engine's PACKMOAT_DB (a connection string has no folder next to it)
+    public void The_key_folder_is_next_to_the_database_only_for_sqlite()
+    {
+        var db = Path.Combine(Path.GetTempPath(), "pm-keysdir", "packmoat.db");
+        var options = new PackmoatOptions { DatabasePath = db };
+        Assert.Equal(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(db))!, "admin-keys"), SignedInSite.KeysDir(options, DatabaseEngine.Sqlite));
+        Assert.Null(SignedInSite.KeysDir(options, DatabaseEngine.Postgres));
+        Assert.Null(SignedInSite.KeysDir(new PackmoatOptions(), DatabaseEngine.Sqlite));
+        // A relative path is made full first, so the folder never moves with the working directory's later changes.
+        Assert.Equal(Path.Combine(Path.GetDirectoryName(Path.GetFullPath("packmoat.db"))!, "admin-keys"),
+            SignedInSite.KeysDir(new PackmoatOptions { DatabasePath = "packmoat.db" }, DatabaseEngine.Sqlite));
+        Assert.True(Path.IsPathFullyQualified(SignedInSite.KeysDir(new PackmoatOptions { DatabasePath = "packmoat.db" }, DatabaseEngine.Sqlite)!));
+        // PACKMOAT_ADMIN_KEYS_DIR wins on every engine.
+        var set = new PackmoatOptions { DatabasePath = db, AdminKeysDir = "/srv/keys" };
+        Assert.Equal("/srv/keys", SignedInSite.KeysDir(set, DatabaseEngine.Sqlite));
+        Assert.Equal("/srv/keys", SignedInSite.KeysDir(set, DatabaseEngine.Postgres));
+    }
+
+    private const string NoKeyFolder = "A sign-in site needs somewhere lasting to keep its cookie keys: set PACKMOAT_DB (the usual setup), or PACKMOAT_ADMIN_KEYS_DIR, or PACKMOAT_COOKIE_KEYS=database with a database.";
+
+    [Fact]   // mutation: the ephemeral branch restored (keys in memory: every restart signs everyone out, every copy has its own keys)
+    public void Folder_mode_with_no_folder_refuses_instead_of_keeping_the_keys_in_memory()
+    {
+        var ex = Assert.Throws<SettingsException>(() => SignedInSite.AddShared(new ServiceCollection(), keysDir: null));
+        Assert.Equal(NoKeyFolder, ex.Message);
+    }
+
     // ---------------------------------------------------------------- the server
 
     private static void Options(PackmoatOptions o, string dbDir, string? keysDir, string? cookieKeys, string? masterKey = null)
@@ -88,11 +143,7 @@ public class CookieKeyStorageTests
 
     private static string Dir(string name) => Directory.CreateTempSubdirectory($"packmoat-cookie-keys-{name}-").FullName;
 
-    private static void Delete(params string[] dirs)
-    {
-        SqliteConnection.ClearAllPools();
-        foreach (var d in dirs) try { Directory.Delete(d, true); } catch (IOException) { }
-    }
+    private static void Delete(string dir) => TempDir.Delete(dir, clearSqlitePools: true);
 
     /// <summary>Thrown when the server built, which these tests say it must not.</summary>
     private sealed class StartedException : Exception;
@@ -139,6 +190,47 @@ public class CookieKeyStorageTests
             Assert.Equal(1, code);
             Assert.Equal("error: PACKMOAT_COOKIE_KEYS=database needs a database: PACKMOAT_DB is not set.", error);
             Assert.False(Directory.Exists(Path.Combine(dir, "keys")));
+        }
+        finally { Delete(dir); }
+    }
+
+    [Theory]   // mutation: the ephemeral branch restored (the site would start with its keys in memory)
+    [InlineData("admin")]
+    [InlineData("app")]
+    public void A_site_with_no_key_folder_and_no_database_stops_the_start_naming_the_settings_not_their_values(string site)
+    {
+        var (code, error) = Start(o =>
+        {
+            o.AllowedHosts = "feeds.example.test";
+            if (site == "admin") o.AdminHost = "admin.example.test"; else o.AppHost = "app.example.test";
+        });
+        Assert.Equal(1, code);
+        Assert.Equal("error: " + NoKeyFolder, error);
+    }
+
+    [Theory]   // mutations: a site passes another engine to KeysDir, or hard-codes it (production's real config would refuse to start)
+    [InlineData(true)]    // both sites: the admin site registers the keys
+    [InlineData(false)]   // the customer site alone registers them
+    public async Task The_production_default_keeps_the_sites_keys_in_admin_keys_next_to_the_database(bool adminSite)
+    {
+        var dir = Dir("production");
+        try
+        {
+            // A build that hangs must not hang the run: the build is bounded.
+            var app = await Task.Run(() => PackmoatApp.Build(["--urls", "http://127.0.0.1:0"], TestModules.Server, null, o =>
+            {
+                o.DatabasePath = Path.Combine(dir, "packmoat.db");
+                o.MasterKeyBase64 = AesGcmSecretProtector.GenerateKeyBase64();
+                o.AllowedHosts = "feeds.example.test";
+                if (adminSite) o.AdminHost = "admin.example.test";
+                o.AppHost = "app.example.test";
+                // No PACKMOAT_ADMIN_KEYS_DIR, folder mode (PACKMOAT_COOKIE_KEYS unset): exactly the shipped deployments.
+            })).WaitAsync(TimeSpan.FromMinutes(1));
+            await using (app)
+            {
+                Assert.IsType<FileSystemXmlRepository>(app.Services.GetRequiredService<IOptions<KeyManagementOptions>>().Value.XmlRepository);
+                Assert.True(Directory.Exists(Path.Combine(dir, "admin-keys")));
+            }
         }
         finally { Delete(dir); }
     }

@@ -31,7 +31,7 @@ public enum PurgeVerdict
 /// <summary>
 /// What an <see cref="IPurgeEligibility"/> decided about one tenant (#194). The core reads only these fields: the verdict and its
 /// reason, when it is (or will be) due, the basis recorded with the purge, and the detail written to admin_actions. <see cref="State"/>
-/// is the eligibility's own: handed back to it unchanged (to confirm, and to re-check under the purge's write lock), never read here.
+/// is the eligibility's own: handed back to it unchanged (to confirm, and to re-check where no other writer can change it before the delete), never read here.
 /// </summary>
 public sealed record PurgeCandidate(string TenantId, PurgeVerdict Verdict, string Reason, DateTimeOffset? DueAt, string Basis, string Detail)
 {
@@ -72,7 +72,7 @@ public sealed record PurgedTable(string Table, int Rows);
 /// <summary>The result of <see cref="TenantPurgeCommands.PurgeAsync"/>: done now (with per-table counts), or already done earlier (no counts).</summary>
 public sealed record PurgeOutcome(bool AlreadyPurged, DateTimeOffset PurgedAt, IReadOnlyList<PurgedTable> Counts);
 
-/// <summary>Where the purge does its one delete (Infrastructure: SQLite), and the eligibility that decides and re-checks it.</summary>
+/// <summary>Where the purge does its one delete (Infrastructure), and the eligibility that decides and re-checks it.</summary>
 public interface ITenantPurgeStore
 {
     /// <summary>

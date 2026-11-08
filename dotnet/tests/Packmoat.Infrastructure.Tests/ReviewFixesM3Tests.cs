@@ -34,7 +34,8 @@ public class FilePermissionTests
                 Assert.True(File.Exists(path + "-wal"), "the test must actually look at a -wal file");
             }
         }
-        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(root, true); } catch { } }
+        catch when (TempDir.Failing(root)) { throw; }
+        finally { TempDir.Delete(root, clearSqlitePools: true); }
     }
 
     [Fact]
@@ -48,7 +49,8 @@ public class FilePermissionTests
             _ = new SqliteDatabase(Path.Combine(root, "packmoat.db"));
             Assert.Equal("755", Mode(root));
         }
-        finally { try { Directory.Delete(root, true); } catch { } }
+        catch when (TempDir.Failing(root)) { throw; }
+        finally { TempDir.Delete(root); }
     }
 
     [Fact]
@@ -64,7 +66,8 @@ public class FilePermissionTests
             _ = new SqliteDatabase(path);
             Assert.Equal("640", Mode(path));
         }
-        finally { try { Directory.Delete(root, true); } catch { } }
+        catch when (TempDir.Failing(root)) { throw; }
+        finally { TempDir.Delete(root); }
     }
 }
 

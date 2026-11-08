@@ -14,19 +14,15 @@ namespace Packmoat.Host.Tests;
 /// duration, and one that loses the lease is skipped and says so at Information level.
 /// </summary>
 [Collection("sqlite-pools")]
-public class JobLeaseHostTests : IAsyncDisposable
+public class JobLeaseHostTests : IDisposable
 {
-    private readonly string _dir = Directory.CreateTempSubdirectory("packmoat-lease-").FullName;
+    private readonly TempDir _temp = TempDir.Create("packmoat-lease-", clearSqlitePools: true);
     private readonly string _key = AesGcmSecretProtector.GenerateKeyBase64();
     private readonly FakeClock _clock = new();
-    private string DbPath => Path.Combine(_dir, "packmoat.db");
+    private string DbPath => _temp.File("packmoat.db");
 
-    public ValueTask DisposeAsync()
-    {
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        try { Directory.Delete(_dir, true); } catch (IOException) { }
-        return ValueTask.CompletedTask;
-    }
+    // xunit 2 disposes a test class through IDisposable only (an IAsyncDisposable one is never called): #292.
+    public void Dispose() => _temp.Dispose();
 
     internal sealed class RecordingLogger : ILogger
     {

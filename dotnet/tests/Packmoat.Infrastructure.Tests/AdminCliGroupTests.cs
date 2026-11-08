@@ -39,8 +39,8 @@ public class AdminCliGroupTests
         public string Usage => "";
         public string EnvironmentUsage => "";
         public Task<int> RunAsync(AdminCliContext context) { Runs++; return Task.FromResult(0); }
-        public IServingGate? Gate(SqliteDatabase db, CliEnvironment env, Action<string> warn) => null;
-        public TenantLifecycle? Lifecycle(SqliteDatabase db, CliEnvironment env, Action<string> note) => null;
+        public IServingGate? Gate(IRelationalDatabase db, CliEnvironment env, Action<string> warn) => null;
+        public TenantLifecycle? Lifecycle(IRelationalDatabase db, CliEnvironment env, Action<string> note) => null;
         public MigrationTrack? Migrations => null;
     }
 
@@ -63,7 +63,8 @@ public class AdminCliGroupTests
             Assert.Equal(0, module.Runs);
             Assert.Empty(Directory.GetFiles(dir));
         }
-        finally { try { Directory.Delete(dir, true); } catch { } }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir); }
     }
 
     [Fact]

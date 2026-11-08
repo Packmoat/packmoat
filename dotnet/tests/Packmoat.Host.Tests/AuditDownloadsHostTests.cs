@@ -198,7 +198,8 @@ public class AuditDownloadsHostTests
             Assert.Equal(new[] { "edge" }, (await audit.QueryAsync("acme", 10, default)).Select(e => e.RequestId));
             Assert.Equal(TimeSpan.FromMinutes(1), RetentionService.AuditPruneMargin);
         }
-        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch { } }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 
     [Fact]   // mutation: the queue registered with AddSingleton (it would replace an audit log the caller registered)
@@ -212,7 +213,8 @@ public class AuditDownloadsHostTests
             Assert.Same(mine, app.Services.GetRequiredService<IAuditLog>());
             Assert.Single(app.Services.GetServices<IAuditLog>());
         }
-        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch { } }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 
     [Fact]   // mutation: the production host does not hand the database to the retention pass
@@ -259,6 +261,7 @@ public class AuditDownloadsHostTests
                 Assert.Equal(2L, await cmd.ExecuteScalarAsync());
             }
         }
-        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch { } }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 }

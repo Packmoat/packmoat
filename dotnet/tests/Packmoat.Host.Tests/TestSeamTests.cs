@@ -86,7 +86,8 @@ public class TestSeamTests
             inspect?.Invoke(app);
             lock (logs.All) return logs.All.Where(l => l.Category == PackmoatApp.TestSeamCategory).Select(l => $"{l.Level}: {l.Message}").ToList();
         }
-        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch { } }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 
     private sealed class Lines : ILoggerProvider

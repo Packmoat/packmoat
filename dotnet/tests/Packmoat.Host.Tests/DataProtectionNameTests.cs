@@ -17,8 +17,11 @@ public class DataProtectionNameTests
     [Fact]   // mutation: drop .SetApplicationName("packmoat-admin") or change the name in SignedInSite.AddShared
     public void The_signed_in_sites_share_the_application_name_packmoat_admin()
     {
+        // A key folder of its own (#278 step 0, D11): with none, folder mode refuses instead of keeping the keys in memory.
+        using var temp = TempDir.Create("pm-dp-");
+        var keys = temp.File("keys");   // not made yet: the site makes it
         var services = new ServiceCollection();
-        SignedInSite.AddShared(services, keysDir: null);
+        SignedInSite.AddShared(services, keys);
         using var sp = services.BuildServiceProvider();
         Assert.Equal("packmoat-admin", sp.GetRequiredService<IOptions<DataProtectionOptions>>().Value.ApplicationDiscriminator);
     }
@@ -26,14 +29,11 @@ public class DataProtectionNameTests
     [Fact]   // mutation: drop .SetApplicationName (renaming it changes both sides, so only the test above catches a rename)
     public void A_payload_protected_under_the_old_entry_point_unprotects_under_the_new_ones()
     {
-        var keys = Path.Combine(Path.GetTempPath(), "pm-dp-" + Guid.NewGuid().ToString("N"));
-        try
-        {
-            var before = Protector(keys, "Packmoat.Host", "/app/host-old").Protect("session");
-            Assert.Equal("session", Protector(keys, "Packmoat.Hosted.Host", "/app/host").Unprotect(before));
-            Assert.Equal("session", Protector(keys, "Packmoat.Server", "/srv/core").Unprotect(before));
-        }
-        finally { if (Directory.Exists(keys)) Directory.Delete(keys, true); }
+        using var temp = TempDir.Create("pm-dp-");
+        var keys = temp.File("keys");   // not made yet: the site makes it
+        var before = Protector(keys, "Packmoat.Host", "/app/host-old").Protect("session");
+        Assert.Equal("session", Protector(keys, "Packmoat.Hosted.Host", "/app/host").Unprotect(before));
+        Assert.Equal("session", Protector(keys, "Packmoat.Server", "/srv/core").Unprotect(before));
     }
 
     private static IDataProtector Protector(string keysDir, string applicationName, string contentRoot)

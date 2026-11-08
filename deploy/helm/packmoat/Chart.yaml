@@ -2,7 +2,7 @@ apiVersion: v2
 name: packmoat
 description: >-
   One copy of the Packmoat server (the core image) on Kubernetes: one pod, its SQLite database on a ReadWriteOnce volume, secrets read
-  from files. See docs/self-hosting.md, section 10.
+  from files. See docs/deploy/kubernetes.md.
 type: application
 # The chart's own version. Charts are not published yet.
 version: 0.1.0

@@ -16,4 +16,4 @@ We acknowledge your report within 5 business days, keep you informed while we wo
 
 ## Supported versions
 
-Only the latest `main` branch, and images built from it, receives security fixes. To get a fix, upgrade to the latest `main` (see "Upgrades and rollback" in [docs/self-hosting.md](docs/self-hosting.md)).
+Only the latest `main` branch, and images built from it, receives security fixes. To get a fix, upgrade to the latest `main` (see "Upgrades and rollback" in [docs/operations.md](docs/operations.md#upgrades-and-rollback)).

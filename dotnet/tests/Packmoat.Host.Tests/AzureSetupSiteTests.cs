@@ -296,49 +296,39 @@ public partial class AzureSetupSiteTests
     [Fact]
     public async Task The_scheme_asks_for_exactly_the_read_only_scopes_with_prompt_login_and_max_age_and_keeps_no_token()
     {
-        var pem = Path.Combine(Path.GetTempPath(), "app-" + Guid.NewGuid().ToString("N") + ".pem");
-        using (var rsa = System.Security.Cryptography.RSA.Create(2048))
+        using var keys = ConsentDeclineTests.WritePem(out var pem);
+        await using var site = await StartAsync(configure: o => { o.AppRemoteSchemeOverride = null; o.AppAzureDevOpsSchemeOverride = null; o.AppCertPath = pem; });
+        var o = site.F.App.Services.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>().Get(AppAzureSetup.Scheme);
+        Assert.Equal(new[]
         {
-            var req = new System.Security.Cryptography.X509Certificates.CertificateRequest("CN=test", rsa, System.Security.Cryptography.HashAlgorithmName.SHA256, System.Security.Cryptography.RSASignaturePadding.Pkcs1);
-            using var cert = req.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(30));
-            File.WriteAllText(pem, cert.ExportCertificatePem() + "\n" + rsa.ExportPkcs8PrivateKeyPem());
-        }
-        try
-        {
-            await using var site = await StartAsync(configure: o => { o.AppRemoteSchemeOverride = null; o.AppAzureDevOpsSchemeOverride = null; o.AppCertPath = pem; });
-            var o = site.F.App.Services.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>().Get(AppAzureSetup.Scheme);
-            Assert.Equal(new[]
-            {
-                "499b84ac-1321-427f-aa17-267ca6975798/vso.graph", "499b84ac-1321-427f-aa17-267ca6975798/vso.identity",
-                "499b84ac-1321-427f-aa17-267ca6975798/vso.packaging", "499b84ac-1321-427f-aa17-267ca6975798/vso.project", "openid", "profile",
-            }, o.Scope.OrderBy(x => x, StringComparer.Ordinal));
-            Assert.DoesNotContain("offline_access", o.Scope);
-            Assert.Equal("login", o.Prompt);
-            Assert.Equal(TimeSpan.FromMinutes(15), o.MaxAge);
-            Assert.False(o.SaveTokens);
-            Assert.False(o.GetClaimsFromUserInfoEndpoint);
-            Assert.True(o.UsePkce);
-            Assert.Equal(OpenIdConnectResponseType.Code, o.ResponseType);
-            Assert.Equal(new Microsoft.AspNetCore.Http.PathString("/signin-azure-devops"), o.CallbackPath);
-            Assert.Equal(AppClient, o.ClientId);
-            Assert.Null(o.ClientSecret);
-            Assert.Equal("https://login.microsoftonline.com/organizations/v2.0", o.Authority);
-            Assert.Equal(AppClient, o.TokenValidationParameters.ValidAudience);
-            Assert.Empty(o.ClaimActions);
-            // the code redemption carries the certificate assertion, never a secret
-            var scheme = new AuthenticationScheme(AppAzureSetup.Scheme, null, typeof(OpenIdConnectHandler));
-            var http = new Microsoft.AspNetCore.Http.DefaultHttpContext { RequestServices = site.F.App.Services };
-            var received = new AuthorizationCodeReceivedContext(http, scheme, o, new AuthenticationProperties()) { TokenEndpointRequest = new OpenIdConnectMessage { ClientSecret = "should-go" } };
-            await o.Events.AuthorizationCodeReceived(received);
-            Assert.Null(received.TokenEndpointRequest!.ClientSecret);
-            Assert.Equal("urn:ietf:params:oauth:client-assertion-type:jwt-bearer", received.TokenEndpointRequest.ClientAssertionType);
-            Assert.Equal($"https://{AppHost}/signin-azure-devops", received.TokenEndpointRequest.RedirectUri);
-            // and nobody is ever signed in by it
-            var ticket = new TicketReceivedContext(http, scheme, o, new AuthenticationTicket(new ClaimsPrincipal(), AppAzureSetup.Scheme));
-            await o.Events.TicketReceived(ticket);
-            Assert.NotNull(ticket.Result?.Failure);
-        }
-        finally { File.Delete(pem); }
+            "499b84ac-1321-427f-aa17-267ca6975798/vso.graph", "499b84ac-1321-427f-aa17-267ca6975798/vso.identity",
+            "499b84ac-1321-427f-aa17-267ca6975798/vso.packaging", "499b84ac-1321-427f-aa17-267ca6975798/vso.project", "openid", "profile",
+        }, o.Scope.OrderBy(x => x, StringComparer.Ordinal));
+        Assert.DoesNotContain("offline_access", o.Scope);
+        Assert.Equal("login", o.Prompt);
+        Assert.Equal(TimeSpan.FromMinutes(15), o.MaxAge);
+        Assert.False(o.SaveTokens);
+        Assert.False(o.GetClaimsFromUserInfoEndpoint);
+        Assert.True(o.UsePkce);
+        Assert.Equal(OpenIdConnectResponseType.Code, o.ResponseType);
+        Assert.Equal(new Microsoft.AspNetCore.Http.PathString("/signin-azure-devops"), o.CallbackPath);
+        Assert.Equal(AppClient, o.ClientId);
+        Assert.Null(o.ClientSecret);
+        Assert.Equal("https://login.microsoftonline.com/organizations/v2.0", o.Authority);
+        Assert.Equal(AppClient, o.TokenValidationParameters.ValidAudience);
+        Assert.Empty(o.ClaimActions);
+        // the code redemption carries the certificate assertion, never a secret
+        var scheme = new AuthenticationScheme(AppAzureSetup.Scheme, null, typeof(OpenIdConnectHandler));
+        var http = new Microsoft.AspNetCore.Http.DefaultHttpContext { RequestServices = site.F.App.Services };
+        var received = new AuthorizationCodeReceivedContext(http, scheme, o, new AuthenticationProperties()) { TokenEndpointRequest = new OpenIdConnectMessage { ClientSecret = "should-go" } };
+        await o.Events.AuthorizationCodeReceived(received);
+        Assert.Null(received.TokenEndpointRequest!.ClientSecret);
+        Assert.Equal("urn:ietf:params:oauth:client-assertion-type:jwt-bearer", received.TokenEndpointRequest.ClientAssertionType);
+        Assert.Equal($"https://{AppHost}/signin-azure-devops", received.TokenEndpointRequest.RedirectUri);
+        // and nobody is ever signed in by it
+        var ticket = new TicketReceivedContext(http, scheme, o, new AuthenticationTicket(new ClaimsPrincipal(), AppAzureSetup.Scheme));
+        await o.Events.TicketReceived(ticket);
+        Assert.NotNull(ticket.Result?.Failure);
     }
 
     [Theory]

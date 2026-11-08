@@ -6,7 +6,7 @@
 # - the data claim is ReadWriteOncePod and bound (kind's local-path provisioner supports it), and an existing claim that is only
 #   ReadWriteOnce is refused by helm install --dry-run=server;
 # - after a restart (Recreate), the new pod opens the same database with the same key and is ready again;
-# - the restore in docs/self-hosting.md, section 10, works: kubectl cp in, verify, replicas 0, deploy/helm/restore-pod.yaml, replicas 1.
+# - the restore in docs/deploy/kubernetes.md, works: kubectl cp in, verify, replicas 0, deploy/helm/restore-pod.yaml, replicas 1.
 # The image is loaded into the cluster from the local Docker, never pulled. The cluster is deleted on any exit.
 # Needs docker, kind, helm, kubectl and curl on PATH. Usage: helm-kind-smoke.sh <image:tag> <chart folder>
 set -euo pipefail
@@ -140,7 +140,7 @@ echo "ok:   one pod, on the same data volume"
 start_forward
 expect localhost /readyz 200 "ready"
 
-echo "--- a restore, as docs/self-hosting.md, section 10, gives it"
+echo "--- a restore, as docs/deploy/kubernetes.md, gives it"
 pod="$(kubectl -n "$ns" get pods -l "app.kubernetes.io/instance=$release" -o jsonpath='{.items[0].metadata.name}')"
 kubectl -n "$ns" cp "$pod:/data/backups/smoke.db" "$work/backup.db" > /dev/null
 kubectl -n "$ns" cp "$work/backup.db" "$pod:/data/backups/restore-candidate.db" > /dev/null

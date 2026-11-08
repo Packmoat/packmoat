@@ -12,6 +12,7 @@ using Packmoat.Application;
 using Packmoat.Domain;
 using Packmoat.Host.Modules;
 using Packmoat.Host.Web;
+using Packmoat.Infrastructure;
 using static Packmoat.Host.Customer.AppHtml;
 
 namespace Packmoat.Host.Customer;
@@ -144,7 +145,7 @@ public static class AppSite
     // ---------------------------------------------------------------- configuration
 
     /// <summary>Returns null when the customer site is disabled (no PACKMOAT_APP_HOST): nothing is registered and nothing is mapped.</summary>
-    internal static AppSiteSettings? Configure(WebApplicationBuilder builder, PackmoatOptions options, string? adminHost)
+    internal static AppSiteSettings? Configure(WebApplicationBuilder builder, PackmoatOptions options, DatabaseEngine engine, string? adminHost)
     {
         var host = options.AppHost?.Trim().ToLowerInvariant();
         if (string.IsNullOrEmpty(host)) return null;
@@ -204,7 +205,7 @@ public static class AppSite
             sp.GetRequiredService<ISignInDirectoryStore>(), sp.GetRequiredService<IAdminActionLog>(), sp.GetRequiredService<IClock>(), sp.GetService<IOpsAlerts>()));
         services.TryAddSingleton(sp => new CustomerWaiverQueries(sp.GetRequiredService<ITenantStore>(), sp.GetRequiredService<ISignInDirectoryStore>(), sp.GetRequiredService<IMemberStore>(),
             sp.GetRequiredService<IClock>()));
-        SignedInSite.AddShared(services, SignedInSite.KeysDir(options), CookieKeyStorages.Parse(options.CookieKeys));
+        SignedInSite.AddShared(services, SignedInSite.KeysDir(options, engine), CookieKeyStorages.Parse(options.CookieKeys));
         var auth = services.AddAuthentication();   // no default scheme: this site names its own schemes everywhere
         auth.AddCookie(CookieScheme, _ => { });
         services.AddOptions<CookieAuthenticationOptions>(CookieScheme).Configure<IClock>(ConfigureCookie);

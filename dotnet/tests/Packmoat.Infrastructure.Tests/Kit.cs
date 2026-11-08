@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Packmoat.Application;
 using Packmoat.Domain;
 using Packmoat.Infrastructure;
+using Packmoat.Infrastructure.Lifecycle;
 
 namespace Packmoat.Infrastructure.Tests;
 
@@ -12,15 +13,40 @@ public sealed class FakeClock : IClock
 }
 
 /// <summary>
-/// A migrated database with its stores, built with the test project's composition (<c>TestComposition.cs</c>): the core's tests run the
-/// core alone, the hosted tests run the hosted service's parts as production does (#197). This file is shared by both projects.
+/// The handle a store contract holds on one fresh database (#288), with nothing of any engine in it: the clock its stores are timed by and
+/// the master key its stores encrypt with. Everything else a contract reaches through its engine.
 /// </summary>
-public sealed partial class TestDb : IAsyncDisposable
+public interface IEngineDb : IAsyncDisposable
 {
-    public string Dir { get; } = Directory.CreateTempSubdirectory("packmoat-db-").FullName;
+    FakeClock Clock { get; }
+    AesGcmSecretProtector Protector { get; }
+}
+
+/// <summary>The tenants the tests make.</summary>
+public static class TestTenants
+{
+    /// <summary>An operator-made tenant named after its id, on an example Azure DevOps feed.</summary>
+    public static NewTenant Operator(string id = "acme", int cooldown = 14) =>
+        new(id, id.ToUpperInvariant(), "https://pkgs.dev.azure.com/", "example-org/", "https://pkgs.dev.azure.com/example-org/example-project/_packaging/f/nuget/v3/index.json", cooldown, TenantOrigin.Operator);
+}
+
+/// <summary>
+/// A migrated database with its stores, built with the test project's composition (<c>TestComposition.cs</c>): the core's tests run the
+/// core alone, the hosted tests run the hosted service's parts as production does (#197). This file is shared by both projects. It is the
+/// SQLite engine's <see cref="IEngineDb"/>; only that engine and the SQLite fixtures see it as a <see cref="TestDb"/>.
+/// </summary>
+public sealed partial class TestDb : IEngineDb
+{
+    /// <summary>The tenant lifecycle the tests' stores are built with: the test project's creation participants, no purge contributors.</summary>
+    public static TenantLifecycle Lifecycle { get; } = new(TestLifecycle.Participants, [], null);
+
+    private readonly TempDir _temp = TempDir.Create("packmoat-db-", clearSqlitePools: true);
+    public string Dir => _temp.Path;
     public string Path => System.IO.Path.Combine(Dir, "packmoat.db");
     public FakeClock Clock { get; } = new();
     public SqliteDatabase Db { get; }
+    /// <summary>The SQLite adapters over <see cref="Db"/>, built as production builds them.</summary>
+    public SqliteStores Stores { get; }
     public AesGcmSecretProtector Protector { get; }
     public SqliteTenantStore Tenants { get; }
     public SqliteTokenService Tokens { get; }
@@ -29,29 +55,46 @@ public sealed partial class TestDb : IAsyncDisposable
 
     public TestDb()
     {
-        Db = new SqliteDatabase(Path);
-        Protector = AesGcmSecretProtector.FromBase64(MasterKey);
-        Tenants = new SqliteTenantStore(Db, Clock, Protector, TestLifecycle.Participants);
-        Tokens = new SqliteTokenService(Db, Tenants, Clock, Gate(Db, Clock));
-        Audit = new SqliteAuditLog(Db);
+        try
+        {
+            Db = new SqliteDatabase(Path);
+            Protector = AesGcmSecretProtector.FromBase64(MasterKey);
+            Stores = new SqliteStores(Db, Protector);
+            // One tenant store, shared with the token service, as a composition root shares it.
+            Tenants = Stores.Tenants(Clock, Lifecycle);
+            Tokens = Stores.TokenService(Tenants, Clock, Gate(Db, Clock));
+            Audit = new SqliteAuditLog(Db);
+        }
+        catch
+        {
+            _temp.Dispose();   // #292: nobody else holds the folder yet
+            throw;
+        }
     }
 
     public static async Task<TestDb> CreateAsync()
     {
         var t = new TestDb();
-        await t.Db.MigrateAsync(TestTracks.Modules);
-        return t;
+        try
+        {
+            await t.Db.MigrateAsync(TestTracks.Modules);
+            return t;
+        }
+        catch
+        {
+            await t.DisposeAsync();   // #292: a failed migration leaves no folder behind
+            throw;
+        }
     }
 
-    public Task AddTenantAsync(string id = "acme", int cooldown = 14) =>
-        Tenants.CreateAsync(new NewTenant(id, id.ToUpperInvariant(), "https://pkgs.dev.azure.com/", "example-org/", "https://pkgs.dev.azure.com/example-org/example-project/_packaging/f/nuget/v3/index.json", cooldown, TenantOrigin.Operator), default);
+    public Task AddTenantAsync(string id = "acme", int cooldown = 14) => Tenants.CreateAsync(TestTenants.Operator(id, cooldown), default);
 
     /// <summary>
     /// A tenant made by the core alone, with no module's creation participant (so no module's row): for tests that build an older,
     /// core-only database and then upgrade it (#196: a module's tables come only with its own track, after core version 21).
     /// </summary>
     public Task AddCoreTenantAsync(string id = "acme", int cooldown = 14) =>
-        new SqliteTenantStore(Db, Clock, Protector, []).CreateAsync(new NewTenant(id, id.ToUpperInvariant(), "https://pkgs.dev.azure.com/", "example-org/", "https://pkgs.dev.azure.com/example-org/example-project/_packaging/f/nuget/v3/index.json", cooldown, TenantOrigin.Operator), default);
+        new SqliteTenantStore(Db, Clock, Protector, []).CreateAsync(TestTenants.Operator(id, cooldown), default);
 
     /// <summary>
     /// A tenant row written the way builds before migration 9 wrote it (no origin, no module's row), for tests that build an older
@@ -83,12 +126,7 @@ public sealed partial class TestDb : IAsyncDisposable
 
     private static void SqliteConnectionPoolCleanup() => Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
 
-    public ValueTask DisposeAsync()
-    {
-        SqliteConnectionPoolCleanup();
-        try { Directory.Delete(Dir, true); } catch { /* best effort */ }
-        return ValueTask.CompletedTask;
-    }
+    public ValueTask DisposeAsync() => _temp.DisposeAsync();
 }
 
 internal static class Bytes

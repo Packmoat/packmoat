@@ -32,7 +32,7 @@ public sealed class RetentionPass
 {
     /// <summary>
     /// How much older than <see cref="AuditPolicy.Retention"/> an audit row must be before the prune selects it, so this server's clock
-    /// and the database's 'now' (the trigger's floor) cannot straddle a row and have the database refuse the whole chunk.
+    /// and the database's 'now' (the floor the database enforces) cannot straddle a row and have the database refuse the whole chunk.
     /// </summary>
     public static readonly TimeSpan AuditPruneMargin = TimeSpan.FromMinutes(1);
 

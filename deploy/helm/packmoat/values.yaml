@@ -1,9 +1,9 @@
-# Packmoat on Kubernetes: one copy of the server. docs/self-hosting.md, section 10, explains each value.
+# Packmoat on Kubernetes: one copy of the server. docs/deploy/kubernetes.md explains each value.
 # Never put the master key, or any other secret, in this file or in --set: the chart refuses one (see existingSecret below).
 
 image:
   # The core image. Required: ghcr.io/packmoat/packmoat-core (published by this repository), or your own registry's copy.
-  # Run it by digest (image.digest, "sha256:..."), after checking its signature with cosign (docs/self-hosting.md, section 1).
+  # Run it by digest (image.digest, "sha256:..."), after checking its signature with cosign (docs/deploy/single-server.md, "Prebuilt image").
   repository: ""
   # Used when digest is empty. Empty: the chart's appVersion.
   tag: ""
@@ -21,7 +21,7 @@ replicas: 1
 hosts: []
 
 # The Secret, in the release's namespace, that holds the server's secrets. Required. The chart never makes it: create it yourself, for
-# example with kubectl create secret generic (docs/self-hosting.md, section 10). Its keys are mounted as files, read only, and the server
+# example with kubectl create secret generic (docs/deploy/kubernetes.md). Its keys are mounted as files, read only, and the server
 # reads each through its _FILE variable, so no secret is ever in the pod's environment.
 existingSecret: ""
 # The key in that Secret for each file. masterKey is required; the others are for the admin and customer sites, and are left out when empty.
@@ -47,7 +47,7 @@ networkPolicy:
   # The ingress controller's pod labels, such as {app.kubernetes.io/name: ingress-nginx}. Empty: every pod in that namespace.
   ingressPodLabels: {}
 
-# Other settings, by name: PACKMOAT_ADMIN_HOST, PACKMOAT_APP_HOST, PACKMOAT_OPERATOR_NAME and so on (docs/self-hosting.md, section 4).
+# Other settings, by name: PACKMOAT_ADMIN_HOST, PACKMOAT_APP_HOST, PACKMOAT_OPERATOR_NAME and so on (docs/operations.md, "Settings").
 # The chart sets PORT, PACKMOAT_DB, PACKMOAT_HOSTS, PACKMOAT_TRUSTED_PROXIES and the secrets itself, and refuses them here, as it refuses
 # any name ending in _FILE.
 env: {}

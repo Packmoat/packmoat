@@ -12,7 +12,7 @@ public static class MasterKeyEncryptedColumns
 
     public static IReadOnlyList<Column> All { get; } =
     [
-        new("meta", "value", "key='key_check'", true, "the master key check (SqliteTenantStore.EnsureKeyCheckAsync)"),
+        new("meta", "value", "key='key_check'", true, "the master key check (SqliteMasterKeyCheck.EnsureAsync)"),
         new("meta", "value", "key='purge_nudge_day'", false, "the last purge nudge day, as UTF-8 text"),
         new("upstream_identities", "cert_encrypted", null, true, "a tenant's own app certificate, bound to the tenant id"),
         new("shared_app_credentials", "cert_encrypted", null, true, "Packmoat's shared app certificate, bound to its slot"),

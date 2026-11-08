@@ -60,7 +60,7 @@ public class CustomerSiteSessionTests
         public string ConnectSentence(CustomerActor actor) => "";
     }
 
-    private sealed class Site(WebApplication app, string dir, FakeIdentityProvider identity) : IAsyncDisposable
+    private sealed class Site(WebApplication app, TempDir dir, FakeIdentityProvider identity) : IAsyncDisposable
     {
         public WebApplication App { get; } = app;
         public FakeIdentityProvider Identity { get; } = identity;
@@ -71,38 +71,51 @@ public class CustomerSiteSessionTests
 
         public async ValueTask DisposeAsync()
         {
-            await App.StopAsync();
-            await App.DisposeAsync();
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            try { Directory.Delete(dir, true); } catch { }
+            try
+            {
+                try { await App.StopAsync(); }
+                finally { await App.DisposeAsync(); }
+            }
+            finally { dir.Dispose(); }
         }
     }
 
     /// <summary>The core with no modules (a test's own customer-site module in <paramref name="services"/>), acme linked to directory A.</summary>
     private static async Task<Site> StartAsync(Action<IServiceCollection>? services = null)
     {
-        var dir = Directory.CreateTempSubdirectory("packmoat-customer-session-").FullName;
-        var identity = new FakeIdentityProvider();
-        var app = PackmoatApp.Build(new[] { "--urls", "http://127.0.0.1:0" }, TestModules.Server, s =>
+        var temp = TempDir.Create("packmoat-customer-session-", clearSqlitePools: true);
+        WebApplication? app = null;
+        try
         {
-            s.AddSingleton<IPublishDateSource>(new FakeDateSource());
-            s.AddKeyedSingleton("app", identity);
-            services?.Invoke(s);
-        }, o =>
+            var dir = temp.Path;
+            var identity = new FakeIdentityProvider();
+            app = PackmoatApp.Build(new[] { "--urls", "http://127.0.0.1:0" }, TestModules.Server, s =>
+            {
+                s.AddSingleton<IPublishDateSource>(new FakeDateSource());
+                s.AddKeyedSingleton("app", identity);
+                services?.Invoke(s);
+            }, o =>
+            {
+                o.DatabasePath = Path.Combine(dir, "packmoat.db");
+                o.MasterKeyBase64 = AesGcmSecretProtector.GenerateKeyBase64();
+                o.AllowedHosts = "feeds.example.test";
+                o.AdminKeysDir = Path.Combine(dir, "admin-keys");
+                o.AppHost = AppHost;
+                o.AppClientId = AppClient;
+                o.AppRemoteSchemeOverride = auth => auth.AddScheme<AuthenticationSchemeOptions, FakeAppEntraHandler>(AppSite.RemoteScheme, null);
+            });
+            await app.StartAsync();
+            var tenants = app.Services.GetRequiredService<SqliteTenantStore>();
+            await tenants.CreateAsync(new NewTenant("acme", "Acme", "https://pkgs.dev.azure.com/", "org/", "https://pkgs.dev.azure.com/org/_packaging/f/nuget/v3/index.json", 14, TenantOrigin.Self), default);
+            await app.Services.GetRequiredService<ISignInDirectoryStore>().BindAsync(new DirectoryBinding(DirA, "acme", DateTimeOffset.UtcNow, "op"), default);
+            return new Site(app, temp, identity);
+        }
+        catch
         {
-            o.DatabasePath = Path.Combine(dir, "packmoat.db");
-            o.MasterKeyBase64 = AesGcmSecretProtector.GenerateKeyBase64();
-            o.AllowedHosts = "feeds.example.test";
-            o.AdminKeysDir = Path.Combine(dir, "admin-keys");
-            o.AppHost = AppHost;
-            o.AppClientId = AppClient;
-            o.AppRemoteSchemeOverride = auth => auth.AddScheme<AuthenticationSchemeOptions, FakeAppEntraHandler>(AppSite.RemoteScheme, null);
-        });
-        await app.StartAsync();
-        var tenants = app.Services.GetRequiredService<SqliteTenantStore>();
-        await tenants.CreateAsync(new NewTenant("acme", "Acme", "https://pkgs.dev.azure.com/", "org/", "https://pkgs.dev.azure.com/org/_packaging/f/nuget/v3/index.json", 14, TenantOrigin.Self), default);
-        await app.Services.GetRequiredService<ISignInDirectoryStore>().BindAsync(new DirectoryBinding(DirA, "acme", DateTimeOffset.UtcNow, "op"), default);
-        return new Site(app, dir, identity);
+            if (app is not null) await app.DisposeAsync();
+            temp.Dispose();   // #292: a failed start leaves no folder behind
+            throw;
+        }
     }
 
     private static ClaimsPrincipal Person(string tid, string role, DateTimeOffset? authTime)
@@ -261,11 +274,8 @@ public class CustomerSiteSessionTests
             var error = new StringWriter();
             return (StartupFailure.Run(Build, error), error.ToString(), thrown);
         }
-        finally
-        {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            try { Directory.Delete(dir, true); } catch { }
-        }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 
     [Theory]   // mutations: no path check at start; a path checked for its first two characters only (an open redirect: "//host", "/\host", "/<tab>/host")

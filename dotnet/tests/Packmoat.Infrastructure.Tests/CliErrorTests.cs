@@ -29,8 +29,7 @@ public class CliErrorTests
         {
             Environment.SetEnvironmentVariable(KeyVariable, null);
             Environment.SetEnvironmentVariable(KeyFileVariable, null);
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            try { Directory.Delete(dir, true); } catch (IOException) { }
+            TempDir.Delete(dir, clearSqlitePools: true);
         }
     }
 

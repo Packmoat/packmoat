@@ -29,4 +29,17 @@ public static class CookieKeyStorages
         "database" => CookieKeyStorage.Database,
         _ => throw new SettingsException($"{Variable} must be folder or database."),
     };
+
+    /// <summary>
+    /// The rule for where the keys may live (#278 step 0, D11), checked at start before anything is written: database storage needs a
+    /// database, and an engine whose PACKMOAT_DB is no file needs database storage (there is no folder next to it,
+    /// and its copies must share one set of keys). Pure: it reads nothing and writes nothing.
+    /// </summary>
+    public static void Require(CookieKeyStorage storage, DatabaseEngine engine, bool databaseConfigured)
+    {
+        if (storage == CookieKeyStorage.Database && !databaseConfigured)
+            throw new SettingsException($"{Variable}=database needs a database: PACKMOAT_DB is not set.");
+        if (storage == CookieKeyStorage.Folder && !DatabaseEngines.IsFile(engine))
+            throw new SettingsException($"{DatabaseEngines.Variable}={DatabaseEngines.Name(engine)} needs {Variable}=database: its PACKMOAT_DB is no file to keep a key folder next to.");
+    }
 }

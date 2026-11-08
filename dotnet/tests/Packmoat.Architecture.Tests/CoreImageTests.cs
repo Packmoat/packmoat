@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// The core image (#197): core/dotnet/Dockerfile builds from core/dotnet alone, runs the core's own entry points, and pins its base images by
+/// The core image (#197): dotnet/Dockerfile builds from dotnet/ alone, runs the core's own entry points, and pins its base images by
 /// digest. CI's image smoke runs the built image; this catches a wrong name before the image is built.
 /// </summary>
 public class CoreImageTests

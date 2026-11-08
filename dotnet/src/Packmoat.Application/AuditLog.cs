@@ -34,7 +34,7 @@ public interface IAuditBatchLog
 public interface IAuditRetention
 {
     /// <summary>
-    /// Deletes the events written before <paramref name="before"/>, in chunks (a short write lock each). Returns how many. The database
+    /// Deletes the events written before <paramref name="before"/>, in chunks (other writers wait for one chunk at most). Returns how many. The database
     /// refuses to delete an event less than <see cref="AuditPolicy.RetentionDays"/> days old by its own clock, so a clock running ahead
     /// throws instead.
     /// </summary>

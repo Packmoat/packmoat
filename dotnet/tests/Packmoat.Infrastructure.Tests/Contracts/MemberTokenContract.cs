@@ -14,30 +14,30 @@ public abstract class MemberTokenContract : StoreContract
     protected const string Ada = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
     protected const string Bob = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
-    protected static Task<IssuedToken?> IssueFor(TestDb t, string oid, DateTimeOffset expires, int max = 5, string tenant = "acme", TokenKind kind = TokenKind.Developer, string label = "laptop") =>
-        t.Tokens.IssueForMemberAsync(tenant, Dir, oid, label, expires, kind, max, default);
+    protected Task<IssuedToken?> IssueFor(IEngineDb t, string oid, DateTimeOffset expires, int max = 5, string tenant = "acme", TokenKind kind = TokenKind.Developer, string label = "laptop") =>
+        Engine.Tokens(t).IssueForMemberAsync(tenant, Dir, oid, label, expires, kind, max, default);
 
     [Fact]
     public async Task A_token_past_its_expiry_does_not_authenticate()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         var issued = (await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90)))!;
-        Assert.NotNull(await t.Tokens.AuthenticateAsync(issued.Plaintext, default));
+        Assert.NotNull(await Engine.Tokens(t).AuthenticateAsync(issued.Plaintext, default));
         t.Clock.Advance(TimeSpan.FromDays(90) - TimeSpan.FromSeconds(1));
-        var ok = await t.Tokens.AuthenticateAsync(issued.Plaintext, default);
+        var ok = await Engine.Tokens(t).AuthenticateAsync(issued.Plaintext, default);
         Assert.Equal(t.Clock.UtcNow.AddSeconds(1), ok!.TokenExpiresAt);
         t.Clock.Advance(TimeSpan.FromSeconds(1));
-        Assert.Null(await t.Tokens.AuthenticateAsync(issued.Plaintext, default));
+        Assert.Null(await Engine.Tokens(t).AuthenticateAsync(issued.Plaintext, default));
     }
 
     [Fact]
     public async Task Through_the_cached_authenticator_an_expired_token_stops_within_the_cache_window()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         var issued = (await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(1)))!;
-        var cached = new CachedTenantAuthenticator(t.Tokens, t.Clock);
+        var cached = new CachedTenantAuthenticator(Engine.Tokens(t), t.Clock);
         t.Clock.Advance(TimeSpan.FromDays(1) - TimeSpan.FromSeconds(2));
         Assert.NotNull(await cached.AuthenticateAsync(issued.Plaintext, default));   // cached now, two seconds before expiry
         t.Clock.Advance(TimeSpan.FromSeconds(2));
@@ -50,9 +50,9 @@ public abstract class MemberTokenContract : StoreContract
     public async Task The_store_enforces_the_cap_per_person_counting_only_active_self_issued_tokens()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
-        await t.AddTenantAsync("globex");
-        await t.Tokens.IssueAsync("acme", "operator", default);   // operator-issued: never counted
+        await AddTenantAsync(t, "acme");
+        await AddTenantAsync(t, "globex");
+        await Engine.Tokens(t).IssueAsync("acme", "operator", default);   // operator-issued: never counted
         Assert.NotNull(await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(1)));
         Assert.NotNull(await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90), kind: TokenKind.Automation));
         Assert.Null(await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90), max: 2));
@@ -61,8 +61,8 @@ public abstract class MemberTokenContract : StoreContract
         t.Clock.Advance(TimeSpan.FromDays(1));                                                       // the first one expires
         Assert.NotNull(await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90), max: 2));
         Assert.Null(await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90), max: 2));
-        var id = (await t.Tokens.ListForMemberAsync("acme", Dir, Ada, default)).First(x => x.IsActiveAt(t.Clock.UtcNow)).TokenId;
-        Assert.True(await t.Tokens.RevokeForMemberAsync("acme", Dir, Ada, id, "Ada", default));   // a revoked one frees a place
+        var id = (await Engine.Tokens(t).ListForMemberAsync("acme", Dir, Ada, default)).First(x => x.IsActiveAt(t.Clock.UtcNow)).TokenId;
+        Assert.True(await Engine.Tokens(t).RevokeForMemberAsync("acme", Dir, Ada, id, "Ada", default));   // a revoked one frees a place
         Assert.NotNull(await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90), max: 2));
     }
 
@@ -70,7 +70,7 @@ public abstract class MemberTokenContract : StoreContract
     public async Task Concurrent_issues_never_pass_the_cap()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         var results = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => Task.Run(() => IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90)))));
         Assert.Equal(5, results.Count(r => r is not null));
         Assert.Equal(5L, await ScalarAsync(t, "SELECT COUNT(*) FROM tokens WHERE issued_via='self'"));
@@ -80,30 +80,30 @@ public abstract class MemberTokenContract : StoreContract
     public async Task Revoke_for_member_needs_the_owner_and_the_tenant_and_records_who()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
-        await t.AddTenantAsync("globex");
+        await AddTenantAsync(t, "acme");
+        await AddTenantAsync(t, "globex");
         var adas = (await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90)))!;
-        Assert.False(await t.Tokens.RevokeForMemberAsync("acme", Dir, Bob, adas.TokenId, "Bob", default));       // not the owner
-        Assert.False(await t.Tokens.RevokeForMemberAsync("globex", Dir, Ada, adas.TokenId, "Ada", default));     // not the tenant
-        Assert.False(await t.Tokens.RevokeInTenantAsync("globex", adas.TokenId, "Mallory", default));            // admin of another tenant
-        Assert.NotNull(await t.Tokens.AuthenticateAsync(adas.Plaintext, default));
-        Assert.True(await t.Tokens.RevokeInTenantAsync("acme", adas.TokenId, "Grace (ffffffff-ffff-4fff-8fff-ffffffffffff)", default));
-        Assert.Null(await t.Tokens.AuthenticateAsync(adas.Plaintext, default));
-        Assert.Equal("Grace (ffffffff-ffff-4fff-8fff-ffffffffffff)", Assert.Single(await t.Tokens.ListAsync("acme", default)).RevokedBy);
-        Assert.False(await t.Tokens.RevokeInTenantAsync("acme", adas.TokenId, "again", default));
+        Assert.False(await Engine.Tokens(t).RevokeForMemberAsync("acme", Dir, Bob, adas.TokenId, "Bob", default));       // not the owner
+        Assert.False(await Engine.Tokens(t).RevokeForMemberAsync("globex", Dir, Ada, adas.TokenId, "Ada", default));     // not the tenant
+        Assert.False(await Engine.Tokens(t).RevokeInTenantAsync("globex", adas.TokenId, "Mallory", default));            // admin of another tenant
+        Assert.NotNull(await Engine.Tokens(t).AuthenticateAsync(adas.Plaintext, default));
+        Assert.True(await Engine.Tokens(t).RevokeInTenantAsync("acme", adas.TokenId, "Grace (ffffffff-ffff-4fff-8fff-ffffffffffff)", default));
+        Assert.Null(await Engine.Tokens(t).AuthenticateAsync(adas.Plaintext, default));
+        Assert.Equal("Grace (ffffffff-ffff-4fff-8fff-ffffffffffff)", Assert.Single(await Engine.Tokens(t).ListAsync("acme", default)).RevokedBy);
+        Assert.False(await Engine.Tokens(t).RevokeInTenantAsync("acme", adas.TokenId, "again", default));
     }
 
     [Fact]
     public async Task List_for_member_returns_only_that_persons_tokens_in_that_tenant()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
-        await t.AddTenantAsync("globex");
+        await AddTenantAsync(t, "acme");
+        await AddTenantAsync(t, "globex");
         await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(1), label: "ada");
         await IssueFor(t, Bob, t.Clock.UtcNow.AddDays(1), label: "bob");
         await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(1), tenant: "globex", label: "ada-globex");
-        await t.Tokens.IssueAsync("acme", "operator", default);
-        Assert.Equal(new[] { "ada" }, (await t.Tokens.ListForMemberAsync("acme", Dir, Ada, default)).Select(x => x.Label));
+        await Engine.Tokens(t).IssueAsync("acme", "operator", default);
+        Assert.Equal(new[] { "ada" }, (await Engine.Tokens(t).ListForMemberAsync("acme", Dir, Ada, default)).Select(x => x.Label));
     }
 
     [Fact]
@@ -111,24 +111,24 @@ public abstract class MemberTokenContract : StoreContract
     {
         const string Other = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
-        await t.AddTenantAsync("globex");
+        await AddTenantAsync(t, "acme");
+        await AddTenantAsync(t, "globex");
         var store = Engine.SignInDirectory(t);
         await store.BindAsync(new DirectoryBinding(Dir, "acme", t.Clock.UtcNow, "op"), default);
         var adas = (await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90)))!;
         var bobs = (await IssueFor(t, Bob, t.Clock.UtcNow.AddDays(90), kind: TokenKind.Automation))!;
         var elsewhere = (await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90), tenant: "globex"))!;          // same directory, other tenant
-        var otherDir = (await t.Tokens.IssueForMemberAsync("acme", Other, Ada, "x", t.Clock.UtcNow.AddDays(9), TokenKind.Developer, 5, default))!;
-        var operatorIssued = await t.Tokens.IssueAsync("acme", "operator", default);
+        var otherDir = (await Engine.Tokens(t).IssueForMemberAsync("acme", Other, Ada, "x", t.Clock.UtcNow.AddDays(9), TokenKind.Developer, 5, default))!;
+        var operatorIssued = await Engine.Tokens(t).IssueAsync("acme", "operator", default);
 
         Assert.Null(await store.UnbindAsync("globex", Dir, t.Clock.UtcNow, "op", default));   // not linked there: nothing changes
-        Assert.NotNull(await t.Tokens.AuthenticateAsync(adas.Plaintext, default));
+        Assert.NotNull(await Engine.Tokens(t).AuthenticateAsync(adas.Plaintext, default));
 
         Assert.Equal(2, await store.UnbindAsync("acme", Dir, t.Clock.UtcNow, "operator founder (directory unlinked)", default));
-        Assert.Null(await t.Tokens.AuthenticateAsync(adas.Plaintext, default));
-        Assert.Null(await t.Tokens.AuthenticateAsync(bobs.Plaintext, default));
-        foreach (var still in new[] { elsewhere, otherDir, operatorIssued }) Assert.NotNull(await t.Tokens.AuthenticateAsync(still.Plaintext, default));
-        Assert.All((await t.Tokens.ListForMemberAsync("acme", Dir, Ada, default)), x => Assert.Equal("operator founder (directory unlinked)", x.RevokedBy));
+        Assert.Null(await Engine.Tokens(t).AuthenticateAsync(adas.Plaintext, default));
+        Assert.Null(await Engine.Tokens(t).AuthenticateAsync(bobs.Plaintext, default));
+        foreach (var still in new[] { elsewhere, otherDir, operatorIssued }) Assert.NotNull(await Engine.Tokens(t).AuthenticateAsync(still.Plaintext, default));
+        Assert.All((await Engine.Tokens(t).ListForMemberAsync("acme", Dir, Ada, default)), x => Assert.Equal("operator founder (directory unlinked)", x.RevokedBy));
         Assert.Null(await store.GetAsync(Dir, default));
     }
 
@@ -136,30 +136,30 @@ public abstract class MemberTokenContract : StoreContract
     public async Task A_failed_unbind_revokes_nothing()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         var store = Engine.SignInDirectory(t);
         var adas = (await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90)))!;
         Assert.Null(await store.UnbindAsync("acme", Dir, t.Clock.UtcNow, "op", default));   // never linked
-        Assert.NotNull(await t.Tokens.AuthenticateAsync(adas.Plaintext, default));
+        Assert.NotNull(await Engine.Tokens(t).AuthenticateAsync(adas.Plaintext, default));
     }
 
     [Fact]
     public async Task The_token_list_carries_the_owners_last_seen_time()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         var members = Engine.Members(t);
         await members.UpsertAsync(Dir, Ada, "acme", "Ada", t.Clock.UtcNow, default);
         await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90));
         await members.UpsertAsync(Dir, Ada, "acme", "Ada", t.Clock.UtcNow.AddDays(2), default);
-        Assert.Equal(t.Clock.UtcNow.AddDays(2), Assert.Single(await t.Tokens.ListAsync("acme", default)).OwnerLastSeenAt);
+        Assert.Equal(t.Clock.UtcNow.AddDays(2), Assert.Single(await Engine.Tokens(t).ListAsync("acme", default)).OwnerLastSeenAt);
     }
 
     [Fact]
     public async Task An_expiry_in_the_past_is_refused_by_the_store()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         await Assert.ThrowsAsync<ArgumentException>(() => IssueFor(t, Ada, t.Clock.UtcNow));
     }
 
@@ -167,7 +167,7 @@ public abstract class MemberTokenContract : StoreContract
     public async Task Member_upsert_keeps_first_seen_and_updates_the_rest_and_the_schema_refuses_non_canonical_ids()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         var members = Engine.Members(t);
         var first = t.Clock.UtcNow;
         await members.UpsertAsync(Dir.ToUpperInvariant(), Ada, "acme", "Ada", first, default);
@@ -185,11 +185,11 @@ public abstract class MemberTokenContract : StoreContract
     public async Task Self_issued_developer_tokens_count_as_active_developers_and_automation_tokens_do_not()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         var activity = Engine.TokenActivity(t);
         var dev = (await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90)))!;
         var auto = (await IssueFor(t, Bob, t.Clock.UtcNow.AddDays(90), kind: TokenKind.Automation))!;
-        var op = await t.Tokens.IssueAsync("acme", "operator-dev", default);
+        var op = await Engine.Tokens(t).IssueAsync("acme", "operator-dev", default);
         var today = DateOnly.FromDateTime(t.Clock.UtcNow.UtcDateTime);
         foreach (var id in new[] { dev.TokenId, auto.TokenId, op.TokenId }) await activity.RecordAsync(id, today, default);
         var active = await activity.GetAsync("acme", 30, default);

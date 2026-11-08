@@ -12,11 +12,7 @@ public static class SqliteBackup
     public sealed record Verification(bool Ok, string Detail, int SchemaVersion, long Tenants, long Tokens, long AuditEvents, KeyStatus Key = KeyStatus.NotChecked,
         IReadOnlyList<(string Track, int Version)>? Tracks = null);
 
-    internal static bool KeyMatches(AesGcmSecretProtector protector, byte[] stored)
-    {
-        try { return protector.Unprotect(stored, "key_check") == SqliteTenantStore.KeyCheckPlaintext; }
-        catch (System.Security.Cryptography.CryptographicException) { return false; }
-    }
+    internal static bool KeyMatches(AesGcmSecretProtector protector, byte[] stored) => MasterKeyMarker.Matches(protector, stored);
 
     /// <summary>Copies the live database to <paramref name="destination"/>, then verifies the copy. The copy is only for the owner.</summary>
     public static async Task<Verification> BackupAsync(SqliteDatabase source, string destination, bool overwrite, CancellationToken ct = default, AesGcmSecretProtector? protector = null)

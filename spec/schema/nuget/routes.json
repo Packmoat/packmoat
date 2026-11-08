@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Packmoat conformance vectors: what an upstream path asks for",
-  "description": "See core/spec/README.md. Every object is closed (no other fields) except a NuGet body, which is the upstream's JSON.",
+  "description": "See spec/README.md. Every object is closed (no other fields) except a NuGet body, which is the upstream's JSON.",
   "type": "object",
   "additionalProperties": false,
   "required": [

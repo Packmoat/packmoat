@@ -48,8 +48,9 @@ public class SelfServiceFeedStoreTests : SelfServiceFeedStoreContract
     public async Task The_directory_race_is_serialised_the_second_writer_sees_the_first()
     {
         await using var s = await StartAsync();
-        await s.T.AddTenantAsync("e2e-shared");
-        await using var writer = await s.T.Db.OpenAsync();
+        var sqlite = (TestDb)s.T;   // this SQLite-only test holds the file's write lock itself
+        await sqlite.AddTenantAsync("e2e-shared");
+        await using var writer = await sqlite.Db.OpenAsync();
         await using (var begin = writer.CreateCommand()) { begin.CommandText = "BEGIN IMMEDIATE"; await begin.ExecuteNonQueryAsync(); }
         var connect = Task.Run(() => s.Store.ConnectSelfServiceFeedAsync(Request(s), default));   // waits for the write lock (busy_timeout)
         await Task.Delay(300);
@@ -60,7 +61,7 @@ public class SelfServiceFeedStoreTests : SelfServiceFeedStoreContract
             await bind.ExecuteNonQueryAsync();
         }
         Assert.Equal(ConnectResult.DirectoryTaken, await connect);
-        Assert.Null(await s.T.Tenants.GetUpstreamBindingAsync("selfco", default));
+        Assert.Null(await sqlite.Tenants.GetUpstreamBindingAsync("selfco", default));
         Assert.Null(await s.Shared.GetVerificationAsync("selfco", default));
     }
 }
@@ -92,14 +93,22 @@ public class FlaggedOperatorSelfServiceFeedStoreTests : SelfServiceFeedStoreTest
     private static async Task<(TestDb T, long Settings, long Developer)> FlaggedAsync()
     {
         var t = await TestDb.CreateAsync();
-        await t.Tenants.CreateAsync(new NewTenant("acme", "Acme", "", "", "", 14, TenantOrigin.Operator) { FeedSetup = FeedSetup.Customer }, default);
-        await new SqliteSignInDirectoryStore(t.Db).BindAsync(new DirectoryBinding(Dir, "acme", t.Clock.UtcNow, "op"), default);
-        await new SqliteSharedAppCredentialStore(t.Db, t.Clock, t.Protector).SetAsync(SharedAppSlot.Active, new SharedAppCredential(Client, "PEM"), default);
-        var checks = new SqliteFeedCheckStore(t.Db);
-        var settings = await checks.RecordAsync(Settings(t, TimeSpan.FromHours(1)), default);
-        var developer = await checks.RecordAsync(new FeedCheck("acme", t.Clock.UtcNow - TimeSpan.FromHours(2), Dir, Dev, "Grace", Dir, Feed, Client, FeedCheckOutcome.Passed,
-            Pass("developer"), Array.Empty<string>()) { Kind = FeedCheckKind.Developer }, default);
-        return (t, settings, developer);
+        try
+        {
+            await t.Tenants.CreateAsync(new NewTenant("acme", "Acme", "", "", "", 14, TenantOrigin.Operator) { FeedSetup = FeedSetup.Customer }, default);
+            await new SqliteSignInDirectoryStore(t.Db).BindAsync(new DirectoryBinding(Dir, "acme", t.Clock.UtcNow, "op"), default);
+            await new SqliteSharedAppCredentialStore(t.Db, t.Clock, t.Protector).SetAsync(SharedAppSlot.Active, new SharedAppCredential(Client, "PEM"), default);
+            var checks = new SqliteFeedCheckStore(t.Db);
+            var settings = await checks.RecordAsync(Settings(t, TimeSpan.FromHours(1)), default);
+            var developer = await checks.RecordAsync(new FeedCheck("acme", t.Clock.UtcNow - TimeSpan.FromHours(2), Dir, Dev, "Grace", Dir, Feed, Client, FeedCheckOutcome.Passed,
+                Pass("developer"), Array.Empty<string>()) { Kind = FeedCheckKind.Developer }, default);
+            return (t, settings, developer);
+        }
+        catch
+        {
+            await t.DisposeAsync();   // #292: a failed set-up leaves no folder behind
+            throw;
+        }
     }
 
     private static ConnectFeedRequest Connect(TestDb t, long settings, long developer) =>

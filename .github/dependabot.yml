@@ -1,0 +1,71 @@
+# Dependency updates (#276): the workflows' actions (pinned to full commit SHAs), the .NET packages, the schema check's npm packages, and
+# the Dockerfile's base images (pinned by digest). Weekly, and only for a release at least 7 days old (cooldown), as dotnet/aspire does:
+# a release that is pulled or found bad in its first week is never proposed. Security updates are not held back by the cooldown.
+# Minor and patch updates come as one pull request per ecosystem; a major update comes on its own. CoreWorkflowTests checks all of this.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    groups:
+      actions-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: nuget
+    directory: /dotnet
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    groups:
+      nuget-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /spec/check
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    groups:
+      npm-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  # The Dockerfile's base images. Microsoft's .NET images are left out of the cooldown: their rebuilds carry the OS and runtime security
+  # fixes, and Dependabot has no security advisories for Docker images, so a cooldown would only hold those fixes back a week. An image
+  # is named by its repository; both forms (with and without the registry) are listed, as the docs do not say which Dependabot matches.
+  - package-ecosystem: docker
+    directory: /dotnet
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+      exclude:
+        - "dotnet/*"
+        - "mcr.microsoft.com/dotnet/*"
+    open-pull-requests-limit: 3
+    groups:
+      docker-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch

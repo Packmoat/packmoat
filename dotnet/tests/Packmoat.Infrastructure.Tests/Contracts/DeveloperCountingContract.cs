@@ -6,18 +6,18 @@ namespace Packmoat.Infrastructure.Tests;
 /// <summary>The token-activity contract (#232 S1): kinds, the active-developer count and the recording decorator over the store.</summary>
 public abstract class DeveloperCountingContract : StoreContract
 {
-    protected TokenActivityPorts Activity(TestDb t) => Engine.TokenActivity(t);
-    protected static DateOnly Today(TestDb t) => DateOnly.FromDateTime(t.Clock.UtcNow.UtcDateTime);
+    protected TokenActivityPorts Activity(IEngineDb t) => Engine.TokenActivity(t);
+    protected static DateOnly Today(IEngineDb t) => DateOnly.FromDateTime(t.Clock.UtcNow.UtcDateTime);
 
     [Fact]
     public async Task A_token_with_no_kind_is_a_developer_token_and_automation_round_trips()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync();
-        var dev = await t.Tokens.IssueAsync("acme", "ann", default);
-        var bot = await t.Tokens.IssueAsync("acme", "build agents", default, TokenKind.Automation);
+        await AddTenantAsync(t);
+        var dev = await Engine.Tokens(t).IssueAsync("acme", "ann", default);
+        var bot = await Engine.Tokens(t).IssueAsync("acme", "build agents", default, TokenKind.Automation);
 
-        var list = await t.Tokens.ListAsync("acme", default);
+        var list = await Engine.Tokens(t).ListAsync("acme", default);
         Assert.Equal(TokenKind.Developer, list.Single(x => x.TokenId == dev.TokenId).Kind);
         Assert.Equal(TokenKind.Automation, list.Single(x => x.TokenId == bot.TokenId).Kind);
     }
@@ -26,10 +26,10 @@ public abstract class DeveloperCountingContract : StoreContract
     public async Task Counts_distinct_developer_tokens_with_label_and_last_active_day()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync();
+        await AddTenantAsync(t);
         var a = Activity(t);
-        var ann = await t.Tokens.IssueAsync("acme", "ann", default);
-        var bob = await t.Tokens.IssueAsync("acme", "bob", default);
+        var ann = await Engine.Tokens(t).IssueAsync("acme", "ann", default);
+        var bob = await Engine.Tokens(t).IssueAsync("acme", "bob", default);
         await a.RecordAsync(ann.TokenId, Today(t).AddDays(-3), default);
         await a.RecordAsync(ann.TokenId, Today(t).AddDays(-1), default);
         await a.RecordAsync(ann.TokenId, Today(t).AddDays(-1), default);   // idempotent
@@ -45,10 +45,10 @@ public abstract class DeveloperCountingContract : StoreContract
     public async Task Automation_tokens_are_not_counted()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync();
+        await AddTenantAsync(t);
         var a = Activity(t);
-        var dev = await t.Tokens.IssueAsync("acme", "ann", default);
-        var bot = await t.Tokens.IssueAsync("acme", "ci", default, TokenKind.Automation);
+        var dev = await Engine.Tokens(t).IssueAsync("acme", "ann", default);
+        var bot = await Engine.Tokens(t).IssueAsync("acme", "ci", default, TokenKind.Automation);
         await a.RecordAsync(dev.TokenId, Today(t), default);
         await a.RecordAsync(bot.TokenId, Today(t), default);
 
@@ -62,13 +62,13 @@ public abstract class DeveloperCountingContract : StoreContract
     public async Task A_revoked_token_is_not_counted()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync();
+        await AddTenantAsync(t);
         var a = Activity(t);
-        var old = await t.Tokens.IssueAsync("acme", "ann (old laptop)", default);
-        var fresh = await t.Tokens.IssueAsync("acme", "ann", default);
+        var old = await Engine.Tokens(t).IssueAsync("acme", "ann (old laptop)", default);
+        var fresh = await Engine.Tokens(t).IssueAsync("acme", "ann", default);
         await a.RecordAsync(old.TokenId, Today(t), default);
         await a.RecordAsync(fresh.TokenId, Today(t), default);
-        await t.Tokens.RevokeAsync(old.TokenId, default);
+        await Engine.Tokens(t).RevokeAsync(old.TokenId, default);
 
         var r = await a.GetAsync("acme", 30, default);
 
@@ -80,11 +80,11 @@ public abstract class DeveloperCountingContract : StoreContract
     public async Task Another_tenants_tokens_are_never_counted_or_listed()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
-        await t.AddTenantAsync("other");
+        await AddTenantAsync(t, "acme");
+        await AddTenantAsync(t, "other");
         var a = Activity(t);
-        var mine = await t.Tokens.IssueAsync("acme", "ann", default);
-        var theirs = await t.Tokens.IssueAsync("other", "zed", default);
+        var mine = await Engine.Tokens(t).IssueAsync("acme", "ann", default);
+        var theirs = await Engine.Tokens(t).IssueAsync("other", "zed", default);
         await a.RecordAsync(mine.TokenId, Today(t), default);
         await a.RecordAsync(theirs.TokenId, Today(t), default);
 
@@ -100,10 +100,10 @@ public abstract class DeveloperCountingContract : StoreContract
     public async Task The_window_includes_today_and_n_minus_one_days_back_and_no_further()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync();
+        await AddTenantAsync(t);
         var a = Activity(t);
-        var edge = await t.Tokens.IssueAsync("acme", "on the edge", default);
-        var out_ = await t.Tokens.IssueAsync("acme", "just outside", default);
+        var edge = await Engine.Tokens(t).IssueAsync("acme", "on the edge", default);
+        var out_ = await Engine.Tokens(t).IssueAsync("acme", "just outside", default);
         await a.RecordAsync(edge.TokenId, Today(t).AddDays(-29), default);
         await a.RecordAsync(out_.TokenId, Today(t).AddDays(-30), default);
 
@@ -116,9 +116,9 @@ public abstract class DeveloperCountingContract : StoreContract
     public async Task The_decorator_writes_once_per_token_per_day_and_never_surfaces_a_failure()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync();
-        var issued = await t.Tokens.IssueAsync("acme", "ann", default);
-        var cached = new CachedTenantAuthenticator(t.Tokens, t.Clock);
+        await AddTenantAsync(t);
+        var issued = await Engine.Tokens(t).IssueAsync("acme", "ann", default);
+        var cached = new CachedTenantAuthenticator(Engine.Tokens(t), t.Clock);
         var counting = new CountingLog(Activity(t));
         using var auth = new ActivityRecordingAuthenticator(cached, counting, t.Clock);
 
@@ -145,10 +145,10 @@ public abstract class DeveloperCountingContract : StoreContract
     public async Task The_request_path_does_not_wait_for_storage()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync();
-        var issued = await t.Tokens.IssueAsync("acme", "ann", default);
+        await AddTenantAsync(t);
+        var issued = await Engine.Tokens(t).IssueAsync("acme", "ann", default);
         var blocked = new BlockingLog();
-        using var auth = new ActivityRecordingAuthenticator(new CachedTenantAuthenticator(t.Tokens, t.Clock), blocked, t.Clock);
+        using var auth = new ActivityRecordingAuthenticator(new CachedTenantAuthenticator(Engine.Tokens(t), t.Clock), blocked, t.Clock);
 
         var request = auth.AuthenticateAsync(issued.Plaintext, default).AsTask();
         Assert.Same(request, await Task.WhenAny(request, Task.Delay(TimeSpan.FromSeconds(5))));   // returned while the write is still stuck
@@ -163,7 +163,7 @@ public abstract class DeveloperCountingContract : StoreContract
     public async Task A_full_queue_drops_notes_without_failing_requests_and_counts_them()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync();
+        await AddTenantAsync(t);
         var blocked = new BlockingLog();
         var warnings = new List<string>();
         using var auth = new ActivityRecordingAuthenticator(new FixedAuthenticator(), blocked, t.Clock, warnings.Add);
@@ -179,7 +179,7 @@ public abstract class DeveloperCountingContract : StoreContract
     public async Task A_cancelled_write_is_not_a_failure_and_does_not_start_the_backoff()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync();
+        await AddTenantAsync(t);
         var cancelling = new CancellingLog();
         using var auth = new ActivityRecordingAuthenticator(new FixedAuthenticator(), cancelling, t.Clock);
 

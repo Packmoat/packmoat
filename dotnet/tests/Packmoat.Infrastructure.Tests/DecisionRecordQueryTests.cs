@@ -18,7 +18,7 @@ public class DecisionRecordQueryTests : DecisionRecordQueryContract
     {
         var (t, _) = await SeedAsync(Rec("moq"));
         await using var __ = t;
-        var plan = await SqliteDecisionRecordQuery.PlanAsync(t.Db, new DecisionRecordQuery("acme", package, prefix, version));
+        var plan = await SqliteDecisionRecordQuery.PlanAsync(((TestDb)t).Db, new DecisionRecordQuery("acme", package, prefix, version));
         Assert.True(plan.Contains("SEARCH") && plan.Contains(index), plan);
         Assert.DoesNotContain("SCAN decision_records", plan);
         // A whole tenant is never sorted: the index already gives the newest first (at most ties are ordered among themselves).

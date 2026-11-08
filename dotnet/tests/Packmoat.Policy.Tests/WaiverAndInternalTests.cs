@@ -4,7 +4,7 @@ using static Packmoat.Policy.Tests.PolicyTestKit;
 namespace Packmoat.Policy.Tests;
 
 /// <summary>
-/// Waivers and internal prefixes as the engine decides them are conformance vectors: core/spec/vectors/policy/decisions.json (#209).
+/// Waivers and internal prefixes as the engine decides them are conformance vectors: spec/vectors/policy/decisions.json (#209).
 /// What stays here is the shared prefix rule itself, which the customer waiver check also uses.
 /// </summary>
 public class WaiverAndInternalTests

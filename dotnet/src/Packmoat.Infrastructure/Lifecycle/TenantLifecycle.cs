@@ -1,5 +1,5 @@
+using System.Data.Common;
 using System.Text.RegularExpressions;
-using Microsoft.Data.Sqlite;
 using Packmoat.Application;
 
 namespace Packmoat.Infrastructure.Lifecycle;
@@ -8,10 +8,11 @@ namespace Packmoat.Infrastructure.Lifecycle;
 /// Takes part in making a tenant (#194): runs after the tenant row is inserted, inside the same transaction (for example a module writes
 /// its own row for the tenant). To veto, it throws <see cref="TenantCreationRefusedException"/>: the transaction rolls back and no tenant
 /// row is left. Any other exception rolls back too.
+/// <para>Unstable: may change in any release before 1.0.</para>
 /// </summary>
 public interface ITenantCreationParticipant
 {
-    Task OnCreatingAsync(SqliteTransaction transaction, NewTenant tenant, DateTimeOffset createdAt, CancellationToken cancellationToken);
+    Task OnCreatingAsync(DbTransaction transaction, NewTenant tenant, DateTimeOffset createdAt, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -52,6 +53,7 @@ public sealed record PurgeTable(string Table, PurgeTableFate Fate, string Why, s
 /// <summary>
 /// Deletes its own tables' rows for a purged tenant (#194), inside the purge's one transaction, before the tenant row is deleted.
 /// Every table in the database must be classified by the core or by exactly one contributor, or the purge is refused.
+/// <para>Unstable: may change in any release before 1.0.</para>
 /// </summary>
 public interface IPurgeContributor
 {
@@ -62,20 +64,21 @@ public interface IPurgeContributor
     IReadOnlyList<string> NotReached { get; }
 
     /// <summary>Deletes the tenant's rows in its deleted tables, on <paramref name="transaction"/>. Returns the rows deleted per table.</summary>
-    Task<IReadOnlyList<PurgedTable>> DeleteAsync(SqliteTransaction transaction, string tenantId, CancellationToken cancellationToken);
+    Task<IReadOnlyList<PurgedTable>> DeleteAsync(DbTransaction transaction, string tenantId, CancellationToken cancellationToken);
 }
 
 /// <summary>
-/// The purge eligibility that can also re-check under the purge's write lock (#194): one object decides who is due and checks again
+/// The purge eligibility that can also re-check inside the purge, where no other writer can change it (#194): one object decides who is due and checks again
 /// inside the delete's transaction, so the two cannot disagree.
+/// <para>Unstable: may change in any release before 1.0.</para>
 /// </summary>
 public interface IPurgeRecheck : IPurgeEligibility
 {
     /// <summary>
-    /// Inside the purge's transaction (the write lock is held): true only when <paramref name="candidate"/> is still due as decided, at
+    /// Inside the purge's transaction (nothing it reads can change before it commits): true only when <paramref name="candidate"/> is still due as decided, at
     /// <paramref name="now"/>. False refuses the purge and nothing is deleted.
     /// </summary>
-    Task<bool> StillDueAsync(SqliteTransaction transaction, PurgeCandidate candidate, DateTimeOffset now, CancellationToken cancellationToken);
+    Task<bool> StillDueAsync(DbTransaction transaction, PurgeCandidate candidate, DateTimeOffset now, CancellationToken cancellationToken);
 
     /// <summary>
     /// What the re-check reads, in the operator's words, for the refusal when it says no (#197 C3): "changed while it was being checked
@@ -88,6 +91,7 @@ public interface IPurgeRecheck : IPurgeEligibility
 /// The tenant lifecycle's parts a module gives (#194): creation participants, purge contributors, and the purge eligibility (made when
 /// it is needed, so its settings are read only then). The core has none (<see cref="None"/>): a new tenant gets only its own row, and
 /// nobody is ever purged.
+/// <para>Unstable: may change in any release before 1.0.</para>
 /// </summary>
 public sealed record TenantLifecycle(
     IReadOnlyList<ITenantCreationParticipant> Participants,
@@ -100,5 +104,6 @@ public sealed record TenantLifecycle(
 /// <summary>
 /// How a server module gives its <see cref="TenantLifecycle"/> (#194): made by the composition root for its database, so the module itself
 /// never names the database. At most one may be registered.
+/// <para>Unstable: may change in any release before 1.0.</para>
 /// </summary>
-public sealed record TenantLifecycleFactory(Func<SqliteDatabase, TenantLifecycle> For);
+public sealed record TenantLifecycleFactory(Func<IRelationalDatabase, TenantLifecycle> For);

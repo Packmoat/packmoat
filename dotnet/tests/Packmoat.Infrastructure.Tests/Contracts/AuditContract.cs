@@ -13,7 +13,7 @@ public abstract class AuditContract : StoreContract
     public async Task Events_are_stored_and_read_back_newest_first()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync();
+        await AddTenantAsync(t);
         await Engine.Audit(t).AppendAsync(Event(t.Clock.UtcNow, version: "1.0.0"), default);
         await Engine.Audit(t).AppendAsync(Event(t.Clock.UtcNow, version: "2.0.0", d: Decision.Allow), default);
 
@@ -25,10 +25,11 @@ public abstract class AuditContract : StoreContract
     }
 
     [Fact]
+    [Trait(Needs, Triggers)]
     public async Task The_audit_table_refuses_updates_and_deletes()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync();
+        await AddTenantAsync(t);
         await Engine.Audit(t).AppendAsync(Event(DateTimeOffset.UtcNow), default);   // the delete floor (90 days, migration 19) uses the real time
 
         foreach (var sql in new[] { "UPDATE audit_events SET decision='Allow'", "DELETE FROM audit_events" })

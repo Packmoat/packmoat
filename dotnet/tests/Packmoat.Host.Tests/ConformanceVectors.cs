@@ -10,16 +10,16 @@ using Packmoat.Protocols.NuGet;
 
 namespace Packmoat.Host.Tests;
 
-/// <summary>One conformance vector (core/spec/README.md): a named case of one group, at a fixed time.</summary>
+/// <summary>One conformance vector (spec/README.md): a named case of one group, at a fixed time.</summary>
 public sealed record VectorCase(string Group, string Name, DateTimeOffset Now, JsonObject Input, JsonObject Expected);
 
-/// <summary>A vector file that does not follow core/spec/README.md and its schema. Nothing in it runs.</summary>
+/// <summary>A vector file that does not follow spec/README.md and its schema. Nothing in it runs.</summary>
 public sealed class MalformedVectorException(string message) : Exception(message);
 
 /// <summary>
-/// Reads and checks the shared conformance vectors in core/spec/vectors (#209). The files are found from the core folder (the one holding
+/// Reads and checks the shared conformance vectors in spec/vectors (#209). The files are found from the core folder (the one holding
 /// dotnet/Packmoat.sln), never from the repository root, so the core alone runs them. A file is checked against its group's JSON Schema
-/// in core/spec/schema (every object closed, every code and time in its one form), then for what a schema cannot say: unique names and
+/// in spec/schema (every object closed, every code and time in its one form), then for what a schema cannot say: unique names and
 /// real calendar times. A file breaking any rule is refused whole.
 /// </summary>
 public static partial class ConformanceVectors
@@ -69,7 +69,7 @@ public static partial class ConformanceVectors
     [GeneratedRegex(@"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$")]
     private static partial Regex UtcTime();
 
-    /// <summary>core/spec, found from the test's output folder: up to dotnet/Packmoat.sln, then its parent (the core folder).</summary>
+    /// <summary>spec/, found from the test's output folder: up to dotnet/Packmoat.sln, then its parent (the core folder).</summary>
     public static string SpecRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

@@ -9,7 +9,8 @@ public class ReviewFixesM5Tests
 {
     private sealed class Cli : IAsyncDisposable
     {
-        public string Dir { get; } = Directory.CreateTempSubdirectory("packmoat-m5-").FullName;
+        private readonly TempDir _temp = TempDir.Create("packmoat-m5-", clearSqlitePools: true);
+        public string Dir => _temp.Path;
         private readonly CliEnvironment _env;
         public Cli()
         {
@@ -23,7 +24,7 @@ public class ReviewFixesM5Tests
             return (c, o.ToString(), e.ToString());
         }
         public async Task<string> TenantAsync() { await Run("tenant", "create", "acme", "Acme", "--upstream-base", "https://x/", "--feed", "https://x/i.json"); return "acme"; }
-        public ValueTask DisposeAsync() { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(Dir, true); } catch { } return ValueTask.CompletedTask; }
+        public ValueTask DisposeAsync() => _temp.DisposeAsync();
     }
 
     // ---- 22: atomic 0600, never overwrite
@@ -42,7 +43,8 @@ public class ReviewFixesM5Tests
             await Assert.ThrowsAsync<IOException>(() => CertificateTools.WriteNewAsync(path, new byte[] { 9 }, privateFile: true, default));
             Assert.Equal(new byte[] { 1, 2, 3 }, await File.ReadAllBytesAsync(path));   // untouched
         }
-        finally { Directory.Delete(dir, true); }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir); }
     }
 
     [Fact]
