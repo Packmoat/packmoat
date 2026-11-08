@@ -11,6 +11,7 @@ using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Packmoat.Application;
 using Packmoat.Domain;
 using Packmoat.Host.Auth;
+using Packmoat.Infrastructure;
 
 namespace Packmoat.Host.Web;
 
@@ -101,13 +102,22 @@ public static class SignedInSite
 
     private sealed class SharedMarker { }
 
-    /// <summary>The default key folder: PACKMOAT_ADMIN_KEYS_DIR, else "admin-keys" next to the database file. Null only in tests without a database.</summary>
-    internal static string? KeysDir(PackmoatOptions options) =>
-        options.AdminKeysDir ?? (options.DatabasePath is { } db ? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(db))!, "admin-keys") : null);
+    /// <summary>
+    /// The key folder: PACKMOAT_ADMIN_KEYS_DIR, else "admin-keys" next to the database file, which only a file engine has (another engine's
+    /// PACKMOAT_DB is no file). Null when neither: folder mode then stops the start (<see cref="AddShared"/>).
+    /// </summary>
+    internal static string? KeysDir(PackmoatOptions options, DatabaseEngine engine) =>
+        options.AdminKeysDir ?? (DatabaseEngines.IsFile(engine) && options.DatabasePath is { } db
+            ? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(db))!, "admin-keys") : null);
+
+    /// <summary>Why folder mode with no folder stops the start. Names the settings, never their values.</summary>
+    internal const string NoKeyFolder = "A sign-in site needs somewhere lasting to keep its cookie keys: set PACKMOAT_DB (the usual setup), or PACKMOAT_ADMIN_KEYS_DIR, or PACKMOAT_COOKIE_KEYS=database with a database.";
 
     /// <summary>
     /// Registers what all signed-in sites share, once: the cookie encryption keys, antiforgery and authentication with NO default scheme
     /// (every site names its own schemes, so one site's cookie can never be read by another branch by accident).
+    /// Folder mode with no folder stops the start (#278 step 0, D11): the keys are never kept only in memory, where a restart would
+    /// sign everyone out and each copy of the server would have its own.
     /// </summary>
     internal static void AddShared(IServiceCollection services, string? keysDir, CookieKeyStorage storage = CookieKeyStorage.Folder)
     {
@@ -121,7 +131,7 @@ public static class SignedInSite
         if (storage == CookieKeyStorage.Database)
             services.AddOptions<KeyManagementOptions>().Configure<ICookieKeyStore>((o, store) => o.XmlRepository = new DatabaseXmlRepository(store));
         else if (keysDir is { } dir) dp.PersistKeysToFileSystem(PrepareKeysDirectory(dir));
-        else dp.UseEphemeralDataProtectionProvider();   // tests only: production always has a database path, hence a keys folder
+        else throw new SettingsException(NoKeyFolder);
 
         services.AddAntiforgery(o =>
         {

@@ -14,21 +14,33 @@ namespace Packmoat.Host.Tests;
 /// </summary>
 public partial class AzureSetupSiteTests
 {
-    private sealed record RealCheckSite(Site Site, string Pem) : IAsyncDisposable
+    private sealed record RealCheckSite(Site Site, TempDir Keys) : IAsyncDisposable
     {
-        public async ValueTask DisposeAsync() { await Site.DisposeAsync(); File.Delete(Pem); }
+        public async ValueTask DisposeAsync()
+        {
+            try { await Site.DisposeAsync(); }
+            finally { Keys.Dispose(); }
+        }
     }
 
     private static async Task<RealCheckSite> StartWithRealCheckSchemeAsync(FakeTokenEndpoint? token = null)
     {
-        var pem = ConsentDeclineTests.WritePem();
-        var site = await StartAsync(configure: o => { o.AppAzureDevOpsSchemeOverride = null; o.AppCertPath = pem; },
-            services: s =>
-            {
-                s.PostConfigure<OpenIdConnectOptions>(AppAzureSetup.Scheme, ConsentDeclineTests.OfflineMetadata);
-                token?.Use(s, AppAzureSetup.Scheme);
-            }, logEverything: false);   // these tests check every log line production would write
-        return new RealCheckSite(site, pem);
+        var keys = ConsentDeclineTests.WritePem(out var pem);
+        try
+        {
+            var site = await StartAsync(configure: o => { o.AppAzureDevOpsSchemeOverride = null; o.AppCertPath = pem; },
+                services: s =>
+                {
+                    s.PostConfigure<OpenIdConnectOptions>(AppAzureSetup.Scheme, ConsentDeclineTests.OfflineMetadata);
+                    token?.Use(s, AppAzureSetup.Scheme);
+                }, logEverything: false);   // these tests check every log line production would write
+            return new RealCheckSite(site, keys);
+        }
+        catch
+        {
+            keys.Dispose();
+            throw;
+        }
     }
 
     [Theory]

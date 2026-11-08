@@ -160,10 +160,8 @@ public class ConformanceVectorLoaderTests
             File.Delete(Path.Combine(root.FullName, "auth", "token-check.json"));
             Assert.Contains("auth/token-check", Assert.Throws<MalformedVectorException>(() => LoadAll(root.FullName, SchemaRoot())).Message);
         }
-        finally
-        {
-            try { root.Delete(true); } catch (IOException) { /* best effort */ }
-        }
+        catch when (TempDir.Failing(root.FullName)) { throw; }
+        finally { TempDir.Delete(root.FullName); }
     }
 
     [Fact]
@@ -173,7 +171,7 @@ public class ConformanceVectorLoaderTests
         // The core folder's own name is not checked: it is core/ here, but the public repository's checkout is named after the repository
         // (#197 E). What matters is that spec/ sits beside dotnet/.
         Assert.Equal("spec", Path.GetFileName(spec));
-        Assert.True(File.Exists(Path.Combine(spec, "..", "dotnet", "Packmoat.sln")), "the spec sits beside core/dotnet");
+        Assert.True(File.Exists(Path.Combine(spec, "..", "dotnet", "Packmoat.sln")), "the spec sits beside dotnet/");
         var schemas = Directory.GetFiles(SchemaRoot(), "*.json", SearchOption.AllDirectories)
             .Select(f => Path.ChangeExtension(Path.GetRelativePath(SchemaRoot(), f), null).Replace('\\', '/'));
         Assert.Equal(Groups.Order(StringComparer.Ordinal), schemas.Order(StringComparer.Ordinal));

@@ -56,7 +56,8 @@ public class TrustedProxiesHostTests
             await app.StopAsync();
             return seen;
         }
-        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch (IOException) { } }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 
     [Fact]   // mutation: PackmoatApp passes no host names to TrustedProxies.Options

@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1
-# The core image (#197): the core server and command line, no hosted modules. Build from core/dotnet:
-#   docker build -t packmoat-core:local core/dotnet
+# The core image (#197): the core server and command line, no hosted modules. Build it from the repository's root:
+#   docker build -t packmoat-core:local dotnet
 # Base images are pinned by digest (the tag is kept for people). To take updates, replace each digest with the current one for its tag.
 # Both digests are multi-arch lists (linux/amd64 and linux/arm64), so one Dockerfile builds either (#233 E2):
-#   docker buildx build --platform linux/arm64 -t packmoat-core:arm64 --load core/dotnet
+#   docker buildx build --platform linux/arm64 -t packmoat-core:arm64 --load dotnet
 # The build stage runs on the machine's own platform and publishes for the target's, so no .NET build runs under emulation.
-# Running it on a server: docs/self-hosting.md.
+# Running it: docs/deploy/README.md.
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0@sha256:e70cdb7f80b0348f5cb85f19a8f670fca061f033d57eed12fa003d58b0e06317 AS build
 WORKDIR /src
 COPY global.json Directory.Build.props ./

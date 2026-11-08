@@ -108,8 +108,9 @@ public class RestoreKeepsTheOldDatabaseCompleteTests
     }
 }
 
-[Collection("sqlite-pools")]
-public class MasterKeyCheckTests
+// The master-key check's backup tests. The class's other part (MasterKeyCheckTests.cs) is the SQLite fixture of MasterKeyCheckContract and
+// carries the collection (#288 P2).
+public partial class MasterKeyCheckTests
 {
     private static AesGcmSecretProtector NewKey() => AesGcmSecretProtector.FromBase64(AesGcmSecretProtector.GenerateKeyBase64());
 
@@ -118,7 +119,7 @@ public class MasterKeyCheckTests
     {
         await using var live = await TestDb.CreateAsync();
         await live.AddTenantAsync();
-        await live.Tenants.EnsureKeyCheckAsync(default);
+        await new SqliteMasterKeyCheck(live.Db, live.Protector).EnsureAsync(default);
         var path = Path.Combine(live.Dir, "b", "snap.db");
         await SqliteBackup.BackupAsync(live.Db, path, false, default, live.Protector);
 
@@ -139,7 +140,7 @@ public class MasterKeyCheckTests
     public async Task Restore_refuses_a_backup_made_under_a_different_key_and_replaces_nothing()
     {
         await using var live = await TestDb.CreateAsync();
-        await live.Tenants.EnsureKeyCheckAsync(default);
+        await new SqliteMasterKeyCheck(live.Db, live.Protector).EnsureAsync(default);
         var path = Path.Combine(live.Dir, "b", "snap.db");
         await SqliteBackup.BackupAsync(live.Db, path, false, default, live.Protector);
         var target = Path.Combine(live.Dir, "restored", "packmoat.db");
@@ -154,11 +155,11 @@ public class MasterKeyCheckTests
     public async Task The_marker_is_written_once_and_a_wrong_key_is_then_refused()
     {
         await using var live = await TestDb.CreateAsync();
-        await live.Tenants.EnsureKeyCheckAsync(default);
-        await live.Tenants.EnsureKeyCheckAsync(default);                      // same key again: fine
+        await new SqliteMasterKeyCheck(live.Db, live.Protector).EnsureAsync(default);
+        await new SqliteMasterKeyCheck(live.Db, live.Protector).EnsureAsync(default);                      // same key again: fine
 
-        var other = new SqliteTenantStore(live.Db, live.Clock, NewKey(), TestLifecycle.Participants);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => other.EnsureKeyCheckAsync(default));
+        var other = new SqliteMasterKeyCheck(live.Db, NewKey());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => other.EnsureAsync(default));
     }
 
     [Fact]
@@ -169,8 +170,8 @@ public class MasterKeyCheckTests
         await SqliteBackup.BackupAsync(live.Db, path, false);                 // no marker has ever been written
 
         Assert.Equal(SqliteBackup.KeyStatus.NotRecorded, (await SqliteBackup.VerifyAsync(path, default, live.Protector)).Key);
-        await live.Tenants.EnsureKeyCheckAsync(default);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => new SqliteTenantStore(live.Db, live.Clock, NewKey(), TestLifecycle.Participants).EnsureKeyCheckAsync(default));
+        await new SqliteMasterKeyCheck(live.Db, live.Protector).EnsureAsync(default);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => new SqliteMasterKeyCheck(live.Db, NewKey()).EnsureAsync(default));
         SqliteConnection.ClearAllPools();
     }
 
@@ -197,6 +198,7 @@ public class MasterKeyCheckTests
             Assert.Equal(1, (await Run(Env(keyB, Path.Combine(dir, "restored.db")), "restore", snap)).Item1);
             Assert.False(File.Exists(Path.Combine(dir, "restored.db")));
         }
-        finally { SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch { } }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 }

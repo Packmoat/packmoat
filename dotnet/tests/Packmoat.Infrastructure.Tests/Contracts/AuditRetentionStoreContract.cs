@@ -22,22 +22,23 @@ public abstract class AuditRetentionStoreContract : StoreContract
         new(at, request, tenant, "tok_1", AuditKind.Download, "moq", "4.20.72", Decision.Allow, VerdictReason.CooldownElapsed, null);
 
     /// <summary>Writes through the real writer and checks the time text it stored is the real "O" format.</summary>
-    protected async Task WriteAsync(TestDb t, DateTimeOffset at, string request, string tenant = "acme")
+    protected async Task WriteAsync(IEngineDb t, DateTimeOffset at, string request, string tenant = "acme")
     {
         await Engine.Audit(t).AppendAsync(Event(at, request, tenant), Ct);
         var time = (string)(await ScalarAsync(t, $"SELECT time FROM audit_events WHERE request_id='{request}'"))!;
         Assert.Matches(OFormat, time);
     }
 
-    protected Task<List<string>> RequestsAsync(TestDb t) => ColumnAsync(t, "SELECT request_id FROM audit_events ORDER BY id");
+    protected Task<List<string>> RequestsAsync(IEngineDb t) => ColumnAsync(t, "SELECT request_id FROM audit_events ORDER BY id");
 
     // ---------------------------------------------------------------- batched writes
 
     [Fact]
+    [Trait(Needs, Triggers)]
     public async Task A_batch_is_stored_in_order_and_a_purged_tenants_events_are_dropped()
     {
         await using var t = await CreateDbAsync();
-        await ExecAsync(t, "INSERT INTO tenant_purges(tenant_id, purged_at, reason, actor) VALUES('gone', 't', 'r', 'a')");
+        await ExecAsync(t, "INSERT INTO tenant_purges(tenant_id, purged_at, reason, actor) VALUES('gone', '2026-01-01T00:00:00.0000000+00:00', 'r', 'a')");
         var now = DateTimeOffset.UtcNow;
 
         await Engine.AuditBatch(t).AppendBatchAsync(new[] { Event(now, "a"), Event(now, "late", "gone"), Event(now, "b"), Event(now, "c") }, Ct);
@@ -49,6 +50,7 @@ public abstract class AuditRetentionStoreContract : StoreContract
     // ---------------------------------------------------------------- the trigger (migration 19)
 
     [Fact]   // mutations: the floor shortened or lengthened past 91 days (e.g. 900)
+    [Trait(Needs, Triggers)]
     public async Task A_row_89_days_old_cannot_be_deleted_and_one_91_days_old_can()
     {
         await using var t = await CreateDbAsync();
@@ -63,6 +65,7 @@ public abstract class AuditRetentionStoreContract : StoreContract
     }
 
     [Fact]   // mutations: '-89 days'; 'start of day'; 'localtime'; ">" for ">=" moved the wrong way by a day
+    [Trait(Needs, Triggers)]
     public async Task The_floor_is_90_days_to_the_minute_by_the_databases_utc_clock()
     {
         await using var t = await CreateDbAsync();
@@ -76,6 +79,7 @@ public abstract class AuditRetentionStoreContract : StoreContract
     }
 
     [Fact]   // mutation: the purge branch of the trigger dropped (a purge could no longer delete a young row)
+    [Trait(Needs, Triggers)]
     public async Task A_running_purge_still_deletes_the_tenants_young_rows_and_only_those()
     {
         await using var t = await CreateDbAsync();
@@ -97,6 +101,7 @@ public abstract class AuditRetentionStoreContract : StoreContract
     }
 
     [Fact]
+    [Trait(Needs, Triggers)]
     public async Task No_row_can_be_changed_however_old()
     {
         await using var t = await CreateDbAsync();
@@ -125,6 +130,7 @@ public abstract class AuditRetentionStoreContract : StoreContract
     }
 
     [Fact]
+    [Trait(Needs, Triggers)]
     public async Task With_the_clock_ahead_the_database_refuses_and_keeps_the_young_rows()
     {
         await using var t = await CreateDbAsync();
@@ -153,8 +159,8 @@ public abstract class AuditRetentionStoreContract : StoreContract
     public async Task The_token_activity_prune_deletes_only_days_before_the_first_kept_day()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync();
-        var token = await t.Tokens.IssueAsync("acme", "ci", Ct);
+        await AddTenantAsync(t);
+        var token = await Engine.Tokens(t).IssueAsync("acme", "ci", Ct);
         await ExecAsync(t, $"""
             INSERT INTO token_activity(token_id, day) VALUES
               ('{token.TokenId}', '2025-01-01'), ('{token.TokenId}', '2025-10-11'), ('{token.TokenId}', '2025-10-12'), ('{token.TokenId}', '2026-10-10');

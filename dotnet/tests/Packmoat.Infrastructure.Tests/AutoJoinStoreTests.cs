@@ -28,6 +28,17 @@ public class AutoJoinStoreTests : AutoJoinStoreContract
         Assert.Equal(0L, await ScalarAsync(t, "SELECT COUNT(*) FROM auto_join_settings"));
     }
 
+    // Moved from the contract (#303): SQLite stores 'on' as text, so its CHECK refuses it. PostgreSQL cannot read 'on' as a bigint at all
+    // (22P02, before any CHECK), which is not a refusal there.
+    [Fact]
+    public async Task The_schema_refuses_on_as_the_flag()
+    {
+        await using var t = await CreateDbAsync();
+        await AddTenantAsync(t, "acme");
+        await RefusedAsync(() => ScalarAsync(t, "INSERT INTO auto_join_settings(tenant_id, enabled, changed_at, changed_by) VALUES('acme', 'on', '2026-01-01T00:00:00.0000000+00:00', 'y')"));
+        Assert.Equal(0L, await ScalarAsync(t, "SELECT COUNT(*) FROM auto_join_settings"));
+    }
+
     [Fact]
     public async Task A_read_that_fails_throws_and_is_never_read_as_on()
     {

@@ -12,4 +12,4 @@ There is no ingress. To try the server from this machine:
   curl -H 'Host: localhost' http://127.0.0.1:8080/readyz
 {{- end }}
 
-Backups and upgrades: docs/self-hosting.md, section 10.
+Backups and upgrades: docs/deploy/kubernetes.md.

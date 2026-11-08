@@ -12,9 +12,9 @@ namespace Packmoat.Infrastructure.Tests;
 public class DecisionCliTests : IAsyncLifetime
 {
     private static readonly DateTimeOffset T0 = new(2026, 10, 10, 12, 0, 0, TimeSpan.Zero);
-    private readonly string _dir = Directory.CreateTempSubdirectory("packmoat-cli-decisions-").FullName;
+    private readonly TempDir _temp = TempDir.Create("packmoat-cli-decisions-", clearSqlitePools: true);
     private readonly string _key = AesGcmSecretProtector.GenerateKeyBase64();
-    private CliEnvironment Env => new(Path.Combine(_dir, "packmoat.db"), () => AesGcmSecretProtector.FromBase64(_key), new FakeClock());
+    private CliEnvironment Env => new(Path.Combine(_temp.Path, "packmoat.db"), () => AesGcmSecretProtector.FromBase64(_key), new FakeClock());
 
     private async Task<(int Code, string Out, string Err)> Run(params string[] args)
     {
@@ -38,8 +38,7 @@ public class DecisionCliTests : IAsyncLifetime
 
     public Task DisposeAsync()
     {
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        try { Directory.Delete(_dir, true); } catch { /* best effort */ }
+        _temp.Dispose();
         return Task.CompletedTask;
     }
 

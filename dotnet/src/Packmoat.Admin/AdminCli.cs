@@ -200,49 +200,31 @@ public static class AdminCli
             }
 
             var db = new SqliteDatabase(env.DbPath);
-            await db.MigrateAsync(tracks);
+            ISchemaMigrator migrator = db;   // #278 step 0, A4: a local, as in the server
+            await migrator.MigrateAsync(tracks);
             if (args[0] == "backup")
             {
                 var done = await SqliteBackup.BackupAsync(db, args.Length > 1 ? args[1] : throw new ArgumentException("A destination file is required."), args.Contains("--force"), default, TryProtector(env));
                 await output.WriteLineAsync("backup written and verified. " + Describe(done));
                 return 0;
             }
-            var protector = env.Protector();
-            // The tenant lifecycle (#194): at most one module's (creation participants, purge contributors and eligibility), else the
-            // core's none. Notes are what its payment provider logs; a refused purge prints them.
-            var notes = new List<string>();
-            var lifecycles = modules.Select(m => m.Lifecycle(db, env, notes.Add)).OfType<TenantLifecycle>().ToList();
-            if (lifecycles.Count > 1)
-            {
-                await error.WriteLineAsync($"{lifecycles.Count} modules give a tenant lifecycle. Refusing to run: at most one may.");
-                return 2;
-            }
-            var lifecycle = lifecycles.SingleOrDefault() ?? TenantLifecycle.None;
-            var tenants = new SqliteTenantStore(db, env.Clock, protector, lifecycle.Participants);
-            var shared = new SqliteSharedAppCredentialStore(db, env.Clock, protector);
-            await tenants.EnsureKeyCheckAsync(default);
-            // The serving gate: at most one module's, else every tenant serves.
-            var gates = modules.Select(m => m.Gate(db, env, error.WriteLine)).OfType<IServingGate>().ToList();
-            if (gates.Count > 1)
-            {
-                await error.WriteLineAsync($"{gates.Count} modules give a serving gate. Refusing to run: at most one may decide who is served.");
-                return 2;
-            }
-            var tokens = new SqliteTokenService(db, tenants, env.Clock, gates.SingleOrDefault() ?? ServeAllGate.Instance);
-            var audit = new SqliteAuditLog(db);
+            // After the migration and the backup (which needs no master key): the stores, opened in the one order.
+            if (await OpenStoresAsync(db, env, modules, error) is not { } opened) return 2;
+            var (stores, lifecycle, notes, tenants, shared, tokens) = opened;
+            var audit = stores.Audit;
             var a = new AdminCliArgs(args);
             // The CLI is the operator's tool: all tenants. --by or the OS user names the operator. A container uid with no passwd entry
             // has no user name; that must not break every command, so the name falls back to "operator" and only `waiver add` insists on a real one.
             var operatorName = a.Opt("by") ?? env.OperatorName ?? Environment.UserName;
             var actor = ActorScope.OperatorAs(string.IsNullOrWhiteSpace(operatorName) ? "operator" : operatorName);
             var commands = new AdminCommands(tenants, tokens, env.Clock, shared, new CertificateInspector());
-            var activity = new SqliteTokenActivity(db, env.Clock);
-            var queries = new AdminQueries(tenants, audit, tokens, activity, shared, new SqliteDecisionRecordQuery(db));
+            var activity = stores.TokenActivity(env.Clock);
+            var queries = new AdminQueries(tenants, audit, tokens, activity, shared, stores.DecisionQuery);
             var ct = CancellationToken.None;
 
             // A module's group (#193): the collision check above keeps the core's commands the core's.
             if (modules.FirstOrDefault(m => m.Group == a.Cmd.Item1) is { } module)
-                return await module.RunAsync(new AdminCliContext(a, actor, db, env, output, error, ct));
+                return await module.RunAsync(new AdminCliContext(a, actor, db, stores.AdminActions, env, output, error, ct));
 
             switch (a.Cmd)
             {
@@ -256,7 +238,7 @@ public static class AdminCli
                         : new NewTenant(a.Pos(0), a.Pos(1), Ensure(a.Opt("upstream-base")), a.Opt("path-prefix") ?? "", a.Opt("feed") ?? throw new ArgumentException("--feed is required."),
                             int.Parse(a.Opt("cooldown") ?? "14"), TenantOrigin.Operator);
                     if (a.Opt("azure-tenant") is { } directory)
-                        return await CreateAndLinkAsync(tenant, directory, actor, db, lifecycle, env.Clock, output, ct);
+                        return await CreateAndLinkAsync(tenant, directory, actor, stores, lifecycle, env.Clock, output, ct);
                     await commands.CreateTenantAsync(actor, tenant, ct);
                     await output.WriteLineAsync($"created tenant {a.Pos(0)}");
                     break;
@@ -280,10 +262,10 @@ public static class AdminCli
                 }
                     break;
                 case ("tenant", "directory"):
-                    return await DirectoryAsync(a, actor, new DirectoryBindingCommands(tenants, new SqliteSignInDirectoryStore(db), env.Clock, shared), new SqliteAdminActionLog(db), env.Clock, output, ct);
+                    return await DirectoryAsync(a, actor, new DirectoryBindingCommands(tenants, stores.SignInDirectory, env.Clock, shared), stores.AdminActions, env.Clock, output, ct);
                 case ("tenant", "purge-due"):
                 case ("tenant", "purge"):
-                    return await PurgeAsync(a, actor, db, lifecycle, notes, env, PurgeChecks(modules, n => n.Due), output, ct);
+                    return await PurgeAsync(a, actor, stores, lifecycle, notes, env, PurgeChecks(modules, n => n.Due), output, ct);
                 case ("tenant", "suspend"): await commands.SuspendTenantAsync(actor, a.Pos(0), ct); await output.WriteLineAsync("suspended"); break;
                 case ("tenant", "activate"): await commands.ActivateTenantAsync(actor, a.Pos(0), ct); await output.WriteLineAsync("activated"); break;
                 case ("tenant", "cooldown"): await commands.SetCooldownAsync(actor, a.Pos(0), int.Parse(a.Pos(1)), ct); await output.WriteLineAsync("ok"); break;
@@ -479,7 +461,7 @@ public static class AdminCli
                     await DecisionAsync(a, actor, queries, output, ct);
                     break;
                 case ("jobs", _):
-                    return await JobsAsync(db, lifecycle, env, audit, activity, output, error, ct);
+                    return await JobsAsync(stores, lifecycle, env, activity, output, error, ct);
                 default:
                     await error.WriteLineAsync("Unknown command.\n" + usage);
                     return 2;
@@ -494,21 +476,66 @@ public static class AdminCli
     }
 
     /// <summary>
+    /// What the core's commands work on (#278 step 0, PR 2), from the one store list (<see cref="SqliteStores"/>). This, <see cref="OpenStoresAsync"/>
+    /// and <see cref="TokenServiceFor"/> are public only so the core's tests can check the order and the gate (no command shows the
+    /// gate, and the command line's tests live in Packmoat.Infrastructure.Tests, which may not read this assembly's internals): they are
+    /// not a module seam.
+    /// </summary>
+    public sealed record CliStores(SqliteStores Stores, TenantLifecycle Lifecycle, List<string> Notes, SqliteTenantStore Tenants,
+        SqliteSharedAppCredentialStore Shared, SqliteTokenService Tokens);
+
+    /// <summary>
+    /// Opens the stores over a migrated database, in the one order: the master key, the module's lifecycle, the tenant store (with the
+    /// lifecycle's participants), the master-key check, the module's serving gate and the token service that asks it. Null, after an
+    /// error line, when two modules give a lifecycle or a gate.
+    /// </summary>
+    public static async Task<CliStores?> OpenStoresAsync(SqliteDatabase db, CliEnvironment env, IReadOnlyList<IAdminCliModule> modules, TextWriter error)
+    {
+        // The stores, from the one list the server and the hosted modules also build from (#278 step 0, A3).
+        var stores = new SqliteStores(db, env.Protector());
+        // The tenant lifecycle (#194): at most one module's (creation participants, purge contributors and eligibility), else the
+        // core's none. Notes are what its payment provider logs; a refused purge prints them.
+        var notes = new List<string>();
+        var lifecycles = modules.Select(m => m.Lifecycle(db, env, notes.Add)).OfType<TenantLifecycle>().ToList();
+        if (lifecycles.Count > 1)
+        {
+            await error.WriteLineAsync($"{lifecycles.Count} modules give a tenant lifecycle. Refusing to run: at most one may.");
+            return null;
+        }
+        var lifecycle = lifecycles.SingleOrDefault() ?? TenantLifecycle.None;
+        var tenants = stores.Tenants(env.Clock, lifecycle);
+        var shared = stores.SharedAppCredentials(env.Clock);
+        IMasterKeyCheck keyCheck = stores.MasterKeyCheck;   // #278 step 0, A4: a local, as in the server
+        await keyCheck.EnsureAsync(default);
+        // The serving gate: at most one module's, else every tenant serves.
+        var gates = modules.Select(m => m.Gate(db, env, error.WriteLine)).OfType<IServingGate>().ToList();
+        if (gates.Count > 1)
+        {
+            await error.WriteLineAsync($"{gates.Count} modules give a serving gate. Refusing to run: at most one may decide who is served.");
+            return null;
+        }
+        return new CliStores(stores, lifecycle, notes, tenants, shared, TokenServiceFor(stores, tenants, env.Clock, gates));
+    }
+
+    /// <summary>The token service asks the module's gate, or the core's serve-everyone gate when no module gives one.</summary>
+    public static SqliteTokenService TokenServiceFor(SqliteStores stores, SqliteTenantStore tenants, IClock clock, IReadOnlyList<IServingGate> gates) =>
+        stores.TokenService(tenants, clock, gates.SingleOrDefault() ?? ServeAllGate.Instance);
+
+    /// <summary>
     /// jobs run retention (#233): the server's daily retention pass, every step, by hand or from a scheduler (for a server whose
     /// PACKMOAT_BACKGROUND_JOBS is off). It prints each step's count, or the kind of its failure only, and exits 1 when any step failed.
     /// It counts the tenants due for purge but never claims the day's nudge nor alerts, so the server's own nudge is unaffected; it deletes
     /// no tenant. It takes the job lease the server's retention pass takes (#232 M2): while a server copy (or this command elsewhere) is
     /// running the pass, it changes nothing, says so and exits 0. A pass that runs prints its duration.
     /// </summary>
-    private static async Task<int> JobsAsync(SqliteDatabase db, TenantLifecycle lifecycle, CliEnvironment env, SqliteAuditLog audit,
+    private static async Task<int> JobsAsync(SqliteStores stores, TenantLifecycle lifecycle, CliEnvironment env,
         SqliteTokenActivity activity, TextWriter output, TextWriter error, CancellationToken ct)
     {
-        var pass = new RetentionPass(new SqliteFeedCheckStore(db), env.Clock,
-            new SqliteTenantPurgeStore(db, lifecycle.Eligibility?.Invoke(), lifecycle.Contributors),
-            alerts: null, new SqliteDecisionRecordLog(db), new SqliteAdminActionLog(db), audit, activity);
+        var pass = new RetentionPass(stores.FeedChecks, env.Clock, stores.PurgeStore(lifecycle),
+            alerts: null, stores.Decisions, stores.AdminActions, stores.Audit, activity);
         // The server's lease (#232 M2): while a server copy runs its pass, this one is skipped, and the other way round.
         IReadOnlyList<RetentionStep> steps = [];
-        var run = await LeasedJob.RunAsync(new SqliteJobLease(db, env.Clock), JobLeases.Retention, JobLeases.ProcessHolder,
+        var run = await LeasedJob.RunAsync(new SqliteJobLease(stores.Database, env.Clock), JobLeases.Retention, JobLeases.ProcessHolder,
             async c => steps = await pass.RunAsync(nudge: false, report: null, c), ct);
         if (run.AcquireFailure is { } acquire) throw acquire;
         if (!run.Ran)
@@ -591,7 +618,7 @@ public static class AdminCli
     /// one. With no upstream options (#207) the tenant has no URLs and feed_setup 'customer': its Admins connect the feed with the Azure
     /// setup wizard, and the record says <c>feed=customer</c> instead of the URLs.
     /// </summary>
-    private static async Task<int> CreateAndLinkAsync(NewTenant tenant, string rawDirectory, ActorScope actor, SqliteDatabase db, TenantLifecycle lifecycle, IClock clock,
+    private static async Task<int> CreateAndLinkAsync(NewTenant tenant, string rawDirectory, ActorScope actor, SqliteStores stores, TenantLifecycle lifecycle, IClock clock,
         TextWriter output, CancellationToken ct)
     {
         AdminCommands.CheckNewTenant(actor, tenant);
@@ -600,7 +627,7 @@ public static class AdminCli
         var urls = tenant.FeedSetup == FeedSetup.Customer ? "feed=customer" : $"upstream={tenant.UpstreamBase}; path_prefix={tenant.AllowedPathPrefix}; feed={tenant.FeedIndexUrl}";
         var detail = $"name={tenant.Name}; {urls}; cooldown_days={tenant.CooldownDays}; directory={directory}";
         var record = new AdminActionRecord(now, "", "", actor.Name, "tenant.create", tenant.Id, detail, "cli");
-        var result = await new SqliteOrganisationStore(db, lifecycle.Participants).CreateAsync(new NewOrganisation(tenant, directory, now, actor.Name, Record: record), [], ct);
+        var result = await stores.Organisations(lifecycle).CreateAsync(new NewOrganisation(tenant, directory, now, actor.Name, Record: record), [], ct);
         if (result == OrganisationCreateResult.DirectoryTaken)
             throw new ArgumentException($"Directory {directory} is already linked to another tenant. Unbind it there first. Tenant {tenant.Id} was not created.");
         await output.WriteLineAsync($"created tenant {tenant.Id}");
@@ -675,12 +702,12 @@ public static class AdminCli
     /// word (it may ask a payment provider) and then it deletes in one transaction. No operator alerts from here.
     /// With no module's lifecycle nobody is due and every purge is refused (#194).
     /// </summary>
-    private static async Task<int> PurgeAsync(AdminCliArgs a, ActorScope actor, SqliteDatabase db, TenantLifecycle lifecycle, List<string> notes, CliEnvironment env,
+    private static async Task<int> PurgeAsync(AdminCliArgs a, ActorScope actor, SqliteStores stores, TenantLifecycle lifecycle, List<string> notes, CliEnvironment env,
         string dueCheck, TextWriter output, CancellationToken ct)
     {
         AdminCommands.RequireOperator(actor);
-        var store = new SqliteTenantPurgeStore(db, lifecycle.Eligibility?.Invoke(), lifecycle.Contributors);
-        var purges = new TenantPurgeCommands(store, new SqliteAdminActionLog(db), env.Clock);
+        var store = stores.PurgeStore(lifecycle);
+        var purges = new TenantPurgeCommands(store, stores.AdminActions, env.Clock);
         var now = env.Clock.UtcNow;
         if (a.Cmd.Item2 == "purge-due")
         {

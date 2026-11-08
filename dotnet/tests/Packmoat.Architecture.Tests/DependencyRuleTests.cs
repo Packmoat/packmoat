@@ -103,6 +103,34 @@ public class DependencyRuleTests
         Assert.Equal(new[] { "Packmoat.Domain", "Packmoat.Policy" }, ProjectRefs("Packmoat.Application"));
     }
 
+    private const string PostgresAdapter = "Packmoat.Infrastructure.Postgres";
+
+    [Fact]   // #288. mutation: a ProjectReference from the adapter to Packmoat.Host
+    public void The_Postgres_adapter_references_only_Domain_Application_and_Infrastructure()
+    {
+        Assert.Equal(new[] { "Packmoat.Application", "Packmoat.Domain", "Packmoat.Infrastructure" }, ProjectRefs(PostgresAdapter));
+        Assert.Equal(new[] { "Npgsql" }, PackageRefs(PostgresAdapter));
+    }
+
+    /// <summary>Every project folder under src/ but the adapter's own.</summary>
+    private static string[] OtherSrcProjects() =>
+        Directory.GetDirectories(Path.Combine(RepoRoot(), "src")).Select(Path.GetFileName).Where(n => n != PostgresAdapter)
+            .Where(n => File.Exists(Path.Combine(RepoRoot(), "src", n!, n + ".csproj"))).Select(n => n!).Order(StringComparer.Ordinal).ToArray();
+
+    // #288: PACKMOAT_DB_ENGINE=postgres is refused, so nothing that ships may carry Npgsql yet: no src project references the adapter or
+    // the package (the images publish Packmoat.Server and Packmoat.Cli, which reach only src projects). Lift this when serving opens.
+    [Fact]   // mutation: a ProjectReference from Packmoat.Server to the adapter
+    public void No_src_project_references_the_Postgres_adapter_or_Npgsql_while_postgres_is_refused()
+    {
+        var projects = OtherSrcProjects();
+        Assert.True(projects.Length >= 9, "too few src projects found to mean anything: " + string.Join(", ", projects));
+        foreach (var project in projects)
+        {
+            Assert.DoesNotContain(PostgresAdapter, ProjectRefs(project));
+            Assert.DoesNotContain(PackageRefs(project), p => p.StartsWith("Npgsql", StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
     [Fact]
     public void The_forbidden_list_really_detects_things_the_host_uses()
     {

@@ -167,6 +167,7 @@ public class DecisionRecordHostTests
             var left = await RowsAsync(app.Services.GetRequiredService<IDecisionRecordQuery>(), "acme");
             Assert.Equal("new.lib", Assert.Single(left).PackageId);
         }
-        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch { } }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 }

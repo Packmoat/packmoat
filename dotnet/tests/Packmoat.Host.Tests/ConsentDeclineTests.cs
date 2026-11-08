@@ -30,9 +30,13 @@ public partial class ConsentDeclineTests
     internal sealed class RealSite : IAsyncDisposable
     {
         public required AdminSiteFixture F { get; init; }
-        public required string Pem { get; init; }
+        public required TempDir Keys { get; init; }
         public required CapturingLoggerProvider Logs { get; init; }
-        public async ValueTask DisposeAsync() { await F.DisposeAsync(); File.Delete(Pem); }
+        public async ValueTask DisposeAsync()
+        {
+            try { await F.DisposeAsync(); }
+            finally { Keys.Dispose(); }
+        }
     }
 
     /// <summary>Microsoft's endpoints without the network: the handler builds its authorize URL from this and never fetches metadata.</summary>
@@ -51,16 +55,24 @@ public partial class ConsentDeclineTests
     /// <summary>The customer site with the real Microsoft handler (no fake scheme).</summary>
     internal static async Task<RealSite> StartAsync(Action<IServiceCollection>? services = null)
     {
-        var pem = WritePem();
-        var logs = new CapturingLoggerProvider();
-        var f = await AdminSiteFixture.StartAsync(o => { o.AppHost = AppHost; o.AppClientId = AppClient; o.AppCertPath = pem; },
-            services: s =>
-            {
-                s.AddSingleton<ILoggerProvider>(logs);
-                s.PostConfigure<OpenIdConnectOptions>(AppSite.RemoteScheme, OfflineMetadata);
-                services?.Invoke(s);
-            });
-        return new RealSite { F = f, Pem = pem, Logs = logs };
+        var keys = WritePem(out var pem);
+        try
+        {
+            var logs = new CapturingLoggerProvider();
+            var f = await AdminSiteFixture.StartAsync(o => { o.AppHost = AppHost; o.AppClientId = AppClient; o.AppCertPath = pem; },
+                services: s =>
+                {
+                    s.AddSingleton<ILoggerProvider>(logs);
+                    s.PostConfigure<OpenIdConnectOptions>(AppSite.RemoteScheme, OfflineMetadata);
+                    services?.Invoke(s);
+                });
+            return new RealSite { F = f, Keys = keys, Logs = logs };
+        }
+        catch
+        {
+            keys.Dispose();
+            throw;
+        }
     }
 
     /// <summary>

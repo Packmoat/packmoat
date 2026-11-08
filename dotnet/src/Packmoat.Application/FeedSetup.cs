@@ -18,7 +18,7 @@ public static class FeedSetupRules
 {
     /// <summary>
     /// The tenant's own Admins may set up its feed (the wizard, Connect): a self-made tenant, or one the operator made for the customer to
-    /// connect. Connect's first step (SqliteSelfServiceFeedStore) is the same rule in SQL: <c>origin='self' OR feed_setup='customer'</c>.
+    /// connect. Connect's first step (the self-service feed store's) is the same rule in SQL: <c>origin='self' OR feed_setup='customer'</c>.
     /// </summary>
     public static bool CustomerSetsUpFeed(TenantOrigin origin, FeedSetup feedSetup) => origin == TenantOrigin.Self || feedSetup == FeedSetup.Customer;
 

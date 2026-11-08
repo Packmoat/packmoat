@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Packmoat.Infrastructure\Packmoat.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Packmoat.Infrastructure.Postgres\Packmoat.Infrastructure.Postgres.csproj" />
     <ProjectReference Include="..\..\src\Packmoat.Application\Packmoat.Application.csproj" />
     <ProjectReference Include="..\..\src\Packmoat.Domain\Packmoat.Domain.csproj" />
     <ProjectReference Include="..\..\src\Packmoat.Admin\Packmoat.Admin.csproj" />

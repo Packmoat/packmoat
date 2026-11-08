@@ -34,6 +34,11 @@ public class DatabaseEngineTests
         Assert.Throws<SettingsException>(() => DatabaseEngines.RequireAvailable(value));
     }
 
+    [Theory]   // mutation: postgres read as a file (a key folder would be derived from its connection string)
+    [InlineData(DatabaseEngine.Sqlite, true)]
+    [InlineData(DatabaseEngine.Postgres, false)]
+    public void Only_sqlites_database_is_a_file(DatabaseEngine engine, bool file) => Assert.Equal(file, DatabaseEngines.IsFile(engine));
+
     [Fact]
     public void Only_sqlite_is_available_in_this_build()
     {
@@ -78,7 +83,8 @@ public class DatabaseEngineTests
             var lines = services!.Select(d => $"{d.ServiceType.FullName} {d.Lifetime} {d.ImplementationType?.FullName ?? d.ImplementationInstance?.GetType().FullName ?? d.ImplementationFactory?.Method.ReturnType.FullName}").ToArray();
             return (lines, probe.Seen);
         }
-        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch (IOException) { } }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 
     [Fact]   // the live server has no PACKMOAT_DB_ENGINE: unset must compose as sqlite does, and the modules are told sqlite
@@ -116,6 +122,7 @@ public class DatabaseEngineTests
             Assert.Null(probe.Seen);   // no module was configured
             Assert.False(File.Exists(Path.Combine(dir, "packmoat.db")));
         }
-        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch (IOException) { } }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 }

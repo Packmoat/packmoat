@@ -100,9 +100,10 @@ public class AdminSiteHardeningTests
     [Fact]
     public async Task With_production_host_filtering_the_admin_host_is_served_and_other_names_are_refused()
     {
+        using var hf = TempDir.Create("packmoat-hf-");   // declared first, so deleted after the site has stopped
         await using var f = await StartAsync(o =>
         {
-            o.DatabasePath = Path.Combine(Directory.CreateTempSubdirectory("packmoat-hf-").FullName, "packmoat.db");
+            o.DatabasePath = hf.File("packmoat.db");
             o.MasterKeyBase64 = AesGcmSecretProtector.GenerateKeyBase64();
             o.AllowedHosts = "feeds.packmoat.test";      // the admin host is NOT listed here; the app adds it
         });
@@ -157,7 +158,8 @@ public class AdminSiteHardeningTests
             Packmoat.Host.Web.SignedInSite.EnsureOwnerOnly(dir, File.SetUnixFileMode, File.GetUnixFileMode);                                                        // a real one fixes it
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(dir));
         }
-        finally { Directory.Delete(dir, true); }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir); }
     }
 
     [Fact]
@@ -165,10 +167,10 @@ public class AdminSiteHardeningTests
     public async Task An_existing_open_key_folder_is_tightened_at_start()
     {
         if (OperatingSystem.IsWindows()) return;
-        var dir = Directory.CreateTempSubdirectory("packmoat-keys-").FullName;
+        using var keys = TempDir.Create("packmoat-keys-");
+        var dir = keys.Path;
         File.SetUnixFileMode(dir, (UnixFileMode)Convert.ToInt32("777", 8));
         await using (await StartAsync(keysDir: dir)) { }
         Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(dir));
-        Directory.Delete(dir, true);
     }
 }

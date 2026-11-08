@@ -51,13 +51,10 @@ public class SettingsTests
     [Fact]
     public void A_real_file_is_read()
     {
-        var file = System.IO.Path.GetTempFileName();
-        try
-        {
-            File.WriteAllText(file, Secret + "\n");
-            Assert.Equal(Secret, new Settings(n => n == FileName ? file : null, File.ReadAllText).Read(Name));
-        }
-        finally { File.Delete(file); }
+        using var temp = TempDir.Create("packmoat-settings-");
+        var file = temp.File("secret");
+        File.WriteAllText(file, Secret + "\n");
+        Assert.Equal(Secret, new Settings(n => n == FileName ? file : null, File.ReadAllText).Read(Name));
     }
 
     public static TheoryData<string, Dictionary<string, string?>, Func<string, string>> Failures() => new()
@@ -113,7 +110,8 @@ public class SettingsTests
     [Fact]
     public void The_master_key_can_come_from_a_file()
     {
-        var file = System.IO.Path.GetTempFileName();
+        using var temp = TempDir.Create("packmoat-settings-");
+        var file = temp.File("key");
         const string variable = "PACKMOAT_SETTINGS_TEST_KEY_7F3A";
         try
         {
@@ -124,7 +122,6 @@ public class SettingsTests
         finally
         {
             Environment.SetEnvironmentVariable(variable + Settings.FileSuffix, null);
-            File.Delete(file);
         }
     }
 }
@@ -153,8 +150,7 @@ public class SettingsCliTests
         finally
         {
             Environment.SetEnvironmentVariable(variable + Settings.FileSuffix, null);
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            try { Directory.Delete(dir, true); } catch (IOException) { }
+            TempDir.Delete(dir, clearSqlitePools: true);
         }
     }
 }

@@ -1,0 +1,38 @@
+# OpenSSF Scorecard (#276): scores this repository's security practices (pinned actions, branch rules, token permissions, code review,
+# ...) on each push to main, weekly, and when a branch rule changes. The results are published to the Scorecard API (so the badge and
+# scorecard.dev show them; this needs an identity token) and uploaded to the repository's code scanning alerts. Scorecard publishes only
+# from a workflow that follows its rules: no env: or defaults:, one Ubuntu job, and only its approved actions. Its one job alone may
+# upload or ask for a token (CoreWorkflowTests). It never runs on a pull request, so it is not a required check.
+name: scorecard
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '41 5 * * 4'
+  branch_protection_rule:
+
+permissions:
+  contents: read
+
+jobs:
+  scorecard:
+    name: scorecard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+      - uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: results.sarif

@@ -16,10 +16,24 @@ public sealed class SchemaTooNewException : InvalidOperationException
 }
 
 /// <summary>Opens connections with the right settings and applies schema migrations. One file on local disk (WAL mode).</summary>
-public sealed class SqliteDatabase
+public sealed class SqliteDatabase : IRelationalDatabase, ISchemaMigrator
 {
     private readonly string _connectionString;
     private readonly string _readOnlyConnectionString;
+
+    /// <summary>Always <see cref="DatabaseEngine.Sqlite"/>.</summary>
+    public DatabaseEngine Engine => DatabaseEngine.Sqlite;
+
+    /// <summary>
+    /// The one approved way from the module seams' <see cref="IRelationalDatabase"/> back to SQLite's own database (#278 step 0): the same
+    /// instance when it is SQLite's. Anything else (another engine, or an object that is not this class) is refused, naming its engine.
+    /// </summary>
+    public static SqliteDatabase From(IRelationalDatabase database)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        return database as SqliteDatabase ?? throw new InvalidOperationException(
+            $"This part of Packmoat runs on SQLite only, and was given a {DatabaseEngines.Name(database.Engine)} database ({DatabaseEngines.Variable}). Refusing to run.");
+    }
 
     public SqliteDatabase(string path)
     {
@@ -103,8 +117,9 @@ public sealed class SqliteDatabase
         return connection;
     }
 
-    /// <summary>The core's migration track (table schema_migrations).</summary>
-    public static MigrationTrack Core => CoreTrack;
+    /// <summary>The core's migration track (table schema_migrations): <see cref="CoreSchema.Track"/>, whose SQLite statements are
+    /// <see cref="Migrations"/>.</summary>
+    public static MigrationTrack Core => CoreSchema.Track;
 
     /// <summary>
     /// Applies the core's migrations, then each of <paramref name="modules"/>' tracks in order (#196). Before anything is written it
@@ -139,26 +154,20 @@ public sealed class SqliteDatabase
     public async Task<IReadOnlyList<TrackOutcome>> MigrateAsync(MigrationTrack core, IReadOnlyList<MigrationTrack> modules, int coreUpToVersion, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(modules);
-        if (modules.Any(m => m.Name == MigrationTrack.CoreName))
-            throw new SchemaTrackException("A module's migration track is named \"core\", which is the core's. Refusing to run.");
-        if (modules.GroupBy(m => m.Name, StringComparer.Ordinal).FirstOrDefault(g => g.Count() > 1) is { } twice)
-            throw new SchemaTrackException($"The migration track \"{twice.Key}\" is declared twice. Refusing to run.");
+        TrackRules.RequireDistinct(modules);
+        // Every track has SQLite statements (#278 step 0, B7), checked before the database is opened: a refusal makes no track table.
+        foreach (var track in modules.Prepend(core)) track.StatementsFor(DatabaseEngine.Sqlite);
 
         await using var connection = await OpenAsync(cancellationToken);
 
         // Fail closed, before anything is written. A track table nobody here declares belongs to a module this build does not have: its
         // tables could be misread or damaged. A track whose table is newer than this build knows: an older build must not run on it.
-        var declared = modules.Select(m => m.Table).Append(core.Table).ToHashSet(StringComparer.Ordinal);
-        var undeclared = (await TrackTablesAsync(connection, cancellationToken)).Where(t => !declared.Contains(t)).ToList();
-        if (undeclared.Count > 0)
-            throw new SchemaTrackException($"The database has the migration track table(s) {string.Join(", ", undeclared)}, which this build does not declare " +
-                "(a module it does not have made them). Refusing to run: it could misread or damage that module's tables. Run a build with that module.");
+        TrackRules.RequireDeclared(core, modules, await TrackTablesAsync(connection, cancellationToken));
         var before = new Dictionary<string, int?>(StringComparer.Ordinal);
         foreach (var track in modules.Prepend(core))
         {
             var version = await VersionAsync(connection, track.Table, cancellationToken);
-            if (version > track.LatestVersion)
-                throw track.Name == MigrationTrack.CoreName ? new SchemaTooNewException(version.Value, track.LatestVersion) : new SchemaTooNewException(track.Name, version.Value, track.LatestVersion);
+            TrackRules.RequireNotNewer(track, version);
             before[track.Name] = version;
         }
         var coreBefore = before[core.Name] ?? 0;
@@ -227,7 +236,7 @@ public sealed class SqliteDatabase
     private static async Task RunTrackAsync(SqliteConnection connection, MigrationTrack track, int upToVersion, CancellationToken cancellationToken)
     {
         await Execute(connection, $"CREATE TABLE IF NOT EXISTS {track.Table}(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)", cancellationToken);
-        var migrations = track.Migrations;
+        var migrations = track.StatementsFor(DatabaseEngine.Sqlite);
         for (var i = 0; i < Math.Min(upToVersion, migrations.Length); i++)
         {
             var version = i + 1;
@@ -643,7 +652,4 @@ public sealed class SqliteDatabase
             "CREATE TABLE cookie_keys(id TEXT NOT NULL PRIMARY KEY, friendly_name TEXT NOT NULL, created TEXT NOT NULL, xml_encrypted BLOB NOT NULL);",
         ],
     ];
-
-    // After Migrations: static fields are initialised in the order they are written.
-    private static readonly MigrationTrack CoreTrack = new(MigrationTrack.CoreName, Migrations);
 }

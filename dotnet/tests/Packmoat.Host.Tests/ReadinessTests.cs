@@ -33,7 +33,8 @@ public class ReadinessTests
 
     private sealed class Server : IAsyncDisposable
     {
-        public string Dir { get; } = Directory.CreateTempSubdirectory("packmoat-readyz-").FullName;
+        private readonly TempDir _temp = TempDir.Create("packmoat-readyz-", clearSqlitePools: true);
+        public string Dir => _temp.Path;
         public string DbPath => Path.Combine(Dir, "packmoat.db");
         public string Key { get; } = AesGcmSecretProtector.GenerateKeyBase64();
         public FakeClock Clock { get; } = new();
@@ -44,6 +45,21 @@ public class ReadinessTests
         public static async Task<Server> StartAsync()
         {
             var s = new Server();
+            try
+            {
+                await s.BuildAndStartAsync();
+                return s;
+            }
+            catch
+            {
+                await s.DisposeAsync();   // the folder, and a server that started (#292)
+                throw;
+            }
+        }
+
+        private async Task BuildAndStartAsync()
+        {
+            var s = this;
             s.App = PackmoatApp.Build(["--urls", "http://127.0.0.1:0"], [new TrackModule()], services =>
             {
                 services.AddSingleton<IClock>(s.Clock);
@@ -57,7 +73,6 @@ public class ReadinessTests
             await s.App.StartAsync();
             var address = s.App.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First().Replace("localhost", "127.0.0.1");
             s.Http = new HttpClient { BaseAddress = new Uri(address) };
-            return s;
         }
 
         public async Task<(HttpStatusCode Code, string Body)> Get(string path = Readiness.Route, string host = Host, string? token = null)
@@ -94,9 +109,15 @@ public class ReadinessTests
         public async ValueTask DisposeAsync()
         {
             Http?.Dispose();
-            if (App is not null) { await App.StopAsync(); await App.DisposeAsync(); }
-            SqliteConnection.ClearAllPools();
-            try { Directory.Delete(Dir, true); } catch (IOException) { }
+            try
+            {
+                if (App is not null)
+                {
+                    try { await App.StopAsync(); }
+                    finally { await App.DisposeAsync(); }
+                }
+            }
+            finally { _temp.Dispose(); }
         }
     }
 
@@ -153,7 +174,7 @@ public class ReadinessTests
         Assert.Contains("not ready (schema)", string.Join("\n", s.ReadinessLines()));
     }
 
-    [Fact]   // mutations: KeyMatchesAsync records a marker as EnsureKeyCheckAsync does; the check opens the database read-write
+    [Fact]   // mutations: MatchesAsync records a marker as EnsureAsync does (or readiness calls EnsureAsync); the check opens the database read-write
     public async Task The_check_writes_nothing_not_even_a_missing_key_marker()
     {
         await using var s = await Server.StartAsync();

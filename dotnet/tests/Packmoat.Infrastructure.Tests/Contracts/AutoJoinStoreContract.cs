@@ -12,7 +12,7 @@ public abstract class AutoJoinStoreContract : StoreContract
     public async Task No_row_reads_as_on()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         Assert.True(await Engine.AutoJoin(t).IsOnAsync("acme", default));
     }
 
@@ -20,7 +20,7 @@ public abstract class AutoJoinStoreContract : StoreContract
     public async Task Off_and_on_round_trip_with_who_and_when()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         var store = Engine.AutoJoin(t);
         await store.SetAsync("acme", false, t.Clock.UtcNow, "Grace (ffffffff-ffff-4fff-8fff-ffffffffffff)", default);
         Assert.False(await store.IsOnAsync("acme", default));
@@ -40,10 +40,10 @@ public abstract class AutoJoinStoreContract : StoreContract
     public async Task There_is_no_cache_a_change_made_elsewhere_is_read_at_once()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         var store = Engine.AutoJoin(t);
         Assert.True(await store.IsOnAsync("acme", default));
-        await ScalarAsync(t, "INSERT INTO auto_join_settings(tenant_id, enabled, changed_at, changed_by) VALUES('acme', 0, 'x', 'by hand')");
+        await ScalarAsync(t, "INSERT INTO auto_join_settings(tenant_id, enabled, changed_at, changed_by) VALUES('acme', 0, '2026-01-01T00:00:00.0000000+00:00', 'by hand')");
         Assert.False(await store.IsOnAsync("acme", default));
     }
 
@@ -51,9 +51,10 @@ public abstract class AutoJoinStoreContract : StoreContract
     public async Task The_schema_refuses_anything_but_zero_or_one_and_an_unknown_tenant()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
-        foreach (var bad in new[] { "2", "-1", "'on'", "NULL" })
-            await RefusedAsync(() => ScalarAsync(t, $"INSERT INTO auto_join_settings(tenant_id, enabled, changed_at, changed_by) VALUES('acme', {bad}, 'x', 'y')"));
+        await AddTenantAsync(t, "acme");
+        // 'on' is SQLite's alone (AutoJoinStoreTests): PostgreSQL cannot read it as a number at all, which is not the CHECK's refusal.
+        foreach (var bad in new[] { "2", "-1", "NULL" })
+            await RefusedAsync(() => ScalarAsync(t, $"INSERT INTO auto_join_settings(tenant_id, enabled, changed_at, changed_by) VALUES('acme', {bad}, '2026-01-01T00:00:00.0000000+00:00', 'y')"));
         await RefusedAsync(() => Engine.AutoJoin(t).SetAsync("nobody", false, t.Clock.UtcNow, "Ada", default));
         Assert.Equal(0L, await ScalarAsync(t, "SELECT COUNT(*) FROM auto_join_settings"));
     }
@@ -62,8 +63,8 @@ public abstract class AutoJoinStoreContract : StoreContract
     public async Task Each_tenant_has_its_own_setting()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
-        await t.AddTenantAsync("globex");
+        await AddTenantAsync(t, "acme");
+        await AddTenantAsync(t, "globex");
         var store = Engine.AutoJoin(t);
         await store.SetAsync("acme", false, t.Clock.UtcNow, "Grace", default);
         Assert.False(await store.IsOnAsync("acme", default));

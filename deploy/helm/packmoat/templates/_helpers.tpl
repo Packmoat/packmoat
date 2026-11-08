@@ -60,7 +60,7 @@ The chart's refusals, rendered (as nothing) at the top of deployment.yaml, so a 
 - replicas: 0 or 1. One SQLite writer (values.yaml). The claim is ReadWriteOncePod, so the cluster itself never lets a second pod
   mount it, even while an old pod is still terminating.
 - an existing claim must be ReadWriteOncePod too. Checked when helm can read the cluster (install, upgrade, --dry-run=server); helm
-  template cannot, so there it is the operator's to check (docs/self-hosting.md, section 10).
+  template cannot, so there it is the operator's to check (docs/deploy/kubernetes.md).
 - secrets: only from existingSecret, as files. A master key in the values is refused: masterKey, an env entry, or a value with the usual
   shapes of one (43 characters of base64 or base64url, with or without its "=", mixing capitals, small letters and digits, as the
   base64 of 32 random bytes nearly always does). Other shapes cannot be told from ordinary values, so this is a guard, not a proof.
@@ -74,12 +74,12 @@ The chart's refusals, rendered (as nothing) at the top of deployment.yaml, so a 
 {{- if and .Values.persistence.enabled .Values.persistence.existingClaim -}}
 {{- with lookup "v1" "PersistentVolumeClaim" .Release.Namespace .Values.persistence.existingClaim -}}
 {{- if ne (toJson .spec.accessModes) (toJson (list "ReadWriteOncePod")) -}}
-{{- fail (printf "persistence.existingClaim: the claim's access modes are %s, not [ReadWriteOncePod] alone. Only ReadWriteOncePod stops a second pod mounting the database while the first is still stopping (docs/self-hosting.md, section 10)." (toJson .spec.accessModes)) -}}
+{{- fail (printf "persistence.existingClaim: the claim's access modes are %s, not [ReadWriteOncePod] alone. Only ReadWriteOncePod stops a second pod mounting the database while the first is still stopping (docs/deploy/kubernetes.md)." (toJson .spec.accessModes)) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
 {{- if .Values.masterKey -}}
-{{- fail "masterKey: the master key may not be a value. Put it in the Secret named by existingSecret (docs/self-hosting.md, section 10)." -}}
+{{- fail "masterKey: the master key may not be a value. Put it in the Secret named by existingSecret (docs/deploy/kubernetes.md)." -}}
 {{- end -}}
 {{- range $candidate := regexFindAll "(^|[^A-Za-z0-9+/_=-])[A-Za-z0-9+/_-]{43}=?([^A-Za-z0-9+/_=-]|$)" (toYaml .Values) -1 -}}
 {{- if and (regexMatch "[A-Z]" $candidate) (regexMatch "[a-z]" $candidate) (regexMatch "[0-9]" $candidate) -}}
@@ -87,7 +87,7 @@ The chart's refusals, rendered (as nothing) at the top of deployment.yaml, so a 
 {{- end -}}
 {{- end -}}
 {{- if not .Values.existingSecret -}}
-{{- fail "existingSecret is required: the name of a Secret you created that holds the master key (docs/self-hosting.md, section 10). The chart never makes it." -}}
+{{- fail "existingSecret is required: the name of a Secret you created that holds the master key (docs/deploy/kubernetes.md). The chart never makes it." -}}
 {{- end -}}
 {{- if not .Values.existingSecretKeys.masterKey -}}
 {{- fail "existingSecretKeys.masterKey is required: the key in the Secret that holds the master key." -}}
@@ -111,13 +111,13 @@ The chart's refusals, rendered (as nothing) at the top of deployment.yaml, so a 
 {{- end -}}
 {{- end -}}
 {{- if not .Values.image.repository -}}
-{{- fail "image.repository is required: ghcr.io/packmoat/packmoat-core, or your own registry's copy (docs/self-hosting.md, section 10)." -}}
+{{- fail "image.repository is required: ghcr.io/packmoat/packmoat-core, or your own registry's copy (docs/deploy/kubernetes.md)." -}}
 {{- end -}}
 {{- if not .Values.hosts -}}
 {{- fail "hosts is required: the feed host names (PACKMOAT_HOSTS)." -}}
 {{- end -}}
 {{- if and .Values.ingress.enabled (not .Values.trustedProxies) -}}
-{{- fail "ingress.enabled needs trustedProxies: the ingress controller's addresses or network, so the server believes its X-Forwarded-* headers and no one else's (docs/self-hosting.md, section 10)." -}}
+{{- fail "ingress.enabled needs trustedProxies: the ingress controller's addresses or network, so the server believes its X-Forwarded-* headers and no one else's (docs/deploy/kubernetes.md)." -}}
 {{- end -}}
 {{- if and .Values.networkPolicy.enabled (not .Values.networkPolicy.ingressNamespace) -}}
 {{- fail "networkPolicy.enabled needs networkPolicy.ingressNamespace: the namespace of the ingress controller, the only one let in." -}}

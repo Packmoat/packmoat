@@ -1,5 +1,5 @@
 # One Linux server. Host networking, so Caddy reaches the app on loopback and the app trusts only loopback for X-Forwarded-*.
-# Install this folder as /opt/packmoat/deploy (restore.sh looks for this file there). See docs/self-hosting.md.
+# Install this folder as /opt/packmoat/deploy (restore.sh looks for this file there). See docs/deploy/single-server.md.
 # Secrets live in /etc/packmoat/packmoat.env (root-only, mode 600) and are never in this repository.
 # Caddy reads a DIFFERENT file, /etc/packmoat/caddy.env, holding only host names and ACME_EMAIL: it must never see the master key.
 services:

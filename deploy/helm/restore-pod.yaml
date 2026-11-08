@@ -1,4 +1,4 @@
-# A one-off pod that restores a backup into the chart's data claim (docs/self-hosting.md, section 10). Run it only while the release
+# A one-off pod that restores a backup into the chart's data claim (docs/deploy/kubernetes.md). Run it only while the release
 # has replicas: 0: the claim is ReadWriteOncePod, so it stays Pending while the server's pod still holds it.
 # Fill in the four placeholders, then apply it:
 #   __IMAGE__   the image the release runs, by digest (helm get values shows it), such as ghcr.io/packmoat/packmoat-core@sha256:...

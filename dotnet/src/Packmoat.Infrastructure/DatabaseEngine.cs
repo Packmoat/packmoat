@@ -42,6 +42,15 @@ public static class DatabaseEngines
     /// <summary>"PACKMOAT_DB_ENGINE=postgres is not available in this build yet."</summary>
     public static string NotAvailable(DatabaseEngine engine) => $"{Variable}={Name(engine)} is not available in this build yet.";
 
+    /// <summary>Whether <paramref name="engine"/>'s PACKMOAT_DB names a file on local disk (SQLite's does; a connection string does not), so
+    /// a folder can sit next to it. Exhaustive: a new engine must decide.</summary>
+    public static bool IsFile(DatabaseEngine engine) => engine switch
+    {
+        DatabaseEngine.Sqlite => true,
+        DatabaseEngine.Postgres => false,
+        _ => throw new ArgumentOutOfRangeException(nameof(engine)),
+    };
+
     /// <summary>The setting's own word for <paramref name="engine"/>.</summary>
     public static string Name(DatabaseEngine engine) => engine switch
     {

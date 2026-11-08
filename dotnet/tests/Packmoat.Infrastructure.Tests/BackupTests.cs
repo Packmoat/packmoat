@@ -10,12 +10,20 @@ public class BackupTests
     private static async Task<TestDb> Populated()
     {
         var t = await TestDb.CreateAsync();
-        await t.AddTenantAsync();
-        await t.Tenants.AddInternalPrefixAsync("acme", "Contoso.", default);
-        await t.Tenants.AddWaiverAsync("acme", "moq", "4.21.0", t.Clock.UtcNow.AddDays(3), "hotfix", "olivia", default);
-        await t.Tenants.SetUpstreamIdentityAsync("acme", new UpstreamIdentity("az", "client", "-----BEGIN PRIVATE KEY-----\nBACKUP-SECRET\n-----END PRIVATE KEY-----"), default);
-        await t.Audit.AppendAsync(new AuditEvent(t.Clock.UtcNow, "r1", "acme", "tok_1", AuditKind.Download, "moq", "4.20.72", Decision.Allow, VerdictReason.CooldownElapsed, null), default);
-        return t;
+        try
+        {
+            await t.AddTenantAsync();
+            await t.Tenants.AddInternalPrefixAsync("acme", "Contoso.", default);
+            await t.Tenants.AddWaiverAsync("acme", "moq", "4.21.0", t.Clock.UtcNow.AddDays(3), "hotfix", "olivia", default);
+            await t.Tenants.SetUpstreamIdentityAsync("acme", new UpstreamIdentity("az", "client", "-----BEGIN PRIVATE KEY-----\nBACKUP-SECRET\n-----END PRIVATE KEY-----"), default);
+            await t.Audit.AppendAsync(new AuditEvent(t.Clock.UtcNow, "r1", "acme", "tok_1", AuditKind.Download, "moq", "4.20.72", Decision.Allow, VerdictReason.CooldownElapsed, null), default);
+            return t;
+        }
+        catch
+        {
+            await t.DisposeAsync();   // #292: a failed set-up leaves no folder behind
+            throw;
+        }
     }
 
     [Fact]
@@ -50,7 +58,8 @@ public class BackupTests
             Assert.Contains("BACKUP-SECRET", (await tenants.GetUpstreamIdentityAsync("acme", default))!.CertificatePem); // key decrypts with the same master key
             Assert.Single(await audit.QueryAsync("acme", 10, default));
         }
-        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(newDir, true); } catch { } }
+        catch when (TempDir.Failing(newDir)) { throw; }
+        finally { TempDir.Delete(newDir, clearSqlitePools: true); }
     }
 
     [Fact]
@@ -144,6 +153,7 @@ public class BackupTests
             Assert.Equal(1, (await Run(fresh, "restore", backup)).Item1);        // refuses to replace without --force
             Assert.Equal(1, (await Run(fresh, "verify", Path.Combine(dir, "nope.db"))).Item1);
         }
-        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch { } }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 }

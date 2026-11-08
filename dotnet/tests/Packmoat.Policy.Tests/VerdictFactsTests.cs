@@ -6,7 +6,7 @@ namespace Packmoat.Policy.Tests;
 /// <summary>
 /// The per-version decision record (#123) keeps the publish date and cooldown a verdict used. The cooldown rule reports both; nothing
 /// about the decision itself changes. The cases a request can reach (a young, an old and an undated version, an override, the 1900
-/// placeholder, waivers and internal prefixes) are conformance vectors: core/spec/vectors/policy/decisions.json (#209). These are the
+/// placeholder, waivers and internal prefixes) are conformance vectors: spec/vectors/policy/decisions.json (#209). These are the
 /// rule's own cases, which the package gate never asks.
 /// </summary>
 public class VerdictFactsTests

@@ -97,114 +97,7 @@ public class OpenSourceFilesTests
     /// String literals (regular, verbatim, interpolated with their holes, raw) and char literals are stepped over, so data, and a URL or a
     /// quote in data, is never taken for a comment.
     /// </summary>
-    internal static List<(int Line, string Text)> CSharpComments(string text) => new CommentReader(text).Read();
-
-    private sealed class CommentReader(string text)
-    {
-        private readonly List<(int, string)> _found = [];
-        private int _i;
-        private int _line = 1;
-
-        public List<(int, string)> Read()
-        {
-            Code(inHole: false);
-            return _found;
-        }
-
-        private char At(int k) => k < text.Length ? text[k] : '\0';
-
-        // Code, to the end, or (in an interpolation hole) to the } that closes the hole.
-        private void Code(bool inHole)
-        {
-            var depth = 0;
-            while (_i < text.Length)
-            {
-                var c = text[_i];
-                if (c == '\n') { _line++; _i++; }
-                else if (c == '/' && At(_i + 1) == '/')
-                {
-                    var start = _i;
-                    while (_i < text.Length && text[_i] != '\n') _i++;
-                    _found.Add((_line, text[start.._i]));
-                }
-                else if (c == '/' && At(_i + 1) == '*')
-                {
-                    var start = _i;
-                    var first = _line;
-                    _i += 2;
-                    while (_i < text.Length && !(text[_i] == '*' && At(_i + 1) == '/')) { if (text[_i] == '\n') _line++; _i++; }
-                    _i = Math.Min(text.Length, _i + 2);
-                    var lines = text[start.._i].Split('\n');
-                    for (var k = 0; k < lines.Length; k++) _found.Add((first + k, lines[k]));
-                }
-                else if (c == '\'') CharLiteral();
-                else if (c == '"' || (c is '$' or '@' && StringAfterPrefix())) StringLiteral();
-                else if (inHole && c == '{') { depth++; _i++; }
-                else if (inHole && c == '}') { _i++; if (depth-- == 0) return; }
-                else _i++;
-            }
-        }
-
-        private bool StringAfterPrefix()
-        {
-            var k = _i;
-            while (At(k) is '$' or '@') k++;
-            return At(k) == '"';
-        }
-
-        private void CharLiteral()
-        {
-            _i++;
-            _i += At(_i) == '\\' ? 2 : 1;
-            while (_i < text.Length && text[_i] != '\'' && text[_i] != '\n') _i++;
-            if (At(_i) == '\'') _i++;
-        }
-
-        private void StringLiteral()
-        {
-            var dollars = 0;
-            var verbatim = false;
-            while (At(_i) is '$' or '@') { if (text[_i] == '$') dollars++; else verbatim = true; _i++; }
-            var quotes = 0;
-            while (At(_i + quotes) == '"') quotes++;
-            if (quotes >= 3 && !verbatim) { RawString(quotes, dollars); return; }   // @"""" is a verbatim string holding one quote
-            _i++;   // the opening quote
-            while (_i < text.Length)
-            {
-                var c = text[_i];
-                if (c == '\n') { _line++; _i++; if (!verbatim) return; }   // a regular string cannot span lines
-                else if (verbatim && c == '"') { _i++; if (At(_i) != '"') return; _i++; }   // "" is a quote inside
-                else if (!verbatim && c == '\\') _i += At(_i + 1) == '\n' ? 1 : 2;
-                else if (!verbatim && c == '"') { _i++; return; }
-                else if (dollars > 0 && c == '{') { if (At(_i + 1) == '{') _i += 2; else { _i++; Code(inHole: true); } }
-                else _i++;
-            }
-        }
-
-        private void RawString(int quotes, int dollars)
-        {
-            _i += quotes;
-            while (_i < text.Length)
-            {
-                var c = text[_i];
-                if (c == '"')
-                {
-                    var run = 0;
-                    while (At(_i + run) == '"') run++;
-                    _i += run;
-                    if (run >= quotes) return;
-                }
-                else if (dollars > 0 && c == '{')
-                {
-                    var run = 0;
-                    while (At(_i + run) == '{') run++;
-                    _i += run;
-                    if (run >= dollars) Code(inHole: true);
-                }
-                else { if (c == '\n') _line++; _i++; }
-            }
-        }
-    }
+    internal static List<(int Line, string Text)> CSharpComments(string text) => CSharpSource.Comments(text);
 
     /// <summary>A line of a test file that is not C#: a comment when it starts as one (#, //, /*, *, &lt;!--).</summary>
     private static bool CommentLine(string line)
@@ -296,15 +189,50 @@ public class OpenSourceFilesTests
                 "dotnet/tests/X.Tests/run.sh:1",
             }, FounderMentions(dir, PublicFixtureTests.TextFiles(dir)));
         }
-        finally { Directory.Delete(dir, true); }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir); }
     }
 
-    private static readonly string[] RootDocs = ["README.md", "SECURITY.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md"];
+    /// <summary>
+    /// Whether the file or folder at <paramref name="path"/> (full, inside <paramref name="root"/>) exists with exactly that case in every
+    /// segment below the root. A Mac's or Windows' file system finds docs/ARCHITECTURE.md for docs/architecture.md; GitHub and Linux do not.
+    /// </summary>
+    internal static bool ExistsExactly(string root, string path)
+    {
+        var dir = Path.GetFullPath(root);
+        foreach (var segment in Path.GetRelativePath(dir, Path.GetFullPath(path)).Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (segment == ".") continue;
+            if (!Directory.Exists(dir) || !Directory.EnumerateFileSystemEntries(dir).Any(e => Path.GetFileName(e) == segment)) return false;
+            dir = Path.Combine(dir, segment);
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// The anchors GitHub gives a Markdown file's headings (outside code blocks): the heading's text in lower case, with every character
+    /// but a letter, a digit, a space, a hyphen or an underscore removed and each space made a hyphen. A repeated anchor gets -1, -2.
+    /// </summary>
+    internal static HashSet<string> Anchors(string markdown)
+    {
+        var anchors = new HashSet<string>(StringComparer.Ordinal);
+        var inFence = false;
+        foreach (var line in markdown.Replace("\r\n", "\n").Split('\n'))
+        {
+            if (Regex.IsMatch(line, @"^\s*(```|~~~)")) { inFence = !inFence; continue; }
+            var heading = Regex.Match(line, @"^#{1,6}\s+(.+?)\s*#*\s*$");
+            if (inFence || !heading.Success) continue;
+            var slug = new string(heading.Groups[1].Value.ToLowerInvariant().Where(c => char.IsLetterOrDigit(c) || c is ' ' or '-' or '_').ToArray()).Replace(' ', '-');
+            var unique = slug;
+            for (var n = 1; !anchors.Add(unique); n++) unique = $"{slug}-{n}";
+        }
+        return anchors;
+    }
 
     /// <summary>
     /// Each relative link in a Markdown file at <paramref name="root"/> ([text](target) and [label]: target), as "file -> target", that
-    /// does not resolve to a file or folder inside <paramref name="root"/>. A link with a scheme (https:, mailto:) or only an anchor is not
-    /// relative.
+    /// does not resolve to a file or folder inside <paramref name="root"/>, or whose #anchor names no heading in the Markdown file it points
+    /// to (#275). A link with a scheme (https:, mailto:) is not relative; an anchor alone points into its own file.
     /// </summary>
     internal static string[] BrokenLinks(string root, IEnumerable<string> docs)
     {
@@ -317,22 +245,27 @@ public class OpenSourceFilesTests
                 .Concat(Regex.Matches(text, @"^\[[^\]]+\]:\s*(\S+)", RegexOptions.Multiline).Select(m => m.Groups[1].Value));
             foreach (var target in targets)
             {
-                if (Regex.IsMatch(target, "^[A-Za-z][A-Za-z0-9+.-]*:") || target.StartsWith('#')) continue;
-                var path = target.Split('#')[0];
-                var resolved = Path.GetFullPath(Path.Combine(full, Path.GetDirectoryName(doc) ?? "", path));
+                if (Regex.IsMatch(target, "^[A-Za-z][A-Za-z0-9+.-]*:")) continue;
+                var hash = target.IndexOf('#');
+                var path = hash < 0 ? target : target[..hash];
+                var resolved = Path.GetFullPath(Path.Combine(full, Path.GetDirectoryName(doc) ?? "", path.Length == 0 ? Path.GetFileName(doc) : path));
                 var relative = Path.GetRelativePath(full, resolved);
                 var inside = relative != ".." && !relative.StartsWith(".." + Path.DirectorySeparatorChar) && !Path.IsPathRooted(relative);
-                if (!inside || !(File.Exists(resolved) || Directory.Exists(resolved))) broken.Add($"{doc} -> {target}");
+                if (!inside || !ExistsExactly(full, resolved)) broken.Add($"{doc} -> {target}");
+                else if (hash >= 0 && resolved.EndsWith(".md", StringComparison.Ordinal) && File.Exists(resolved)
+                         && !Anchors(File.ReadAllText(resolved)).Contains(target[(hash + 1)..])) broken.Add($"{doc} -> {target}");
             }
         }
         return broken.ToArray();
     }
 
-    [Fact]   // mutations: docs/self-hostin.md in README; ../docs/ARCHITECTURE.md in README
-    public void Every_relative_link_in_the_root_docs_resolves_inside_the_core()
+    [Fact]   // mutations: docs/self-hostin.md in README; ../docs/architecture.md in README; a broken link or anchor in docs/deploy
+    public void Every_relative_link_in_every_doc_resolves_inside_the_core()
     {
-        var broken = BrokenLinks(CoreRoot.Path(), RootDocs);
-        Assert.True(broken.Length == 0, "a root doc links to a path that is not in the core:\n  " + string.Join("\n  ", broken));
+        var docs = SelfHostingDocTests.MarkdownFiles(CoreRoot.Path());
+        Assert.True(docs.Length >= 13, "the scan found too few Markdown files in the core to mean anything");
+        var broken = BrokenLinks(CoreRoot.Path(), docs);
+        Assert.True(broken.Length == 0, "a doc links to a path or heading that is not in the core:\n  " + string.Join("\n  ", broken));
     }
 
     [Fact]
@@ -343,20 +276,31 @@ public class OpenSourceFilesTests
         {
             var root = Path.Combine(parent, "core");
             Directory.CreateDirectory(Path.Combine(root, "docs"));
-            File.WriteAllText(Path.Combine(root, "docs", "guide.md"), "x");
+            File.WriteAllText(Path.Combine(root, "docs", "guide.md"), string.Join('\n',
+                "# Setup", "## 4. Settings (`X_Y`)", "## Setup", "```", "# not-a-heading", "```", "[back](../README.md#top) [self](#setup-1) [gone](#nope)"));
             File.WriteAllText(Path.Combine(parent, "outside.md"), "x");   // exists, but outside the root
             File.WriteAllText(Path.Combine(root, "README.md"), string.Join('\n',
+                "# Top",
                 "[ok](docs/guide.md) [ok](docs/guide.md#setup) [ok](docs) [web](https://example.com/a) [mail](mailto:a@b.test) [top](#top)",
-                "[typo](docs/guid.md) [escape](../outside.md) [escape](docs/../../outside.md)",
+                "[ok](docs/guide.md#4-settings-x_y)",
+                "[typo](docs/guid.md) [escape](../outside.md) [escape](docs/../../outside.md) [case](docs/GUIDE.md) [case](Docs/guide.md)",
+                "[anchor](docs/guide.md#settings) [fenced](docs/guide.md#not-a-heading) [here](#bottom)",
                 "[ref]: docs/nope.md"));
             Assert.Equal(new[]
             {
                 "README.md -> docs/guid.md",
                 "README.md -> ../outside.md",
                 "README.md -> docs/../../outside.md",
+                "README.md -> docs/GUIDE.md",
+                "README.md -> Docs/guide.md",
+                "README.md -> docs/guide.md#settings",
+                "README.md -> docs/guide.md#not-a-heading",
+                "README.md -> #bottom",
                 "README.md -> docs/nope.md",
-            }, BrokenLinks(root, ["README.md"]));
+                "docs/guide.md -> #nope",
+            }, BrokenLinks(root, ["README.md", "docs/guide.md"]));
         }
-        finally { Directory.Delete(parent, true); }
+        catch when (TempDir.Failing(parent)) { throw; }
+        finally { TempDir.Delete(parent); }
     }
 }

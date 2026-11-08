@@ -1,3 +1,4 @@
+using System.Data.Common;
 using Microsoft.Data.Sqlite;
 using Packmoat.Admin;
 using Packmoat.Application;
@@ -12,13 +13,13 @@ namespace Packmoat.Infrastructure.Tests;
 /// tenants due for purge but never claims the day's nudge, so the server's own nudge still goes out.
 /// </summary>
 [Collection("sqlite-pools")]
-public class JobsCliTests : IAsyncDisposable
+public class JobsCliTests : IDisposable
 {
     private static readonly DateTimeOffset T0 = new(2026, 10, 10, 12, 0, 0, TimeSpan.Zero);
-    private readonly string _dir = Directory.CreateTempSubdirectory("packmoat-cli-jobs-").FullName;
+    private readonly TempDir _temp = TempDir.Create("packmoat-cli-jobs-", clearSqlitePools: true);
     private readonly string _key = AesGcmSecretProtector.GenerateKeyBase64();
     private readonly FakeClock _clock = new() { UtcNow = T0 };
-    private string DbPath => Path.Combine(_dir, "packmoat.db");
+    private string DbPath => _temp.File("packmoat.db");
     private CliEnvironment Env => new(DbPath, () => AesGcmSecretProtector.FromBase64(_key), _clock);
 
     /// <summary>A module whose purge eligibility says every tenant is due (so the nudge would have something to claim).</summary>
@@ -28,15 +29,15 @@ public class JobsCliTests : IAsyncDisposable
         public string Usage => "";
         public string EnvironmentUsage => "";
         public Task<int> RunAsync(AdminCliContext context) => Task.FromResult(0);
-        public IServingGate? Gate(SqliteDatabase db, CliEnvironment env, Action<string> warn) => null;
-        public TenantLifecycle? Lifecycle(SqliteDatabase db, CliEnvironment env, Action<string> note) => new([], [], () => this);
+        public IServingGate? Gate(IRelationalDatabase db, CliEnvironment env, Action<string> warn) => null;
+        public TenantLifecycle? Lifecycle(IRelationalDatabase db, CliEnvironment env, Action<string> note) => new([], [], () => this);
         public MigrationTrack? Migrations => null;
 
         public Task<IReadOnlyList<PurgeCandidate>> ListAsync(DateTimeOffset now, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<PurgeCandidate>>([new PurgeCandidate("acme", PurgeVerdict.Due, "test", now.AddDays(-1), "test", "")]);
         public Task<PurgeCandidate?> AssessAsync(string tenantId, DateTimeOffset now, CancellationToken ct) => Task.FromResult<PurgeCandidate?>(null);
         public Task ConfirmAsync(PurgeCandidate candidate, CancellationToken ct) => throw new PurgeRefusedException("test");
-        public Task<bool> StillDueAsync(SqliteTransaction transaction, PurgeCandidate candidate, DateTimeOffset now, CancellationToken ct) => Task.FromResult(false);
+        public Task<bool> StillDueAsync(DbTransaction transaction, PurgeCandidate candidate, DateTimeOffset now, CancellationToken ct) => Task.FromResult(false);
     }
 
     private async Task<(int Code, string Out, string Err)> Run(IReadOnlyList<IAdminCliModule> modules, params string[] args)
@@ -66,12 +67,8 @@ public class JobsCliTests : IAsyncDisposable
         return await cmd.ExecuteScalarAsync();
     }
 
-    public ValueTask DisposeAsync()
-    {
-        SqliteConnection.ClearAllPools();
-        try { Directory.Delete(_dir, true); } catch (IOException) { }
-        return ValueTask.CompletedTask;
-    }
+    // xunit 2 disposes a test class through IDisposable only (an IAsyncDisposable one is never called): #292.
+    public void Dispose() => _temp.Dispose();
 
     [Fact]
     public async Task It_runs_every_step_prints_each_count_and_exits_0()
@@ -176,8 +173,8 @@ public class JobsCliTests : IAsyncDisposable
         public string Usage => "";
         public string EnvironmentUsage => "";
         public Task<int> RunAsync(AdminCliContext context) => Task.FromResult(0);
-        public IServingGate? Gate(SqliteDatabase db, CliEnvironment env, Action<string> warn) => null;
-        public TenantLifecycle? Lifecycle(SqliteDatabase db, CliEnvironment env, Action<string> note) => null;
+        public IServingGate? Gate(IRelationalDatabase db, CliEnvironment env, Action<string> warn) => null;
+        public TenantLifecycle? Lifecycle(IRelationalDatabase db, CliEnvironment env, Action<string> note) => null;
         public MigrationTrack? Migrations => null;
     }
 }

@@ -21,7 +21,8 @@ public class DatabaseEngineCliTests
     {
         var dir = Directory.CreateTempSubdirectory("packmoat-cli-engine-").FullName;
         try { await body(dir); }
-        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch (IOException) { } }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 
     private static CliEnvironment On(string dir, DatabaseEngine engine) =>

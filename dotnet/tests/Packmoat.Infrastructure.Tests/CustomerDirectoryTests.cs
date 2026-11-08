@@ -43,10 +43,10 @@ public class CustomerDirectoryTests : CustomerDirectoryContract
 
     private sealed class Cli : IAsyncDisposable
     {
-        private readonly string _dir = Directory.CreateTempSubdirectory("packmoat-cli-dir-").FullName;
+        private readonly TempDir _temp = TempDir.Create("packmoat-cli-dir-", clearSqlitePools: true);
         private readonly CliEnvironment _env;
         public FakeClock Clock { get; } = new();
-        public string DbPath => Path.Combine(_dir, "packmoat.db");
+        public string DbPath => Path.Combine(_temp.Path, "packmoat.db");
 
         public Cli()
         {
@@ -75,7 +75,7 @@ public class CustomerDirectoryTests : CustomerDirectoryContract
             await cmd.ExecuteNonQueryAsync();
         }
 
-        public ValueTask DisposeAsync() { SqliteConnection.ClearAllPools(); try { Directory.Delete(_dir, true); } catch { } return ValueTask.CompletedTask; }
+        public ValueTask DisposeAsync() => _temp.DisposeAsync();
     }
 
     private static async Task<Cli> WithTenantsAsync()

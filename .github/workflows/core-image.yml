@@ -1,9 +1,10 @@
 # The core image (#266): on a merge to main, build dotnet/Dockerfile for linux/amd64 and linux/arm64, push it to
 # ghcr.io/packmoat/packmoat-core by digest only, smoke-test the pushed amd64 image, SIGN it with cosign keyless (GitHub's OIDC identity
-# for THIS workflow on main), and only then tag it.
-# Nothing is stored in GitHub: the built-in token pushes, and no secret or key is used.
+# for THIS workflow on main), attest its SBOM and build provenance (#276), and only then tag it.
+# No secret or key is used: the built-in token pushes.
 # The image name is written out: a registry name must be lower case, and the owner of this repository is Packmoat, with a capital P.
-# It is the only workflow here that may write packages or ask for an identity token (CoreWorkflowTests). It never runs on a pull request,
+# It is the only workflow here that may publish or attest an image; only it and Scorecard may ask for an identity token
+# (CoreWorkflowTests). It never runs on a pull request,
 # and the one guard on its job means a fork, or a run by hand from another branch, publishes nothing.
 name: core-image
 
@@ -30,6 +31,7 @@ jobs:
       contents: read
       packages: write
       id-token: write
+      attestations: write
     env:
       IMAGE: ghcr.io/packmoat/packmoat-core
     steps:
@@ -94,6 +96,58 @@ jobs:
               "${IMAGE}@${d}" > /dev/null
             echo "verified ${IMAGE}@${d}"
           done
+      # SBOM and provenance (#276), before the tags, as the signature is, so a tag never names an image without them. BuildKit's own
+      # (provenance, sbom) stay off: they would add entries to the index. Instead syft lists each platform's image (an SPDX SBOM), and
+      # actions/attest signs each SBOM for that platform's digest and a SLSA build provenance for the index digest, keyless as cosign
+      # does. GitHub stores them, where gh attestation verify finds them; nothing more is pushed to the registry.
+      - name: Find each platform's digest in the index
+        id: platforms
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          index="$(docker buildx imagetools inspect --raw "${IMAGE}@${DIGEST}")"
+          for arch in amd64 arm64; do
+            d="$(jq -r --arg arch "${arch}" '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest' <<< "${index}")"
+            if [[ ! "${d}" =~ ^sha256:[0-9a-f]{64}$ ]]; then echo "no single linux/${arch} image in ${DIGEST}: ${d}" >&2; exit 1; fi
+            echo "${arch}=${d}" >> "$GITHUB_OUTPUT"
+          done
+      - name: SBOM of the linux/amd64 image (syft, SPDX JSON)
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        env:
+          SYFT_PLATFORM: linux/amd64
+        with:
+          image: registry:${{ env.IMAGE }}@${{ steps.platforms.outputs.amd64 }}
+          format: spdx-json
+          output-file: ${{ runner.temp }}/sbom-amd64.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: SBOM of the linux/arm64 image (syft, SPDX JSON)
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        env:
+          SYFT_PLATFORM: linux/arm64
+        with:
+          image: registry:${{ env.IMAGE }}@${{ steps.platforms.outputs.arm64 }}
+          format: spdx-json
+          output-file: ${{ runner.temp }}/sbom-arm64.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Attest the linux/amd64 SBOM to that image's digest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.platforms.outputs.amd64 }}
+          sbom-path: ${{ runner.temp }}/sbom-amd64.spdx.json
+      - name: Attest the linux/arm64 SBOM to that image's digest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.platforms.outputs.arm64 }}
+          sbom-path: ${{ runner.temp }}/sbom-arm64.spdx.json
+      - name: Attest the build provenance (SLSA) to the index digest, which the tags will name
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
       # Only now is the image named. With one source, imagetools create copies the index as it is, so each tag names the signed digest;
       # the check below fails the run if it ever did not.
       - name: Tag the signed index sha-<commit> and main

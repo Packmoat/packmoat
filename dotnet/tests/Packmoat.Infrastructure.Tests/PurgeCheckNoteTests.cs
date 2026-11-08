@@ -18,8 +18,8 @@ public class PurgeCheckNoteTests
         public string Usage => "";
         public string EnvironmentUsage => "";
         public Task<int> RunAsync(AdminCliContext context) => Task.FromResult(0);
-        public IServingGate? Gate(SqliteDatabase db, CliEnvironment env, Action<string> warn) => null;
-        public TenantLifecycle? Lifecycle(SqliteDatabase db, CliEnvironment env, Action<string> note) => null;
+        public IServingGate? Gate(IRelationalDatabase db, CliEnvironment env, Action<string> warn) => null;
+        public TenantLifecycle? Lifecycle(IRelationalDatabase db, CliEnvironment env, Action<string> note) => null;
         public MigrationTrack? Migrations => null;
         public PurgeCheckNote? PurgeCheck => note;
     }

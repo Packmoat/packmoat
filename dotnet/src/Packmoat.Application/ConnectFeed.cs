@@ -169,7 +169,7 @@ public sealed record ConnectFeedRequest(string TenantId, string DirectoryId, lon
 public interface ISelfServiceFeedStore
 {
     /// <summary>
-    /// In ONE write transaction (BEGIN IMMEDIATE), refuses unless, read again inside it: the tenant is active and its customer sets up the feed (<see cref="FeedSetupRules.CustomerSetsUpFeed"/>); the directory
+    /// All or nothing, and no other writer can change what it reads between the check and the write. Refuses unless, each re-read inside that one atomic step: the tenant is active and its customer sets up the feed (<see cref="FeedSetupRules.CustomerSetsUpFeed"/>); the directory
     /// is still linked to it; the active shared client id is the one seen; the tenant has no own-app identity (never overwritten) and is
     /// not bound in another directory; no other tenant uses the shared app in this directory; both feed_checks rows belong to THIS tenant,
     /// with the right kinds; the settings row is the tenant's latest settings check and the developer row its latest developer check of

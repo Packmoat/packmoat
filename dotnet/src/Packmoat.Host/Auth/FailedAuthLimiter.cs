@@ -5,7 +5,7 @@ using Packmoat.Domain;
 namespace Packmoat.Host.Auth;
 
 /// <summary>
-/// Slows token guessing: after too many failures from one address in a window, that address gets 429 until the
+/// Limits failed sign-ins per address: after too many from one address in a window, that address gets 429 until the
 /// window passes. Short blocks only, because many developers can share one address behind a customer's NAT.
 /// </summary>
 /// <remarks>

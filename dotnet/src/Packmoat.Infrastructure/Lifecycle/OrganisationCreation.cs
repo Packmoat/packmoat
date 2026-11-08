@@ -27,6 +27,20 @@ public enum OrganisationCreateResult
 }
 
 /// <summary>
+/// Where an organisation is made (#195, #288): the tenant, its directory link, the first member and the record, in one transaction or
+/// not at all. <see cref="SqliteOrganisationStore"/> is the SQLite adapter; the store contract holds what every adapter must do.
+/// </summary>
+public interface IOrganisationStore
+{
+    /// <summary>
+    /// Makes the organisation, or returns <see cref="OrganisationCreateResult.DirectoryTaken"/> having written nothing when the directory
+    /// is already linked to a tenant. A veto (<see cref="TenantCreationRefusedException"/>) or any failure rolls everything back and throws.
+    /// </summary>
+    /// <param name="extraParticipants">The caller's own participants, run after the lifecycle's, in the same transaction.</param>
+    Task<OrganisationCreateResult> CreateAsync(NewOrganisation o, IReadOnlyList<ITenantCreationParticipant> extraParticipants, CancellationToken ct);
+}
+
+/// <summary>
 /// The core's one way to make an organisation (#195): a tenant and its directory link in a single IMMEDIATE transaction (the write lock
 /// is taken before the first read), so two creations for one directory, or a creation and the operator's bind, are serialised: the
 /// second sees the first's link and gets <see cref="OrganisationCreateResult.DirectoryTaken"/>. In order:
@@ -41,7 +55,7 @@ public enum OrganisationCreateResult
 /// </list>
 /// A veto or any failure rolls the whole transaction back and throws.
 /// </summary>
-public sealed class SqliteOrganisationStore
+public sealed class SqliteOrganisationStore : IOrganisationStore
 {
     private readonly SqliteDatabase _db;
     private readonly IReadOnlyList<ITenantCreationParticipant> _participants;

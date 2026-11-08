@@ -13,7 +13,7 @@ public abstract class FeedCheckStoreContract : StoreContract
     protected const string Client = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
     protected const string Feed = "https://pkgs.dev.azure.com/example-org/example-project/_packaging/f/nuget/v3/index.json";
 
-    protected static FeedCheck Check(TestDb t, string tenant = "acme", FeedCheckOutcome outcome = FeedCheckOutcome.Passed, TimeSpan? after = null) =>
+    protected static FeedCheck Check(IEngineDb t, string tenant = "acme", FeedCheckOutcome outcome = FeedCheckOutcome.Passed, TimeSpan? after = null) =>
         new(tenant, t.Clock.UtcNow + (after ?? TimeSpan.Zero), Dir, "ffffffff-ffff-4fff-8fff-ffffffffffff", "Grace Hopper", Dir, Feed, Client, outcome,
             new[]
             {
@@ -28,7 +28,7 @@ public abstract class FeedCheckStoreContract : StoreContract
     public async Task Verified_via_takes_only_operator_or_wizard()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         const string insert = "INSERT INTO shared_app_verifications(tenant_id, azure_tenant_id, feed_index_url, client_id, verified_at, verified_by, verified_via) VALUES('acme','d','f','c','t','by',";
         await RefusedAsync(() => ExecAsync(t, insert + "'self')"));
         await RefusedAsync(() => ExecAsync(t, insert + "NULL)"));
@@ -40,7 +40,7 @@ public abstract class FeedCheckStoreContract : StoreContract
     public async Task A_verification_can_name_only_a_feed_check_that_exists()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         const string insert = "INSERT INTO shared_app_verifications(tenant_id, azure_tenant_id, feed_index_url, client_id, verified_at, verified_by, verified_via, feed_check_id) VALUES('acme','d','f','c','t','by','wizard',";
         await RefusedAsync(() => ExecAsync(t, insert + "4242)"));   // dangling
         Assert.Equal(0L, await ScalarAsync(t, "SELECT COUNT(*) FROM shared_app_verifications"));
@@ -55,8 +55,8 @@ public abstract class FeedCheckStoreContract : StoreContract
     public async Task The_operator_check_records_its_verification_as_operator_made()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
-        await t.Tenants.BindSharedIdentityAsync("acme", Dir, default);
+        await AddTenantAsync(t, "acme");
+        await Engine.Tenants(t).BindSharedIdentityAsync("acme", Dir, default);
         var shared = Engine.SharedApp(t);
         await shared.SetAsync(SharedAppSlot.Active, new SharedAppCredential(Client, "PEM"), default);
         Assert.True(await shared.RecordVerificationAsync(new SharedAppVerification("acme", Dir, Feed, Client, t.Clock.UtcNow, "onboard check"), default));
@@ -68,7 +68,7 @@ public abstract class FeedCheckStoreContract : StoreContract
     public async Task A_check_round_trips_with_its_results_and_confirmed_admins()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         var store = Engine.FeedChecks(t);
         var check = Check(t);
         var id = await store.RecordAsync(check, default);
@@ -92,7 +92,7 @@ public abstract class FeedCheckStoreContract : StoreContract
     public async Task Each_outcome_is_stored_as_its_word(FeedCheckOutcome outcome, string word)
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         var store = Engine.FeedChecks(t);
         await store.RecordAsync(Check(t, outcome: outcome), default);
         Assert.Equal(word, await ScalarAsync(t, "SELECT outcome FROM feed_checks"));
@@ -103,8 +103,8 @@ public abstract class FeedCheckStoreContract : StoreContract
     public async Task Latest_is_the_newest_check_of_that_tenant_only()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
-        await t.AddTenantAsync("globex");
+        await AddTenantAsync(t, "acme");
+        await AddTenantAsync(t, "globex");
         var store = Engine.FeedChecks(t);
         Assert.Null(await store.LatestAsync("acme", FeedCheckKind.Settings, default));
 
@@ -123,7 +123,7 @@ public abstract class FeedCheckStoreContract : StoreContract
     public async Task Two_checks_at_the_same_moment_read_back_as_the_one_written_last()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         var store = Engine.FeedChecks(t);
         await store.RecordAsync(Check(t, outcome: FeedCheckOutcome.Failed), default);
         var second = await store.RecordAsync(Check(t, outcome: FeedCheckOutcome.Passed), default);
@@ -143,7 +143,7 @@ public abstract class FeedCheckStoreContract : StoreContract
     public async Task The_table_refuses_an_unknown_outcome()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         await RefusedAsync(() => ExecAsync(t,
             "INSERT INTO feed_checks(tenant_id, checked_at, checked_by_tid, checked_by_oid, checked_by_name, azure_tenant_id, feed_index_url, client_id, outcome, results) " +
             "VALUES('acme','t','d','o','n','d','f','c','verified','[]')"));
@@ -155,7 +155,7 @@ public abstract class FeedCheckStoreContract : StoreContract
     public async Task A_stored_status_this_build_does_not_know_reads_as_fail()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         await ExecAsync(t,
             "INSERT INTO feed_checks(tenant_id, checked_at, checked_by_tid, checked_by_oid, checked_by_name, azure_tenant_id, feed_index_url, client_id, outcome, results) " +
             "VALUES('acme','2026-10-10T12:00:00.0000000+00:00','d','o','n','d','f','c','passed','[{\"id\":\"feed\",\"title\":\"T\",\"status\":\"glorious\",\"detail\":\"x\"}]')");
@@ -169,7 +169,7 @@ public abstract class FeedCheckStoreContract : StoreContract
     public async Task A_results_names_are_stored_and_an_older_row_reads_without_them()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         var store = Engine.FeedChecks(t);
         var check = Check(t) with { Results = new[] { new CheckResult("bypass", "B", CheckStatus.Warn, "d", new[] { "private", "tools" }), new CheckResult("feed", "F", CheckStatus.Pass, "ok") } };
         await store.RecordAsync(check, default);
@@ -187,7 +187,7 @@ public abstract class FeedCheckStoreContract : StoreContract
     public async Task Feed_names_round_trip_and_a_row_without_names_or_with_bad_ones_reads_none()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         var store = Engine.FeedChecks(t);
         var names = new FeedNames("Fabrikam", "platform", "public-packages");
         var id = await store.RecordAsync(Check(t), default);
@@ -214,7 +214,7 @@ public abstract class FeedCheckStoreContract : StoreContract
     public async Task A_row_blanked_by_an_older_build_or_with_unreadable_results_is_still_redacted()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         var store = Engine.FeedChecks(t);
         var blankedBefore = await store.RecordAsync(Check(t, after: TimeSpan.FromDays(-40)) with { ConfirmedAdmins = Array.Empty<string>() }, default);
         var oddShapes = new[]
@@ -259,7 +259,7 @@ public abstract class FeedCheckStoreContract : StoreContract
     public async Task An_old_row_holding_only_one_thing_to_remove_is_still_redacted(string column, string? value)
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         var store = Engine.FeedChecks(t);
         var clean = Check(t, after: TimeSpan.FromDays(-31)) with { CheckedByName = "", ConfirmedAdmins = Array.Empty<string>() };
         var id = await store.RecordAsync(clean with { Results = FeedCheckRedaction.Redact(clean.Results) }, default);

@@ -172,8 +172,8 @@ public static class PackmoatApp
     /// is one (a test's), else the database's, else (no database) one that is always granted. Made here, not registered, so the
     /// composition is unchanged.
     /// </summary>
-    private static IJobLease JobLeaseFor(IServiceProvider sp, SqliteDatabase? database) =>
-        sp.GetService<IJobLease>() ?? (database is null ? UnsharedJobLease.Instance : new SqliteJobLease(database, sp.GetRequiredService<IClock>()));
+    private static IJobLease JobLeaseFor(IServiceProvider sp, SqliteStores? stores) =>
+        sp.GetService<IJobLease>() ?? (stores is null ? UnsharedJobLease.Instance : stores.JobLease(sp.GetRequiredService<IClock>()));
 
     public static WebApplication Build(string[] args, IReadOnlyList<IPackmoatModule> modules, Action<IServiceCollection>? overrides = null, Action<PackmoatOptions>? configureOptions = null)
     {
@@ -231,10 +231,10 @@ public static class PackmoatApp
         var backgroundJobs = Packmoat.Host.BackgroundJobs.On(options);
         // Strict too (#232 P1): an unknown engine, or one this build cannot run yet (postgres), stops the start before anything is written.
         var engine = DatabaseEngines.RequireAvailable(options.DatabaseEngine);
-        // Strict too (#232 B1): anything but folder or database stops the start, and database needs a database, before anything is written.
+        // Strict too (#232 B1): anything but folder or database stops the start, and so does a storage the engine and database cannot
+        // have (#278 step 0, D11), before anything is written.
         var cookieKeys = Web.CookieKeyStorages.Parse(options.CookieKeys);
-        if (cookieKeys == Web.CookieKeyStorage.Database && options.DatabasePath is null)
-            throw new SettingsException($"{Web.CookieKeyStorages.Variable}=database needs a database: PACKMOAT_DB is not set.");
+        Web.CookieKeyStorages.Require(cookieKeys, engine, databaseConfigured: options.DatabasePath is not null);
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton<IClock, SystemClock>();
         builder.Services.AddSingleton<IPolicyEngine>(sp => PolicyEngine.CreateDefault(sp.GetRequiredService<IClock>()));
@@ -268,48 +268,18 @@ public static class PackmoatApp
         // SQLite on local disk, with the master key from the environment. Tests and tools register fakes instead.
         var dbPath = options.DatabasePath;
         SqliteDatabase? database = null;
+        SqliteStores? stores = null;
         if (dbPath is not null)
         {
             var db = database = new SqliteDatabase(dbPath);
             var protector = AesGcmSecretProtector.FromBase64(options.MasterKeyBase64 ?? throw new InvalidOperationException("PACKMOAT_MASTER_KEY is not set."));
-            builder.Services.AddSingleton(db);
-            // The tenant lifecycle (#194): a module's creation participants, purge contributors and eligibility, for this database, or
-            // the core's none. The tenant, sign-up and purge stores all take theirs from it.
-            builder.Services.AddSingleton(sp => sp.GetService<TenantLifecycleFactory>()?.For(db) ?? TenantLifecycle.None);
-            builder.Services.AddSingleton(sp => new SqliteTenantStore(db, sp.GetRequiredService<IClock>(), protector, sp.GetRequiredService<TenantLifecycle>().Participants));
-            builder.Services.AddSingleton<ITenantStore>(sp => sp.GetRequiredService<SqliteTenantStore>());
-            builder.Services.AddSingleton(sp => new SqliteTokenService(db, sp.GetRequiredService<SqliteTenantStore>(), sp.GetRequiredService<IClock>(), sp.GetRequiredService<IServingGate>()));
-            builder.Services.AddSingleton(sp => new SqliteTokenActivity(db, sp.GetRequiredService<IClock>()));
+            // The stores, from the one list the command line and the hosted modules also build from (#278 step 0, A3).
+            builder.Services.AddSqliteStores(stores = new SqliteStores(db, protector), cookieKeys);
             // Outermost, so a cache hit still notes the day's use (one in-memory check; one tiny insert per token per day; failures are swallowed).
             builder.Services.AddSingleton<ITenantAuthenticator>(sp => new ActivityRecordingAuthenticator(
                 new CachedTenantAuthenticator(sp.GetRequiredService<SqliteTokenService>(), sp.GetRequiredService<IClock>()),
                 sp.GetRequiredService<SqliteTokenActivity>(), sp.GetRequiredService<IClock>(),
                 sp.GetRequiredService<ILoggerFactory>().CreateLogger("Packmoat.TokenActivity") is var log ? (m => log.LogWarning("{Message}", m)) : null));
-            // The audit store. The proxy's IAuditLog (a queue over it) is registered after the overrides, below.
-            builder.Services.AddSingleton(new SqliteAuditLog(db));
-            builder.Services.AddSingleton<IAuditBatchLog>(sp => sp.GetRequiredService<SqliteAuditLog>());
-            builder.Services.AddSingleton<IAuditRetention>(sp => sp.GetRequiredService<SqliteAuditLog>());
-            builder.Services.AddSingleton<IAuditQuery>(sp => sp.GetRequiredService<SqliteAuditLog>());
-            builder.Services.AddSingleton<ITokenActivityRetention>(sp => sp.GetRequiredService<SqliteTokenActivity>());
-            builder.Services.AddSingleton(new SqliteDecisionRecordLog(db));
-            builder.Services.AddSingleton<IDecisionRecordLog>(sp => sp.GetRequiredService<SqliteDecisionRecordLog>());
-            // The support view (the admin site's Decisions panel) reads the record only through this port, by way of AdminQueries.
-            builder.Services.AddSingleton<IDecisionRecordQuery>(new SqliteDecisionRecordQuery(db));
-            builder.Services.AddSingleton<IAdminActionLog>(new SqliteAdminActionLog(db));
-            builder.Services.AddSingleton<ISignInDirectoryStore>(new SqliteSignInDirectoryStore(db));
-            builder.Services.AddSingleton<ITokenService>(sp => sp.GetRequiredService<SqliteTokenService>());
-            builder.Services.AddSingleton<IActiveDeveloperQuery>(sp => sp.GetRequiredService<SqliteTokenActivity>());
-            builder.Services.AddSingleton<ISharedAppCredentialStore>(sp => new SqliteSharedAppCredentialStore(db, sp.GetRequiredService<IClock>(), protector));
-            builder.Services.AddSingleton<IMemberStore>(new SqliteMemberStore(db));
-            builder.Services.AddSingleton<IAutoJoinSettingStore>(new SqliteAutoJoinSettingStore(db));
-            builder.Services.AddSingleton<IFeedCheckStore>(new SqliteFeedCheckStore(db));
-            builder.Services.AddSingleton<ISelfServiceFeedStore>(new SqliteSelfServiceFeedStore(db));
-            // Read only in the server: the daily nudge counts the tenants due for purge. Only the admin CLI purges.
-            builder.Services.AddSingleton<ITenantPurgeStore>(sp =>
-            {
-                var lifecycle = sp.GetRequiredService<TenantLifecycle>();
-                return new SqliteTenantPurgeStore(db, lifecycle.Eligibility?.Invoke(), lifecycle.Contributors);
-            });
             // Customer self-service tokens: the customer site's /tokens and /team pages (Customer/AppTokens.cs) and its sign-in record. Issuing,
             // and the token pages' create forms (#200), ask the serving gate (the core's ServeAllGate, or a module's). The customer site registers the same with TryAdd for a test host.
             builder.Services.AddSingleton(sp => new CustomerTokenCommands(sp.GetRequiredService<ITenantStore>(), sp.GetRequiredService<ITokenService>(),
@@ -318,15 +288,11 @@ public static class PackmoatApp
             builder.Services.AddSingleton(sp => new CustomerTokenQueries(sp.GetRequiredService<ITenantStore>(), sp.GetRequiredService<ITokenService>(),
                 sp.GetRequiredService<ISignInDirectoryStore>(), sp.GetRequiredService<ISharedAppCredentialStore>(), sp.GetRequiredService<IServingGate>()));
             builder.Services.AddSingleton<IUpstreamCredentialSource>(sp => new EntraCertificateCredentialSource(sp.GetRequiredService<ITenantStore>(), sp.GetRequiredService<IClock>(), sp.GetRequiredService<ISharedAppCredentialStore>()));
-            // PACKMOAT_COOKIE_KEYS=database only (#232 B1): the signed-in sites' cookie keys, encrypted with the master key. Folder mode
-            // (the default) registers nothing here.
-            if (cookieKeys == Web.CookieKeyStorage.Database)
-                builder.Services.AddSingleton<ICookieKeyStore>(sp => new SqliteCookieKeyStore(db, sp.GetRequiredService<IClock>(), protector));
         }
 
         overrides?.Invoke(builder.Services);
         // After the overrides, so a test's fakes win (a module registers its ports with TryAdd).
-        var context = new PackmoatModuleContext(builder, options, database, engine) { JobLease = sp => JobLeaseFor(sp, database) };
+        var context = new PackmoatModuleContext(builder, options, database, engine) { JobLease = sp => JobLeaseFor(sp, stores) };
         foreach (var module in modules) module.ConfigureServices(context);
         // The core's alert sink (#194): a warning in the log. A module's own sink replaces it.
         builder.Services.TryAddSingleton<IOpsAlerts>(sp => new LogOpsAlerts(sp.GetRequiredService<ILoggerFactory>().CreateLogger(LogOpsAlerts.Category)));
@@ -364,10 +330,10 @@ public static class PackmoatApp
                 sp.GetService<ITenantPurgeStore>(), sp.GetRequiredService<IOpsAlerts>(),
                 decisions: sp.GetService<IDecisionRecordLog>(), actions: sp.GetService<IAdminActionLog>(),
                 audit: sp.GetService<IAuditRetention>(), tokenActivity: sp.GetService<ITokenActivityRetention>(),
-                lease: JobLeaseFor(sp, database)));
+                lease: JobLeaseFor(sp, stores)));
 
-        var admin = AdminSite.Configure(builder, options);
-        var customer = AppSite.Configure(builder, options, admin?.Host);
+        var admin = AdminSite.Configure(builder, options, engine);
+        var customer = AppSite.Configure(builder, options, engine, admin?.Host);
         // Each module's site, on a hostname none of the above (nor an earlier module) answers.
         var proxyHosts = (options.AllowedHosts ?? "").Split(new[] { ' ', ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
         var siteHosts = new List<string>();
@@ -381,7 +347,7 @@ public static class PackmoatApp
             siteHosts.Add(site.Host);
         }
 
-        if (dbPath is not null)
+        if (ProductionMode.On(options))
         {
             // Production: only our own hostnames are answered. (Caddy forwards the original Host; loopback names serve the health check.)
             if (proxyHosts.Length == 0) throw new InvalidOperationException("PACKMOAT_HOSTS is not set. Refusing to start without a list of the hostnames this service answers to.");
@@ -408,13 +374,16 @@ public static class PackmoatApp
         app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Packmoat.Serving")
             .LogInformation("Serving gate: {Type}", app.Services.GetRequiredService<IServingGate>().GetType().Name);
         // The core's migrations, then each module's track (#196). A refusal (an undeclared or newer track, a baseline that cannot adopt)
-        // stops the start before anything is written.
-        app.Services.GetService<SqliteDatabase>()?.MigrateAsync(modules.Select(m => m.Migrations).OfType<MigrationTrack>().ToList()).GetAwaiter().GetResult();
-        app.Services.GetService<SqliteTenantStore>()?.EnsureKeyCheckAsync(default).GetAwaiter().GetResult(); // wrong master key: refuse to start
+        // stops the start before anything is written. Then the master-key check. Both ports (#278 step 0, A4) are made here, not
+        // registered, so the composition is unchanged; with no database there is neither.
+        ISchemaMigrator? migrator = stores?.Migrator;
+        IMasterKeyCheck? keyCheck = stores?.MasterKeyCheck;
+        migrator?.MigrateAsync(modules.Select(m => m.Migrations).OfType<MigrationTrack>().ToList()).GetAwaiter().GetResult();
+        keyCheck?.EnsureAsync(default).GetAwaiter().GetResult(); // wrong master key: refuse to start
         // Database mode only (#232 B1): the one-time import of the key folder, then one read of every key, so a key the master key cannot
         // read stops the start. The folder is never created or changed.
         if (cookieKeys == Web.CookieKeyStorage.Database)
-            Web.CookieKeyImport.RunAsync(app.Services.GetRequiredService<ICookieKeyStore>(), Web.SignedInSite.KeysDir(options),
+            Web.CookieKeyImport.RunAsync(app.Services.GetRequiredService<ICookieKeyStore>(), Web.SignedInSite.KeysDir(options, engine),
                 app.Services.GetRequiredService<ILoggerFactory>().CreateLogger(Web.CookieKeyImport.LogCategory)).GetAwaiter().GetResult();
         // The 30-day retention of feed checks' personal data (#107): at every start, and again whenever the wizard records a check.
         // A failure is logged and the server starts anyway (RetentionService.BlankAtStartup).
@@ -448,12 +417,11 @@ public static class PackmoatApp
             await next();
         });
         app.UseMiddleware<TokenAuthMiddleware>();
-        // Built here, not registered (#233): it reads the database the start migrated, against the same tracks.
-        var readyDb = app.Services.GetService<SqliteDatabase>();
-        var readyKeys = app.Services.GetService<SqliteTenantStore>();
+        // Built here, not registered (#233): it reads the database the start migrated, against the same tracks, through the same two
+        // ports, and only reads: TrackVersionsAsync and MatchesAsync, never MigrateAsync or EnsureAsync.
         var readyTracks = modules.Select(m => m.Migrations).OfType<MigrationTrack>().ToList();
-        var readiness = new Readiness(readyDb is null ? null : ct => readyDb.TrackVersionsAsync(readyTracks, ct),
-            readyKeys is null ? null : readyKeys.KeyMatchesAsync, app.Services.GetRequiredService<IClock>(),
+        var readiness = new Readiness(migrator is null ? null : ct => migrator.TrackVersionsAsync(readyTracks, ct),
+            keyCheck is null ? null : keyCheck.MatchesAsync, app.Services.GetRequiredService<IClock>(),
             app.Services.GetRequiredService<ILoggerFactory>().CreateLogger(Readiness.LogCategory));
         NuGetProxy.Map(app, readiness);
         return app;

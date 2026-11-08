@@ -17,8 +17,8 @@ using static Packmoat.Host.Tests.ConformanceVectors;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The .NET implementation against the shared vectors in core/spec/vectors (#209): each case runs through the production code that answers
-/// it on a real request, and its output is compared as JSON with the case's expected output. See core/spec/README.md.
+/// The .NET implementation against the shared vectors in spec/vectors (#209): each case runs through the production code that answers
+/// it on a real request, and its output is compared as JSON with the case's expected output. See spec/README.md.
 /// </summary>
 public class ConformanceTests
 {
@@ -191,11 +191,8 @@ public class TokenCheckConformanceTests
             if (context.Response.Headers.WWWAuthenticate.ToString() is { Length: > 0 } challenge) actual["challenge"] = challenge;
             AssertJson(c.Expected, actual, name);
         }
-        finally
-        {
-            SqliteConnection.ClearAllPools();
-            try { dir.Delete(true); } catch (IOException) { /* best effort: never hide the case's own failure */ } catch (UnauthorizedAccessException) { }
-        }
+        catch when (TempDir.Failing(dir.FullName)) { throw; }
+        finally { TempDir.Delete(dir.FullName, clearSqlitePools: true); }
     }
 
     /// <summary>

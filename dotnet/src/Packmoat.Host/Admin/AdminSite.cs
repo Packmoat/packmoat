@@ -9,6 +9,7 @@ using Packmoat.Application;
 using Packmoat.Domain;
 using Packmoat.Host.Modules;
 using Packmoat.Host.Web;
+using Packmoat.Infrastructure;
 using static Packmoat.Host.Admin.AdminHtml;
 
 namespace Packmoat.Host.Admin;
@@ -61,7 +62,7 @@ public static class AdminSite
     // ---------------------------------------------------------------- configuration
 
     /// <summary>Returns null when the admin site is disabled (no PACKMOAT_ADMIN_HOST): nothing is registered and nothing is mapped.</summary>
-    internal static AdminSettings? Configure(WebApplicationBuilder builder, PackmoatOptions options)
+    internal static AdminSettings? Configure(WebApplicationBuilder builder, PackmoatOptions options, DatabaseEngine engine)
     {
         var host = options.AdminHost?.Trim().ToLowerInvariant();
         if (string.IsNullOrEmpty(host)) return null;
@@ -83,7 +84,7 @@ public static class AdminSite
             ClientSecret = options.AdminClientSecret,
             Allow = allow,
             UpstreamHosts = ParseHosts(options.AdminUpstreamHosts),
-            KeysDir = SignedInSite.KeysDir(options),
+            KeysDir = SignedInSite.KeysDir(options, engine),
             SignInAvailable = configured || fake is not null,
         };
 

@@ -1,6 +1,6 @@
 # Packmoat: the behaviour every implementation follows
 
-This is the language-neutral description of what Packmoat does to a NuGet feed. The .NET implementation is in `core/dotnet/`. A second
+This is the language-neutral description of what Packmoat does to a NuGet feed. The .NET implementation is in `dotnet/`. A second
 implementation (for example TypeScript, beside it) must behave the same way. The shared test cases in `vectors/` are the proof: an
 implementation conforms when it gives the expected output for every case.
 
@@ -304,7 +304,7 @@ One feed request's token check (section 5).
 
 ### How the .NET implementation runs them
 
-`core/dotnet/tests/Packmoat.Host.Tests/ConformanceTests.cs` runs every case through the production code that answers it on a real
+`dotnet/tests/Packmoat.Host.Tests/ConformanceTests.cs` runs every case through the production code that answers it on a real
 request:
 
 | Group | Production code |

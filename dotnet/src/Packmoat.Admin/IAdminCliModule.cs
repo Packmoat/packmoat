@@ -32,7 +32,7 @@ public interface IAdminCliModule
     /// with none, every tenant serves (<see cref="ServeAllGate"/>). <paramref name="warn"/> takes one-line warnings the tool prints to its
     /// error output (for example a tenant state the gate does not know); ids and states only, never a secret.
     /// </summary>
-    IServingGate? Gate(SqliteDatabase db, CliEnvironment env, Action<string> warn);
+    IServingGate? Gate(IRelationalDatabase db, CliEnvironment env, Action<string> warn);
 
     /// <summary>
     /// The tenant lifecycle's parts (#194: creation participants, purge contributors and the purge eligibility), or null for none. At
@@ -40,7 +40,7 @@ public interface IAdminCliModule
     /// (<see cref="TenantLifecycle.None"/>). It must be cheap: it is asked on every run, and the eligibility's settings should be read
     /// only when the eligibility is made. <paramref name="note"/> takes lines a refused purge prints (what a payment provider logged).
     /// </summary>
-    TenantLifecycle? Lifecycle(SqliteDatabase db, CliEnvironment env, Action<string> note);
+    TenantLifecycle? Lifecycle(IRelationalDatabase db, CliEnvironment env, Action<string> note);
 
     /// <summary>
     /// The module's own migration track (#196), or null for none: the same track its server module declares. Every command that opens
@@ -64,9 +64,13 @@ public interface IAdminCliModule
 /// </summary>
 public sealed record PurgeCheckNote(string Help, string Due, IReadOnlyList<string>? DueLines = null);
 
-/// <summary>What a module's command is given: its arguments, the operator, the migrated database, the environment and the two writers.</summary>
-public sealed record AdminCliContext(AdminCliArgs Args, ActorScope Actor, SqliteDatabase Db, CliEnvironment Env, TextWriter Output, TextWriter Error,
-    CancellationToken CancellationToken);
+/// <summary>
+/// What a module's command is given: its arguments, the operator, the migrated database, the admin action log its changes are recorded in
+/// (the core's, over that database), the environment and the two writers.
+/// <para>Unstable: may change in any release before 1.0.</para>
+/// </summary>
+public sealed record AdminCliContext(AdminCliArgs Args, ActorScope Actor, IRelationalDatabase Db, IAdminActionLog Actions, CliEnvironment Env,
+    TextWriter Output, TextWriter Error, CancellationToken CancellationToken);
 
 /// <summary>
 /// The command line as the core reads it: the command and its sub-command, then positional arguments and --options. The flags (options

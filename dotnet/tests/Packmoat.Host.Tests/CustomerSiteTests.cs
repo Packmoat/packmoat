@@ -433,14 +433,15 @@ public partial class CustomerSiteTests
     [Fact]
     public async Task An_unreadable_certificate_file_also_means_503_not_a_crash()
     {
-        var bad = Path.Combine(Path.GetTempPath(), "packmoat-bad-" + Guid.NewGuid().ToString("N") + ".pem");
-        await File.WriteAllTextAsync(bad, "not a pem");
+        var keys = TempDir.Create("packmoat-bad-");
+        var bad = keys.File("app.pem");
         try
         {
+            await File.WriteAllTextAsync(bad, "not a pem");
             await using var f = await StartAsync(configured: false, configure: o => { o.AppClientId = AppClient; o.AppCertPath = bad; });
             Assert.Equal(HttpStatusCode.ServiceUnavailable, (await f.Browser(AppHost).GetAsync("/")).StatusCode);
         }
-        finally { File.Delete(bad); }
+        finally { keys.Dispose(); }
     }
 
     [Fact]
@@ -460,21 +461,31 @@ public partial class CustomerSiteTests
 
     // ---- the real Microsoft settings (no network: options and events only)
 
-    private static string WritePem(out X509Certificate2 cert, DateTimeOffset? notAfter = null)
+    /// <summary>A key and certificate in <paramref name="path"/>, in a folder of its own that the caller disposes (#292).</summary>
+    private static TempDir WritePem(out string path, out X509Certificate2 cert, DateTimeOffset? notAfter = null)
     {
-        using var rsa = RSA.Create(2048);
-        var req = new CertificateRequest("CN=packmoat-app-test", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-        var until = notAfter ?? new DateTimeOffset(2027, 10, 10, 0, 0, 0, TimeSpan.Zero);
-        cert = req.CreateSelfSigned(until.AddYears(-2), until);
-        var path = Path.Combine(Path.GetTempPath(), "packmoat-app-" + Guid.NewGuid().ToString("N") + ".pem");
-        File.WriteAllText(path, cert.ExportCertificatePem() + "\n" + rsa.ExportPkcs8PrivateKeyPem());
-        return path;
+        var dir = TempDir.Create("packmoat-app-");
+        try
+        {
+            using var rsa = RSA.Create(2048);
+            var req = new CertificateRequest("CN=packmoat-app-test", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            var until = notAfter ?? new DateTimeOffset(2027, 10, 10, 0, 0, 0, TimeSpan.Zero);
+            cert = req.CreateSelfSigned(until.AddYears(-2), until);
+            path = dir.File("app.pem");
+            File.WriteAllText(path, cert.ExportCertificatePem() + "\n" + rsa.ExportPkcs8PrivateKeyPem());
+            return dir;
+        }
+        catch
+        {
+            dir.Dispose();
+            throw;
+        }
     }
 
     [Fact]
     public async Task The_real_sign_in_uses_organizations_pkce_its_own_callback_and_a_certificate()
     {
-        var pem = WritePem(out _);
+        var keys = WritePem(out var pem, out _);
         try
         {
             await using var f = await StartAsync(configured: false, configure: o => { o.AppClientId = AppClient.ToUpperInvariant(); o.AppCertPath = pem; });
@@ -506,7 +517,7 @@ public partial class CustomerSiteTests
             Assert.Equal("urn:ietf:params:oauth:client-assertion-type:jwt-bearer", received.TokenEndpointRequest.ClientAssertionType);
             Assert.False(string.IsNullOrEmpty(received.TokenEndpointRequest.ClientAssertion));
         }
-        finally { File.Delete(pem); }
+        finally { keys.Dispose(); }
     }
 
     [Fact]
@@ -590,7 +601,7 @@ public partial class CustomerSiteTests
     [Fact]
     public async Task An_id_token_in_the_callback_fails_the_sign_in_on_both_sites()
     {
-        var pem = WritePem(out _);
+        var keys = WritePem(out var pem, out _);
         try
         {
             await using var f = await AdminSiteFixture.StartAsync(o => { o.AppHost = AppHost; o.AppClientId = AppClient; o.AppCertPath = pem; }, fakeProvider: false);
@@ -610,7 +621,7 @@ public partial class CustomerSiteTests
                 Assert.Null(normal.Result);
             }
         }
-        finally { File.Delete(pem); }
+        finally { keys.Dispose(); }
     }
 
     [Fact]
@@ -640,7 +651,7 @@ public partial class CustomerSiteTests
     [InlineData(2027, 1, 1, null, null)]
     public async Task The_certificate_expiry_is_logged_at_start_without_key_material(int y, int m, int d, string? level, string? text)
     {
-        var pem = WritePem(out var cert, new DateTimeOffset(y, m, d, 0, 0, 0, TimeSpan.Zero));
+        var keys = WritePem(out var pem, out var cert, new DateTimeOffset(y, m, d, 0, 0, 0, TimeSpan.Zero));
         var logs = new CapturingLoggerProvider();
         try
         {
@@ -653,7 +664,7 @@ public partial class CustomerSiteTests
             foreach (var leak in new[] { "PRIVATE KEY", "BEGIN", cert.Thumbprint, Convert.ToBase64String(cert.RawData)[..40] })
                 Assert.DoesNotContain(leak, all, StringComparison.OrdinalIgnoreCase);
         }
-        finally { File.Delete(pem); }
+        finally { keys.Dispose(); }
         // the level is checked on the pure function, where the logger records it
         var probe = new LevelLogger();
         AppSite.CheckCertificateExpiry(probe, new DateTime(y, m, d, 0, 0, 0, DateTimeKind.Utc), new DateTimeOffset(2026, 10, 10, 12, 0, 0, TimeSpan.Zero));

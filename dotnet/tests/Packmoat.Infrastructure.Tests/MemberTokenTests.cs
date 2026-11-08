@@ -111,8 +111,7 @@ public class MemberTokenTests : MemberTokenContract
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            try { Directory.Delete(dir, true); } catch { /* best effort */ }
+            TempDir.Delete(dir, clearSqlitePools: true);
         }
     }
 }

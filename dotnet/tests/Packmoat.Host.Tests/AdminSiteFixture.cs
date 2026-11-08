@@ -165,7 +165,8 @@ public sealed partial class AdminSiteFixture : IAsyncDisposable
     public FakeIdentityProvider AppIdentity { get; } = new();
     public string MasterKey { get; } = AesGcmSecretProtector.GenerateKeyBase64();
     public string BaseUrl { get; private set; } = "";
-    public string Dir { get; } = Directory.CreateTempSubdirectory("packmoat-admin-").FullName;
+    private readonly TempDir _temp = TempDir.Create("packmoat-admin-", clearSqlitePools: true);
+    public string Dir => _temp.Path;
     public string KeysDir => Path.Combine(Dir, "admin-keys");
     public WebApplication App { get; private set; } = null!;
 
@@ -179,7 +180,24 @@ public sealed partial class AdminSiteFixture : IAsyncDisposable
     public static async Task<AdminSiteFixture> StartAsync(Action<PackmoatOptions>? configure = null, IAuditQuery? auditQuery = null, bool fakeProvider = true, string? keysDir = null, Action<IServiceCollection>? services = null,
         Action<AdminSiteFixture, IServiceCollection>? fixtureServices = null, IReadOnlyList<IPackmoatModule>? modules = null)
     {
-        var f = new AdminSiteFixture { Upstream = await FakeUpstream.StartAsync() };
+        var f = new AdminSiteFixture();
+        try
+        {
+            await f.BuildAndStartAsync(configure, auditQuery, fakeProvider, keysDir, services, fixtureServices, modules);
+            return f;
+        }
+        catch
+        {
+            await f.DisposeAsync();   // the folder, and whatever started before the failure (#292)
+            throw;
+        }
+    }
+
+    private async Task BuildAndStartAsync(Action<PackmoatOptions>? configure, IAuditQuery? auditQuery, bool fakeProvider, string? keysDir, Action<IServiceCollection>? services,
+        Action<AdminSiteFixture, IServiceCollection>? fixtureServices, IReadOnlyList<IPackmoatModule>? modules)
+    {
+        var f = this;
+        f.Upstream = await FakeUpstream.StartAsync();
         f.Db = new SqliteDatabase(Path.Combine(f.Dir, "packmoat.db"));
         await f.Db.MigrateAsync(TestTracks.Modules);
         f.Tenants = new SqliteTenantStore(f.Db, f.Clock, AesGcmSecretProtector.FromBase64(f.MasterKey), TestLifecycle.Participants);
@@ -230,7 +248,6 @@ public sealed partial class AdminSiteFixture : IAsyncDisposable
         });
         await f.App.StartAsync();
         f.BaseUrl = f.App.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First().Replace("localhost", "127.0.0.1").TrimEnd('/');
-        return f;
     }
 
     /// <summary>An Azure Artifacts feed URL that passes the strict rules (https, a path prefix): what a set-up tenant has.</summary>
@@ -257,12 +274,21 @@ public sealed partial class AdminSiteFixture : IAsyncDisposable
         await Tenants.SetUpstreamIdentityAsync(tenantId, new UpstreamIdentity(directory, "99999999-9999-4999-8999-999999999999", "-----BEGIN PRIVATE KEY-----\nTEST\n-----END PRIVATE KEY-----"), default);
     }
 
+    /// <summary>Stops what <see cref="StartAsync"/> started (a failed start may have got only part way) and deletes the folder.</summary>
     public async ValueTask DisposeAsync()
     {
-        await App.StopAsync();
-        await App.DisposeAsync();
-        await Upstream.DisposeAsync();
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        try { Directory.Delete(Dir, true); } catch { /* best effort */ }
+        try
+        {
+            if (App is not null)
+            {
+                try { await App.StopAsync(); }
+                finally { await App.DisposeAsync(); }
+            }
+        }
+        finally
+        {
+            try { if (Upstream is not null) await Upstream.DisposeAsync(); }
+            finally { _temp.Dispose(); }
+        }
     }
 }

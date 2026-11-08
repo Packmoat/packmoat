@@ -19,7 +19,7 @@ public abstract class DecisionRecordStoreContract : StoreContract
         new(tenant, Ecosystem.NuGet, package, version, decision, reason, waiver, cooldown, published, revision, first ?? T0, last ?? first ?? T0, count);
 
     /// <summary>All of one tenant's rows (the tests write far fewer than the query's maximum), through the read port.</summary>
-    protected async Task<IReadOnlyList<DecisionRecord>> ListAsync(TestDb t, string tenant)
+    protected async Task<IReadOnlyList<DecisionRecord>> ListAsync(IEngineDb t, string tenant)
     {
         var page = await Engine.DecisionQuery(t).QueryAsync(new DecisionRecordQuery(tenant, Limit: DecisionRecordQuery.MaxLimit), Ct);
         Assert.False(page.More);
@@ -32,7 +32,7 @@ public abstract class DecisionRecordStoreContract : StoreContract
     public async Task Upsert_keeps_the_earliest_first_seen_takes_the_latest_last_seen_and_adds_the_counts()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         var store = Engine.DecisionRecords(t);
 
         await store.UpsertAsync(new[] { Rec(first: T0, last: T0.AddMinutes(5), count: 3, published: T0.AddDays(-2)) }, Ct);
@@ -51,7 +51,7 @@ public abstract class DecisionRecordStoreContract : StoreContract
     public async Task A_changed_decision_for_the_same_version_adds_a_row_so_the_history_is_kept()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         var store = Engine.DecisionRecords(t);
 
         await store.UpsertAsync(new[] { Rec(first: T0) }, Ct);
@@ -71,8 +71,8 @@ public abstract class DecisionRecordStoreContract : StoreContract
     public async Task Prune_deletes_rows_last_seen_before_the_cutoff_only()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
-        await t.AddTenantAsync("other");
+        await AddTenantAsync(t, "acme");
+        await AddTenantAsync(t, "other");
         var store = Engine.DecisionRecords(t);
         var now = T0;
         var cutoff = now - DecisionRecordPolicy.Retention;
@@ -91,10 +91,11 @@ public abstract class DecisionRecordStoreContract : StoreContract
     }
 
     [Fact]
+    [Trait(Needs, Triggers)]
     public async Task A_late_write_for_a_purged_tenant_is_dropped_and_a_live_tenants_is_kept()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         var store = Engine.DecisionRecords(t);
         // As the purge leaves it: no tenant row, a closed purge record.
         await ExecAsync(t, "INSERT INTO tenant_purges(tenant_id, purged_at, reason, actor, purging) VALUES('gone', '2026-10-01T00:00:00.0000000+00:00', 'ended', 'olivia', 0)");
@@ -109,7 +110,7 @@ public abstract class DecisionRecordStoreContract : StoreContract
     public async Task Times_are_stored_as_sortable_utc_text()
     {
         await using var t = await CreateDbAsync();
-        await t.AddTenantAsync("acme");
+        await AddTenantAsync(t, "acme");
         var store = Engine.DecisionRecords(t);
         var local = new DateTimeOffset(2026, 10, 10, 14, 0, 0, TimeSpan.FromHours(2));   // the same instant as T0
         await store.UpsertAsync(new[] { Rec(first: local, last: local, published: local) }, Ct);

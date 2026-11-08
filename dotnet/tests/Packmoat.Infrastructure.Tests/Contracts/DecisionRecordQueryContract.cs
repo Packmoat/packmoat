@@ -17,7 +17,7 @@ public abstract class DecisionRecordQueryContract : StoreContract
         Decision decision = Decision.Hide, VerdictReason reason = VerdictReason.Cooldown, long count = 1) =>
         new(tenant, Ecosystem.NuGet, package, version, decision, reason, null, 14, T0.AddDays(-3), 2, T0, T0.AddMinutes(minutes), count);
 
-    protected async Task<(TestDb Db, IDecisionRecordQuery Query)> SeedAsync(params DecisionRecord[] rows)
+    protected async Task<(IEngineDb Db, IDecisionRecordQuery Query)> SeedAsync(params DecisionRecord[] rows)
     {
         var t = await CreateDbAsync();
         await Engine.DecisionRecords(t).UpsertAsync(rows, Ct);

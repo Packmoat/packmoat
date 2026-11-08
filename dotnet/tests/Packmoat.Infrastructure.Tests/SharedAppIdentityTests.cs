@@ -16,16 +16,24 @@ public class SharedAppIdentityTests : SharedAppIdentityContract
     private static async Task<(TestDb Db, byte[] Blob)> V5WithIdentityAsync(string tenantId = "e2e-test")
     {
         var t = new TestDb();
-        await t.Db.MigrateAsync(5);
-        await t.AddLegacyTenantAsync(tenantId);
-        var blob = t.Protector.Protect("-----BEGIN PRIVATE KEY-----\nLIVE-KEY\n-----END PRIVATE KEY-----", tenantId);
-        await using var c = await t.Db.OpenAsync();
-        await using var cmd = c.CreateCommand();
-        cmd.CommandText = "INSERT INTO upstream_identities(tenant_id, azure_tenant_id, client_id, cert_encrypted, updated_at) VALUES(@id,'az-dir','client-app',@b,'2026-01-02T03:04:05.0000000+00:00')";
-        cmd.Parameters.AddWithValue("@id", tenantId);
-        cmd.Parameters.AddWithValue("@b", blob);
-        await cmd.ExecuteNonQueryAsync();
-        return (t, blob);
+        try
+        {
+            await t.Db.MigrateAsync(5);
+            await t.AddLegacyTenantAsync(tenantId);
+            var blob = t.Protector.Protect("-----BEGIN PRIVATE KEY-----\nLIVE-KEY\n-----END PRIVATE KEY-----", tenantId);
+            await using var c = await t.Db.OpenAsync();
+            await using var cmd = c.CreateCommand();
+            cmd.CommandText = "INSERT INTO upstream_identities(tenant_id, azure_tenant_id, client_id, cert_encrypted, updated_at) VALUES(@id,'az-dir','client-app',@b,'2026-01-02T03:04:05.0000000+00:00')";
+            cmd.Parameters.AddWithValue("@id", tenantId);
+            cmd.Parameters.AddWithValue("@b", blob);
+            await cmd.ExecuteNonQueryAsync();
+            return (t, blob);
+        }
+        catch
+        {
+            await t.DisposeAsync();   // #292: a failed set-up leaves no folder behind
+            throw;
+        }
     }
 
     private static async Task<(string Kind, string Az, string? Client, byte[]? Blob, string Updated)> RawRowAsync(TestDb t, string tenantId)
@@ -203,17 +211,25 @@ public class SharedAppIdentityTests : SharedAppIdentityContract
         public static async Task<SharedWorld> StartAsync(Func<ISharedAppCredentialStore, ISharedAppCredentialStore>? wrap = null)
         {
             var db = await TestDb.CreateAsync();
-            await db.AddTenantAsync();   // feed under https://pkgs.dev.azure.com/example-org/
-            var shared = new SqliteSharedAppCredentialStore(db.Db, db.Clock, db.Protector);
-            SharedWorld? w = null;
-            w = new SharedWorld
+            try
             {
-                Db = db, Shared = shared,
-                Source = new EntraCertificateCredentialSource(db.Tenants, db.Clock, wrap is null ? shared : wrap(shared), createCredential: s => { w!.Built.Add(s); return new FakeTokenCredential(s); }),
-            };
-            await shared.SetAsync(SharedAppSlot.Active, new SharedAppCredential(AppId, w.One.CombinedPem), default);
-            await db.Tenants.BindSharedIdentityAsync("acme", Dir, default);
-            return w;
+                await db.AddTenantAsync();   // feed under https://pkgs.dev.azure.com/example-org/
+                var shared = new SqliteSharedAppCredentialStore(db.Db, db.Clock, db.Protector);
+                SharedWorld? w = null;
+                w = new SharedWorld
+                {
+                    Db = db, Shared = shared,
+                    Source = new EntraCertificateCredentialSource(db.Tenants, db.Clock, wrap is null ? shared : wrap(shared), createCredential: s => { w!.Built.Add(s); return new FakeTokenCredential(s); }),
+                };
+                await shared.SetAsync(SharedAppSlot.Active, new SharedAppCredential(AppId, w.One.CombinedPem), default);
+                await db.Tenants.BindSharedIdentityAsync("acme", Dir, default);
+                return w;
+            }
+            catch
+            {
+                await db.DisposeAsync();   // #292: a failed set-up leaves no folder behind
+                throw;
+            }
         }
 
         public Task<Tenant> TenantAsync() => Db.Tenants.GetAsync("acme", default)!;
@@ -540,7 +556,8 @@ public class SharedAppIdentityTests : SharedAppIdentityContract
 
     private sealed class Cli : IAsyncDisposable
     {
-        public string Dir { get; } = Directory.CreateTempSubdirectory("packmoat-shared-cli-").FullName;
+        private readonly TempDir _temp = TempDir.Create("packmoat-shared-cli-", clearSqlitePools: true);
+        public string Dir => _temp.Path;
         private readonly CliEnvironment _env;
         public FakeClock Clock { get; } = new();
 
@@ -557,7 +574,7 @@ public class SharedAppIdentityTests : SharedAppIdentityContract
             return (code, o.ToString(), e.ToString());
         }
 
-        public ValueTask DisposeAsync() { SqliteConnection.ClearAllPools(); try { Directory.Delete(Dir, true); } catch { } return ValueTask.CompletedTask; }
+        public ValueTask DisposeAsync() => _temp.DisposeAsync();
     }
 
     [Fact]

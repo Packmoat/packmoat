@@ -59,7 +59,8 @@ public class BackgroundJobsTests
             });
             return look(app, services!);
         }
-        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch (IOException) { } }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 
     private static string[] Registrations(IServiceCollection services) =>
@@ -105,7 +106,8 @@ public class BackgroundJobsTests
             Assert.DoesNotContain("sometimes", ex.Message);
             Assert.False(File.Exists(Path.Combine(dir, "packmoat.db")));
         }
-        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch (IOException) { } }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 
     [Fact]   // the setting is read through the one settings reader, so it can come from a file as every other can

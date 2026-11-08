@@ -58,7 +58,8 @@ public class OnboardingCliTests
 {
     private sealed class Cli : IAsyncDisposable
     {
-        public string Dir { get; } = Directory.CreateTempSubdirectory("packmoat-onb-").FullName;
+        private readonly TempDir _temp = TempDir.Create("packmoat-onb-", clearSqlitePools: true);
+        public string Dir => _temp.Path;
         public FakeClock Clock { get; } = new();
         private readonly CliEnvironment _env;
         public Cli()
@@ -72,7 +73,7 @@ public class OnboardingCliTests
             var c = await AdminCli.RunAsync(a, o, e, _env, TestCli.Modules);
             return (c, o.ToString(), e.ToString());
         }
-        public ValueTask DisposeAsync() { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(Dir, true); } catch { } return ValueTask.CompletedTask; }
+        public ValueTask DisposeAsync() => _temp.DisposeAsync();
     }
 
     [Fact]

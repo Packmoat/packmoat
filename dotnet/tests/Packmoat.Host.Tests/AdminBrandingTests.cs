@@ -222,7 +222,8 @@ public class AdminBrandingTests
                 Assert.Contains("Sign-in is not configured on this server.", html);
             }
         }
-        finally { try { Directory.Delete(keys, true); } catch { /* best effort */ } }
+        catch when (TempDir.Failing(keys)) { throw; }
+        finally { TempDir.Delete(keys); }
     }
 
     [Fact]

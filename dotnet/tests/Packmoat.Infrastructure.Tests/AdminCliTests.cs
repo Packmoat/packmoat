@@ -9,16 +9,16 @@ public class AdminCliTests
 {
     private sealed class Cli : IAsyncDisposable
     {
-        private readonly string _dir = Directory.CreateTempSubdirectory("packmoat-cli-").FullName;
+        private readonly TempDir _temp = TempDir.Create("packmoat-cli-", clearSqlitePools: true);
         private readonly CliEnvironment _env;
         public FakeClock Clock { get; } = new();
-        public string PemPath => Path.Combine(_dir, "sp.pem");
+        public string PemPath => Path.Combine(_temp.Path, "sp.pem");
         public const string Pem = "-----BEGIN CERTIFICATE-----\nCLICERT\n-----END CERTIFICATE-----\n-----BEGIN PRIVATE KEY-----\nCLI-PRIVATE-KEY-MATERIAL\n-----END PRIVATE KEY-----\n";
 
         public Cli(string? operatorName = null)
         {
             var key = AesGcmSecretProtector.GenerateKeyBase64();
-            _env = new CliEnvironment(Path.Combine(_dir, "packmoat.db"), () => AesGcmSecretProtector.FromBase64(key), Clock, operatorName);
+            _env = new CliEnvironment(Path.Combine(_temp.Path, "packmoat.db"), () => AesGcmSecretProtector.FromBase64(key), Clock, operatorName);
             File.WriteAllText(PemPath, Pem);
         }
 
@@ -29,7 +29,7 @@ public class AdminCliTests
             return (code, o.ToString(), e.ToString());
         }
 
-        public ValueTask DisposeAsync() { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(_dir, true); } catch { } return ValueTask.CompletedTask; }
+        public ValueTask DisposeAsync() => _temp.DisposeAsync();
     }
 
     [Fact]
