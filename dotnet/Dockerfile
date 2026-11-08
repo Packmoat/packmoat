@@ -17,7 +17,7 @@ ARG TARGETARCH
 RUN dotnet publish src/Packmoat.Server/Packmoat.Server.csproj -c Release -a "$TARGETARCH" -o /out/host  -p:SourceRevisionId="${PACKMOAT_COMMIT}" \
  && dotnet publish src/Packmoat.Cli/Packmoat.Cli.csproj       -c Release -a "$TARGETARCH" -o /out/admin -p:SourceRevisionId="${PACKMOAT_COMMIT}"
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0@sha256:222759b391a1aaf241166672c8f99b2d4ada452e7b5319f3c6e8f265a37b5ad4 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0@sha256:1a48394b6f29d3a32c79d9edecd4abda0ecbe8776d567dbfc4590ed6979c740c AS runtime
 # Unprivileged user. /data is the only writable path and holds the SQLite database and backups.
 RUN groupadd --gid 10001 packmoat && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin packmoat \
  && mkdir -p /data/backups && chown -R packmoat:packmoat /data
