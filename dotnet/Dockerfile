@@ -23,7 +23,7 @@ RUN test -f /out/host/Packmoat.Server.dll && test -f /out/admin/Packmoat.Cli.dll
  && for d in /out/host /out/admin; do for f in Npgsql.dll Packmoat.Infrastructure.Postgres.dll; do \
       test -f "$d/$f" || { echo "error: the image would not carry PostgreSQL: $d/$f is missing" >&2; exit 1; }; done; done
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0@sha256:1a48394b6f29d3a32c79d9edecd4abda0ecbe8776d567dbfc4590ed6979c740c AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:11.0@sha256:bc0d6653979efba491ab3d6f589d691f96c309c3c3ef81325efa6978e7b7f242 AS runtime
 # Unprivileged user. /data is the only writable path and holds the SQLite database and backups (a PostgreSQL database is elsewhere).
 RUN groupadd --gid 10001 packmoat && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin packmoat \
  && mkdir -p /data/backups && chown -R packmoat:packmoat /data
