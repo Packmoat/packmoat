@@ -8,7 +8,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// PACKMOAT_BACKGROUND_JOBS (#233): on (the default, unset) composes exactly as before; off leaves out the daily retention pass and nothing
+/// PACKMOAT_BACKGROUND_JOBS: on (the default, unset) composes exactly as before; off leaves out the daily retention pass and nothing
 /// else (the audit queue and the start-up blanking still run); anything else stops the start, naming the setting and never the value.
 /// </summary>
 [Collection("sqlite-pools")]
@@ -52,7 +52,7 @@ public class BackgroundJobsTests
             IServiceCollection? services = null;
             await using var app = PackmoatApp.Build(["--urls", "http://127.0.0.1:0"], TestModules.Server, s => { services = s; more?.Invoke(s); }, o =>
             {
-                o.DatabasePath = Path.Combine(dir, "packmoat.db");
+                o.Database = Path.Combine(dir, "packmoat.db");
                 o.MasterKeyBase64 = AesGcmSecretProtector.GenerateKeyBase64();
                 o.AllowedHosts = "feeds.example.test";
                 o.BackgroundJobs = jobs;
@@ -97,7 +97,7 @@ public class BackgroundJobsTests
         {
             var ex = Assert.Throws<InvalidOperationException>(() => PackmoatApp.Build(["--urls", "http://127.0.0.1:0"], TestModules.Server, null, o =>
             {
-                o.DatabasePath = Path.Combine(dir, "packmoat.db");
+                o.Database = Path.Combine(dir, "packmoat.db");
                 o.MasterKeyBase64 = AesGcmSecretProtector.GenerateKeyBase64();
                 o.AllowedHosts = "feeds.example.test";
                 o.BackgroundJobs = "sometimes";

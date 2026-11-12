@@ -33,7 +33,7 @@ public sealed class AppSiteSettings
     public string? UnavailableReason { get; init; }
     /// <summary>The Azure setup wizard (PACKMOAT_AZURE_SETUP). Off: none of its pages, its sign-in callback or the home card exist.</summary>
     public AzureSetupSettings AzureSetup { get; init; } = AzureSetupSettings.Off;
-    /// <summary>Who runs this server (#186): the footer's links, the support address and the operator's name in the pages' sentences.</summary>
+    /// <summary>Who runs this server: the footer's links, the support address and the operator's name in the pages' sentences.</summary>
     public OperatorLinks Operator { get; init; } = OperatorLinks.None;
     /// <summary>
     /// The feed address customers add as a NuGet source: PACKMOAT_PUBLIC_BASE_URL, else the first of PACKMOAT_HOSTS, then /v3/index.json.
@@ -53,7 +53,7 @@ public sealed class CustomerSignInDeniedException : SignInDeniedException
 {
     public SignInDenial Reason { get; }
     public string? DirectoryId { get; }
-    /// <summary>A not-linked directory's card, from the customer-site module (#192). Null: the core's (<see cref="NoCustomerSiteModule"/>).</summary>
+    /// <summary>A not-linked directory's card, from the customer-site module. Null: the core's (<see cref="NoCustomerSiteModule"/>).</summary>
     public NotLinkedCard? NotLinked { get; }
 
     public CustomerSignInDeniedException(SignInDenial reason, string? directoryId = null, NotLinkedCard? notLinked = null) : base("Customer sign-in refused: " + reason)
@@ -74,14 +74,14 @@ public sealed class CustomerSignInDeniedException : SignInDeniedException
     /// <summary>The sentence on the 403 page without this server's support words: the site's card uses <see cref="MessageFor"/>.</summary>
     public override string UserMessage => MessageFor(SupportContact.None);
 
-    /// <summary>The sentence on the 403 page, telling a person whom to ask as this server's operator is configured (#186).</summary>
+    /// <summary>The sentence on the 403 page, telling a person whom to ask as this server's operator is configured.</summary>
     public string MessageFor(SupportContact support) => Reason switch
     {
         SignInDenial.DirectoryNotLinked => NoCustomerSiteModule.NotLinkedSentence,
-        // The wording of #80. NoRole: the organisation has auto-join off. GuestNoRole: auto-join is on, but not for this account.
+        // The wording of the auto-join pages. NoRole: the organisation has auto-join off. GuestNoRole: auto-join is on, but not for this account.
         SignInDenial.NoRole => "Your organisation only lets in people with a Packmoat role. Ask your administrator to give you the Packmoat Developer role.",
         SignInDenial.GuestNoRole => "Guest accounts need a Packmoat role to sign in. Ask the organisation's administrator to give you the Packmoat Developer role.",
-        // Member or guest unknown (no usable acct claim): the no-role wording of #79.
+        // Member or guest unknown (no usable acct claim): the no-role wording.
         SignInDenial.MemberStatusUnknown => "Your account has no Packmoat role. Ask your administrator to assign Packmoat.Admin or Packmoat.Developer.",
         SignInDenial.ConsumerDirectory => "Personal Microsoft accounts can't sign in. Choose your work or school account.",
         _ => AppSite.FailedSentence(support),
@@ -119,18 +119,18 @@ public static class AppSite
     public const string StartCookieName = "__Host-packmoat-app-start";
     public static readonly TimeSpan AutomaticStartGuard = TimeSpan.FromMinutes(2);
 
-    // The sign-in outcome sentences (#79).
+    // The sign-in outcome sentences.
     internal const string SignedOutSentence = "You're signed out of Packmoat.";
     internal const string CancelledSentence = "Sign-in was cancelled, or your organisation hasn't approved Packmoat yet.";
-    /// <summary>#118 moment 2, followed by the "organizations" admin-consent link: no directory is known here.</summary>
+    /// <summary>Moment 2 of the setup wizard, followed by the "organizations" admin-consent link: no directory is known here.</summary>
     internal const string CancelledNeedAdminSentence = "If Microsoft said \"Need admin approval\", send this link to your IT administrator:";
     internal static string FailedSentence(SupportContact support) => "Sign-in couldn't be completed. If it keeps happening, " + support.Phrase + ".";
 
-    /// <summary>The suspended page (#186): the operator paused the account, by name or in neutral words.</summary>
+    /// <summary>The suspended page: the operator paused the account, by name or in neutral words.</summary>
     internal static string SuspendedSentence(SupportContact support) => support.OperatorSubject + " has paused this account, so feeds and tokens are off.";
     internal static string SuspendedNext(SupportContact support) => support.CapitalPhrase + " to restore access.";
 
-    /// <summary>The suspended page's "what to do next": the core's sentence, then the customer-site module's note, if it has one (#197 C3).</summary>
+    /// <summary>The suspended page's "what to do next": the core's sentence, then the customer-site module's note, if it has one.</summary>
     internal static string SuspendedNext(SupportContact support, ICustomerSiteModule module) =>
         module.SuspendedNote is { Length: > 0 } note ? SuspendedNext(support) + " " + note : SuspendedNext(support);
 
@@ -145,7 +145,9 @@ public static class AppSite
     // ---------------------------------------------------------------- configuration
 
     /// <summary>Returns null when the customer site is disabled (no PACKMOAT_APP_HOST): nothing is registered and nothing is mapped.</summary>
-    internal static AppSiteSettings? Configure(WebApplicationBuilder builder, PackmoatOptions options, DatabaseEngine engine, string? adminHost)
+    /// <param name="jobLease">The job lease the setup wizard's checks run under (the composition root's: the database's, else one always granted).</param>
+    internal static AppSiteSettings? Configure(WebApplicationBuilder builder, PackmoatOptions options, DatabaseEngine engine, string? adminHost,
+        Func<IServiceProvider, IJobLease> jobLease)
     {
         var host = options.AppHost?.Trim().ToLowerInvariant();
         if (string.IsNullOrEmpty(host)) return null;
@@ -194,15 +196,16 @@ public static class AppSite
         // Production registers these with the database (PackmoatApp); TryAdd lets a test host supply its own stores.
         services.TryAddSingleton(sp => new CustomerTokenCommands(sp.GetRequiredService<ITenantStore>(), sp.GetRequiredService<ITokenService>(),
             sp.GetRequiredService<IMemberStore>(), sp.GetRequiredService<ISignInDirectoryStore>(), sp.GetRequiredService<IAdminActionLog>(),
-            sp.GetRequiredService<IClock>(), sp.GetService<ISharedAppCredentialStore>(), sp.GetRequiredService<IServingGate>()));
+            sp.GetRequiredService<IClock>(), sp.GetService<ISharedAppCredentialStore>(), sp.GetRequiredService<IServingGate>(), sp.GetRequiredService<IRateCounter>()));
         services.TryAddSingleton(sp => new CustomerTokenQueries(sp.GetRequiredService<ITenantStore>(), sp.GetRequiredService<ITokenService>(),
             sp.GetRequiredService<ISignInDirectoryStore>(), sp.GetService<ISharedAppCredentialStore>(), sp.GetRequiredService<IServingGate>()));
         services.TryAddSingleton(sp => new AutoJoinCommands(sp.GetRequiredService<ITenantStore>(), sp.GetRequiredService<ISignInDirectoryStore>(),
-            sp.GetRequiredService<IAutoJoinSettingStore>(), sp.GetRequiredService<IAdminActionLog>(), sp.GetRequiredService<IClock>()));
-        services.TryAddSingleton(sp => new AppFormNonces(sp.GetRequiredService<IClock>()));   // the customer site's own: never the admin site's store
-        // Waivers (#157): the customer limits and the cap alert live in the core, which CustomerWaiverCommands calls as the actor's tenant.
+            sp.GetRequiredService<IAutoJoinSettingStore>(), sp.GetRequiredService<IAdminActionLog>(), sp.GetRequiredService<IClock>(), sp.GetRequiredService<IRateCounter>()));
+        services.TryAddSingleton(sp => new AppFormNonces(sp.GetRequiredService<IFormNonceStore>(), sp.GetService<ILoggerFactory>()));   // the customer site's own scope: never the admin site's
+        // Waivers: the customer limits and the cap alert live in the core, which CustomerWaiverCommands calls as the actor's tenant.
         services.TryAddSingleton(sp => new CustomerWaiverCommands(sp.GetRequiredService<ITenantStore>(), sp.GetRequiredService<ITokenService>(),
-            sp.GetRequiredService<ISignInDirectoryStore>(), sp.GetRequiredService<IAdminActionLog>(), sp.GetRequiredService<IClock>(), sp.GetService<IOpsAlerts>()));
+            sp.GetRequiredService<ISignInDirectoryStore>(), sp.GetRequiredService<IAdminActionLog>(), sp.GetRequiredService<IClock>(),
+            sp.GetRequiredService<IRateCounter>(), sp.GetService<IOpsAlerts>()));
         services.TryAddSingleton(sp => new CustomerWaiverQueries(sp.GetRequiredService<ITenantStore>(), sp.GetRequiredService<ISignInDirectoryStore>(), sp.GetRequiredService<IMemberStore>(),
             sp.GetRequiredService<IClock>()));
         SignedInSite.AddShared(services, SignedInSite.KeysDir(options, engine), CookieKeyStorages.Parse(options.CookieKeys));
@@ -218,7 +221,7 @@ public static class AppSite
         // The Azure setup wizard (off by default): its delegated sign-in scheme and check exist only while the switch is not off.
         if (settings.AzureSetup.Mode != AzureSetupMode.Off)
         {
-            AppAzureSetup.AddServices(services, options, settings);
+            AppAzureSetup.AddServices(services, options, settings, jobLease);
             if (options.AppAzureDevOpsSchemeOverride is { } fakeAdo) fakeAdo(auth);
             else if (configured)
             {
@@ -230,7 +233,7 @@ public static class AppSite
     }
 
     /// <summary>
-    /// The proxy's own address for customers (#186): the public base URL when set, else https:// and the first proxy hostname. Never a
+    /// The proxy's own address for customers: the public base URL when set, else https:// and the first proxy hostname. Never a
     /// fixed hostname.
     /// </summary>
     internal static string FeedIndexUrl(string? publicBaseUrl, IReadOnlyList<string> proxyHosts) =>
@@ -255,7 +258,7 @@ public static class AppSite
     /// <summary>The session claim that marks a session that is NOT a member session. Its only value is <see cref="ProspectSessionKind"/>.</summary>
     public const string SessionKindClaim = "packmoat_session";
     public const string ProspectSessionKind = "prospect";
-    /// <summary>The session claim of a person let in by auto-join (#80), with no Packmoat role. Its only value is <see cref="AutoJoin"/>.</summary>
+    /// <summary>The session claim of a person let in by auto-join, with no Packmoat role. Its only value is <see cref="AutoJoin"/>.</summary>
     public const string JoinClaim = "packmoat_join";
     public const string AutoJoin = "auto";
     /// <summary>
@@ -284,7 +287,7 @@ public static class AppSite
         {
             var log = services.GetRequiredService<ILoggerFactory>().CreateLogger(LogCategory);
             // A prospect: only for a directory that is not linked and that the customer-site module offers a setup (none does by default),
-            // and only when the module has prospect pages: a prospect session with none to land on would send the person round the sign-in (#251).
+            // and only when the module has prospect pages: a prospect session with none to land on would send the person round the sign-in.
             var module = services.GetRequiredService<ICustomerSiteModule>();
             var prospect = denied is { Reason: SignInDenial.DirectoryNotLinked, DirectoryId: { } notLinked } && module.ProspectRoutes.Count > 0 && module.OffersSetup(notLinked)
                 ? ProspectDecision.For(claims, decision) : null;
@@ -477,7 +480,7 @@ public static class AppSite
 
     /// <summary>
     /// The customer sign-in's Microsoft settings: the customer app, its certificate credential and token checks, and the events that decide
-    /// the session. Public like the admin site's, so a test can run the real handler's events (#197).
+    /// the session. Public like the admin site's, so a test can run the real handler's events.
     /// </summary>
     public static void ConfigureOidc(OpenIdConnectOptions o, AppSiteSettings s, IClock clock)
     {
@@ -497,7 +500,7 @@ public static class AppSite
             var claims = new List<Claim>();
             void Copy(string type) => claims.AddRange(p.FindAll(type).Select(c => new Claim(type, c.Value)));
             Copy("tid"); Copy("oid"); Copy("name"); Copy("roles"); Copy(AuthTimeClaim);
-            // Auto-join (#80): acct (0 member, 1 guest; an optional claim) and idp, read only by the decision, never kept in the session.
+            // Auto-join: acct (0 member, 1 guest; an optional claim) and idp, read only by the decision, never kept in the session.
             Copy("acct"); Copy("idp");
             // Issuer and audience: the principal's own iss/aud claims, which come from the token the handler just validated; the token
             // itself is a fallback. (The first live sign-in failed because the default ClaimActions deleted iss/aud after this event.)
@@ -511,10 +514,10 @@ public static class AppSite
             return Task.CompletedTask;
         };
         // Both outcome pages are fixed text: nothing from the callback (error, error_description, the exception) is ever shown, and a log
-        // line names only an allowlisted error code. Microsoft's error code alone picks the page (#143): a decline (access_denied,
+        // line names only an allowlisted error code. Microsoft's error code alone picks the page: a decline (access_denied,
         // consent_required) shows the cancelled card even when the handler could not match the reply to a sign-in (state or correlation
         // lost). That is safe: the card signs nobody in, and its approval link is the fixed "organizations" one.
-        // Only a failure after Microsoft issued a code counts against the limiter (#145); a decline or a bare callback never does.
+        // Only a failure after Microsoft issued a code counts against the limiter; a decline or a bare callback never does.
         o.Events.OnRemoteFailure = async ctx =>
         {
             SignedInSite.CountIfCodeReceived(ctx.HttpContext, ctx.HttpContext.RequestServices.GetRequiredService<AppSignInLimiter>());
@@ -532,7 +535,7 @@ public static class AppSite
             await SignedInSite.Write(ctx.HttpContext, 400, Page(ctx.HttpContext, "Sign-in failed", SignInCard("Sign-in failed", FailedSentence(s.Operator.Support))));
         };
         // Microsoft answered error=access_denied to a reply the handler matched to this browser's sign-in: the person cancelled, or their
-        // organisation has not consented to the app. Not counted against the limiter (#145): a decline is not a guess.
+        // organisation has not consented to the app. Not counted against the limiter: a decline is not a guess.
         o.Events.OnAccessDenied = async ctx =>
         {
             Log(ctx.HttpContext).LogWarning("Customer sign-in cancelled or not approved");
@@ -657,7 +660,7 @@ public static class AppSite
         if (get && path == "/favicon.svg") { await Static(ctx, "image/svg+xml", FaviconSvg); return; }
         if (!s.SignInAvailable)
         {
-            // The way out is the operator's website when one is set (#186); otherwise no button, since every page here answers this.
+            // The way out is the operator's website when one is set; otherwise no button, since every page here answers this.
             await SignedInSite.Write(ctx, 503, Page(ctx, "Not configured", ErrorCard(ctx, "Not configured", "Sign-in is not configured on this server yet.",
                 "Try again later. If you expected to sign in today, " + s.Operator.Support.Phrase + ".",
                 s.Operator.SiteUrl is { } site ? $"<a class=\"btn ghost\" href=\"{site}\">{E("Go to " + s.Operator.SiteName)}</a>" : "")));
@@ -719,7 +722,7 @@ public static class AppSite
             "<a class=\"btn\" href=\"/home\">Go to your home page</a>"), SignedInSite.SignOutForm(ctx)));
 
     /// <summary>
-    /// A module's page, with every check the core owns (#192), in this order: the route by exact path and method; then
+    /// A module's page, with every check the core owns, in this order: the route by exact path and method; then
     /// <see cref="CustomerRoute{T}.Exists"/> (false: the signed-in 404, so a page that does not exist for this person cannot be told from no
     /// page, whatever the Origin); then, for a POST, the Origin (403; the antiforgery token was checked before any routing); then the
     /// handler. True when the path was one of the module's pages.
@@ -741,7 +744,7 @@ public static class AppSite
     }
 
     /// <summary>
-    /// At start (#251): refuses a customer-site module whose pages could not work. Every page's path is a path on this site (one "/" and
+    /// At start: refuses a customer-site module whose pages could not work. Every page's path is a path on this site (one "/" and
     /// then not "/" or "\", and only printable ASCII with no space, since a browser drops a tab or a newline and reads a look-alike slash
     /// as "/": so the landing redirect and a fresh sign-in's return never lead to another site), and a module with prospect pages has a GET
     /// one for a prospect to land on.

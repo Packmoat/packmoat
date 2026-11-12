@@ -4,7 +4,7 @@ using Packmoat.Application;
 namespace Packmoat.Host.Web;
 
 /// <summary>
-/// Who runs this server, as the customer pages name them (#186): the operator's name (PACKMOAT_OPERATOR_NAME), support address
+/// Who runs this server, as the customer pages name them: the operator's name (PACKMOAT_OPERATOR_NAME), support address
 /// (PACKMOAT_SUPPORT_EMAIL) and website (PACKMOAT_SITE_URL). The privacy policy and the terms are derived from the website:
 /// &lt;site&gt;/privacy and &lt;site&gt;/terms. Read and checked once at start; a bad value stops the start without being echoed. Each is
 /// optional: unset, the link or address is left out, or the sentence uses neutral words. Never another operator's.

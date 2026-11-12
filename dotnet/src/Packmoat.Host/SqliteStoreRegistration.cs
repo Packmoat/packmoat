@@ -7,18 +7,19 @@ using Packmoat.Infrastructure.Lifecycle;
 namespace Packmoat.Host;
 
 /// <summary>
-/// The server's SQLite stores (#278 step 0, A3), registered from the one list the command line and the hosted modules also build from
+/// The server's SQLite stores, registered from the one list the command line and the hosted modules also build from
 /// (<see cref="SqliteStores"/>). Each registration keeps its kind: the stateless stores as the instances <see cref="SqliteStores"/> made,
 /// the rest as factories that read the clock and the tenant lifecycle from the container (a test's or a module's, registered later).
-/// Where one adapter serves several ports, each port resolves the one adapter.
+/// Where one adapter serves several ports, each port resolves the one adapter. What the composition root needs beyond the container
+/// comes back as ports (<see cref="RegisteredStores"/>), over the same adapters.
 /// </summary>
 public static class SqliteStoreRegistration
 {
-    public static void AddSqliteStores(this IServiceCollection services, SqliteStores stores, CookieKeyStorage cookieKeys)
+    public static RegisteredStores AddSqliteStores(this IServiceCollection services, SqliteStores stores, CookieKeyStorage cookieKeys)
     {
         ArgumentNullException.ThrowIfNull(stores);
         services.AddSingleton(stores.Database);
-        // The tenant lifecycle (#194): a module's creation participants, purge contributors and eligibility, for this database, or
+        // The tenant lifecycle: a module's creation participants, purge contributors and eligibility, for this database, or
         // the core's none. The tenant, sign-up and purge stores all take theirs from it.
         services.AddSingleton(sp => sp.GetService<TenantLifecycleFactory>()?.For(stores.Database) ?? TenantLifecycle.None);
         services.AddSingleton(sp => stores.Tenants(sp.GetRequiredService<IClock>(), sp.GetRequiredService<TenantLifecycle>()));
@@ -46,9 +47,13 @@ public static class SqliteStoreRegistration
         services.AddSingleton<ISelfServiceFeedStore>(stores.SelfServiceFeeds);
         // Read only in the server: the daily nudge counts the tenants due for purge. Only the admin CLI purges.
         services.AddSingleton<ITenantPurgeStore>(sp => stores.PurgeStore(sp.GetRequiredService<TenantLifecycle>()));
-        // PACKMOAT_COOKIE_KEYS=database only (#232 B1): the signed-in sites' cookie keys, encrypted with the master key. Folder mode
+        // PACKMOAT_COOKIE_KEYS=database only: the signed-in sites' cookie keys, encrypted with the master key. Folder mode
         // (the default) registers nothing here.
         if (cookieKeys == CookieKeyStorage.Database)
             services.AddSingleton<ICookieKeyStore>(sp => stores.CookieKeys(sp.GetRequiredService<IClock>()));
+        // The token service and the token activity as registered above, never new ones: the authenticator checks what the token port
+        // resolves to and records to what the activity ports resolve to.
+        return new RegisteredStores(stores.Database, stores.Migrator, stores.MasterKeyCheck, stores.JobLease, stores.RateCounter, stores.FormNonces, stores.FeedSetupScratch,
+            sp => sp.GetRequiredService<SqliteTokenService>(), sp => sp.GetRequiredService<SqliteTokenActivity>());
     }
 }

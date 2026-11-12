@@ -3,7 +3,7 @@ using Microsoft.Data.Sqlite;
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// A migration track's statements per engine (#278 step 0, B7): every engine has the same versions, a missing engine is refused, and
+/// A migration track's statements per engine: every engine has the same versions, a missing engine is refused, and
 /// the SQLite-only constructor is the per-engine one with SQLite alone.
 /// </summary>
 [Collection("sqlite-pools")]

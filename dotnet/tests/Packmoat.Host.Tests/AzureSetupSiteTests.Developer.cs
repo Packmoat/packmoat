@@ -11,7 +11,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The developer proof through the running host (#64 I2): who may run it and when, the step-up (read-only Azure Artifacts scope,
+/// The developer proof through the running host: who may run it and when, the step-up (read-only Azure Artifacts scope,
 /// prompt=login, max_age, the developer purpose), the callback (a Developer, never an Admin; the same person; fresh), the probe through
 /// the fake Azure DevOps, the developer row, the Admin's waiting and proof cards, Connect, and the sentinel tokens.
 /// </summary>
@@ -128,7 +128,7 @@ public partial class AzureSetupSiteTests
         Assert.Contains(AppHtml.E(AppAzureSetup.WaitingSendLink), page);
         Assert.Contains($"<pre class=\"snippet\">https://{AppHost}/setup/developer</pre>", page);
         Assert.Contains(AppHtml.E(AppAzureSetup.WaitingHow), page);
-        // #118: if Microsoft wants an administrator's approval, the link for the Admin's own directory
+        // If Microsoft wants an administrator's approval, the link for the Admin's own directory
         Assert.Contains($"<p>{AppHtml.E(AppAzureSetup.WaitingNeedAdmin)}</p><pre class=\"snippet\">{AppHtml.E(PackmoatConsentUrl(DirS))}</pre>", page);
         Assert.Contains(AppHtml.E(AppAzureSetup.WaitingAutoJoinOn), page);   // no setting stored: auto-join is on
         Assert.Contains(AppHtml.E(AppAzureSetup.WaitingSolo), page);
@@ -387,7 +387,7 @@ public partial class AzureSetupSiteTests
         Assert.Equal(HttpStatusCode.SeeOther, (await RunDeveloperCheck(site, dev)).StatusCode);
         Assert.Contains(AppHtml.E(string.Format(BypassAdvisory.FoundSentence, "team-packages")), (await dev.GetTextAsync(AppAzureSetup.DeveloperPath)).Body);
         var setup = (await (await SignIn(site.F)).GetTextAsync(AppAzureSetup.Path)).Body;
-        Assert.Contains(AppHtml.E(string.Format(BypassAdvisory.AdminFoundSentence, "team-packages")), setup);   // addressed to the Admin (#119)
+        Assert.Contains(AppHtml.E(string.Format(BypassAdvisory.AdminFoundSentence, "team-packages")), setup);   // addressed to the Admin
         Assert.Contains($">{AppAzureSetup.ConnectButton}</button>", setup);
     }
 

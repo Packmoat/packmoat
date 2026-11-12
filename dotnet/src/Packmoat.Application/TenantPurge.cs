@@ -3,14 +3,14 @@ using Packmoat.Domain;
 namespace Packmoat.Application;
 
 /// <summary>
-/// The core's part of the tenant purge's rules (#105, #81): how long the operator's evidence is kept. Who is due is a module's to say
+/// The core's part of the tenant purge's rules: how long the operator's evidence is kept. Who is due is a module's to say
 /// (<see cref="IPurgeEligibility"/>), with its own rules.
 /// </summary>
 public static class TenantPurgePolicy
 {
     /// <summary>
-    /// Decision 2026-10-19 (#117), 12 months: how long admin_actions (the operator's evidence) is kept, rows about purged tenants
-    /// included. A purge never deletes it; the daily retention pass prunes rows older than this (#117). Migration 18 makes the database
+    /// Decision 2026-10-19, 12 months: how long admin_actions (the operator's evidence) is kept, rows about purged tenants
+    /// included. A purge never deletes it; the daily retention pass prunes rows older than this. Migration 18 makes the database
     /// refuse to delete a younger row, so this may be raised but never lowered below 365 days without a new migration.
     /// </summary>
     public static readonly TimeSpan AdminActionsRetention = TimeSpan.FromDays(365);
@@ -29,7 +29,7 @@ public enum PurgeVerdict
 }
 
 /// <summary>
-/// What an <see cref="IPurgeEligibility"/> decided about one tenant (#194). The core reads only these fields: the verdict and its
+/// What an <see cref="IPurgeEligibility"/> decided about one tenant. The core reads only these fields: the verdict and its
 /// reason, when it is (or will be) due, the basis recorded with the purge, and the detail written to admin_actions. <see cref="State"/>
 /// is the eligibility's own: handed back to it unchanged (to confirm, and to re-check where no other writer can change it before the delete), never read here.
 /// </summary>
@@ -39,7 +39,7 @@ public sealed record PurgeCandidate(string TenantId, PurgeVerdict Verdict, strin
 }
 
 /// <summary>
-/// Who is due for purge, and the last word before a purge (#194). The core has none: with none, nobody is listed and every purge is
+/// Who is due for purge, and the last word before a purge. The core has none: with none, nobody is listed and every purge is
 /// refused. A module gives one through its tenant lifecycle.
 /// </summary>
 public interface IPurgeEligibility

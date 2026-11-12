@@ -1,7 +1,7 @@
 namespace Packmoat.Infrastructure;
 
 /// <summary>
-/// The master-key marker, whatever the engine (#288 P2): the meta row <see cref="Key"/>, holding <see cref="Plaintext"/> encrypted with
+/// The master-key marker, whatever the engine: the meta row <see cref="Key"/>, holding <see cref="Plaintext"/> encrypted with
 /// the master key, so a database can be checked against the master key without touching any customer secret. Each engine's
 /// <see cref="Packmoat.Application.IMasterKeyCheck"/> stores and reads the row; making and judging the bytes is here.
 /// <para>Unstable: may change in any release before 1.0.</para>

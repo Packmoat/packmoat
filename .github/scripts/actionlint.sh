@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Lint GitHub Actions workflows with a pinned actionlint (#225), as a second check behind the workflow tests: the release is downloaded by
+# Lint GitHub Actions workflows with a pinned actionlint, as a second check behind the workflow tests: the release is downloaded by
 # version and its sha256 checked before it runs. actionlint also runs shellcheck on every run: script (shellcheck is on the runner image).
 # Usage: actionlint.sh <workflow files...>   (Linux x86-64; any finding fails the step)
 set -euo pipefail

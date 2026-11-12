@@ -107,7 +107,7 @@ public static class SignedInSite
     /// PACKMOAT_DB is no file). Null when neither: folder mode then stops the start (<see cref="AddShared"/>).
     /// </summary>
     internal static string? KeysDir(PackmoatOptions options, DatabaseEngine engine) =>
-        options.AdminKeysDir ?? (DatabaseEngines.IsFile(engine) && options.DatabasePath is { } db
+        options.AdminKeysDir ?? (DatabaseEngines.IsFile(engine) && options.Database is { } db
             ? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(db))!, "admin-keys") : null);
 
     /// <summary>Why folder mode with no folder stops the start. Names the settings, never their values.</summary>
@@ -116,7 +116,7 @@ public static class SignedInSite
     /// <summary>
     /// Registers what all signed-in sites share, once: the cookie encryption keys, antiforgery and authentication with NO default scheme
     /// (every site names its own schemes, so one site's cookie can never be read by another branch by accident).
-    /// Folder mode with no folder stops the start (#278 step 0, D11): the keys are never kept only in memory, where a restart would
+    /// Folder mode with no folder stops the start: the keys are never kept only in memory, where a restart would
     /// sign everyone out and each copy of the server would have its own.
     /// </summary>
     internal static void AddShared(IServiceCollection services, string? keysDir, CookieKeyStorage storage = CookieKeyStorage.Folder)
@@ -126,7 +126,7 @@ public static class SignedInSite
 
         // The application name is kept from when only the admin site existed, so existing keys and sessions stay valid.
         var dp = services.AddDataProtection().SetApplicationName("packmoat-admin");
-        // PACKMOAT_COOKIE_KEYS=database (#232 B1): the keys live in the database (the store PackmoatApp registers); the folder is only the
+        // PACKMOAT_COOKIE_KEYS=database: the keys live in the database (the store PackmoatApp registers); the folder is only the
         // start's one-time import source, so it is never prepared, created or changed here.
         if (storage == CookieKeyStorage.Database)
             services.AddOptions<KeyManagementOptions>().Configure<ICookieKeyStore>((o, store) => o.XmlRepository = new DatabaseXmlRepository(store));
@@ -269,7 +269,7 @@ public static class SignedInSite
     internal static void MarkCodeReceived(HttpContext ctx) => ctx.Items[CodeReceivedItem] = true;
 
     /// <summary>
-    /// The failed sign-in limiter for a sign-in's failure event (#145): counts only a failure after Microsoft issued a code (a redemption
+    /// The failed sign-in limiter for a sign-in's failure event: counts only a failure after Microsoft issued a code (a redemption
     /// that failed, a token refused, a person refused). A bare, forged or replayed callback, an error reply or a decline is not a guess:
     /// the state is data-protected and PKCE, the nonce and the correlation cookie bind the code to this browser, so counting those
     /// would only let a hostile page lock a person out for free.
@@ -328,7 +328,7 @@ public static class SignedInSite
 
     /// <summary>
     /// A page whose forms may lead to <paramref name="origins"/> (in the order given), to this site and to Microsoft's sign-in, nowhere else:
-    /// a customer-site module's page (#192), for example one whose form redirects to a payment provider's page. Each origin must be exactly
+    /// a customer-site module's page, for example one whose form redirects to a payment provider's page. Each origin must be exactly
     /// https://host (see <see cref="FormTargetsContentSecurityPolicy"/>).
     /// </summary>
     internal static void UseFormTargetsCsp(HttpContext ctx, IReadOnlyList<string> origins) => ctx.Items[CspItem] = FormTargetsContentSecurityPolicy(origins);
@@ -448,7 +448,7 @@ public static class SignedInSite
             try { await ctx.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(ctx); }
             catch (AntiforgeryValidationException)
             {
-                // Not counted against the sign-in limiter (#145): any other site's form can send this POST, so counting it would let a
+                // Not counted against the sign-in limiter: any other site's form can send this POST, so counting it would let a
                 // hostile page lock a person out.
                 await ErrorPage(ctx, 400, "Request refused", "The form was missing its security token. Go back and try again.");
                 return;

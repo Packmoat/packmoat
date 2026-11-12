@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// The rules the schema enforces itself, with triggers (#232 S1): append-only logs, the 90-day audit floor and purged tenants. A second
+/// The rules the schema enforces itself, with triggers: append-only logs, the 90-day audit floor and purged tenants. A second
 /// engine (Postgres) has to enforce the same rules, so its dialect must match this list. A trigger added to, dropped from or renamed in a
 /// core migration fails here until the list, and so the other dialect's to-do, says so.
 /// </summary>

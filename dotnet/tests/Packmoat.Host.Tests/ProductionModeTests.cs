@@ -1,7 +1,7 @@
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The production switch, named (#278 step 0, A5). Today it is exactly "PACKMOAT_DB is set", as before it had a name: no setting of its
+/// The production switch, named. Today it is exactly "PACKMOAT_DB is set", as before it had a name: no setting of its
 /// own, and the other settings do not move it.
 /// </summary>
 [Collection("sqlite-pools")]
@@ -13,7 +13,7 @@ public class ProductionModeTests
     [InlineData("packmoat.db", true)]
     [InlineData("", true)]
     public void Production_mode_is_on_exactly_when_a_database_is_configured(string? databasePath, bool on) =>
-        Assert.Equal(on, ProductionMode.On(new PackmoatOptions { DatabasePath = databasePath }));
+        Assert.Equal(on, ProductionMode.On(new PackmoatOptions { Database = databasePath }));
 
     [Theory]   // mutation: the switch follows the engine, the key folder or the cookie key storage
     [InlineData(null, false)]
@@ -21,7 +21,7 @@ public class ProductionModeTests
     public void The_other_settings_do_not_move_it(string? databasePath, bool on) =>
         Assert.Equal(on, ProductionMode.On(new PackmoatOptions
         {
-            DatabasePath = databasePath,
+            Database = databasePath,
             DatabaseEngine = "postgres",
             AdminKeysDir = "/srv/keys",
             CookieKeys = "database",
@@ -40,7 +40,7 @@ public class ProductionModeTests
             {
                 var app = PackmoatApp.Build(["--urls", "http://127.0.0.1:0"], TestModules.Server, null, o =>
                 {
-                    o.DatabasePath = Path.Combine(dir, "packmoat.db");
+                    o.Database = Path.Combine(dir, "packmoat.db");
                     o.MasterKeyBase64 = Packmoat.Infrastructure.AesGcmSecretProtector.GenerateKeyBase64();
                 });
                 app.DisposeAsync().AsTask().GetAwaiter().GetResult();

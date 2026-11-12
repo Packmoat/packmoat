@@ -8,45 +8,30 @@ using static Packmoat.Host.Admin.AdminHtml;
 
 namespace Packmoat.Host.Admin;
 
-/// <summary>Slows write POSTs from one address: at most <c>max</c> per window (a fixed window), then 429. Separate from the sign-in and proxy limiters.</summary>
+/// <summary>
+/// Slows write POSTs from one address: at most <c>max</c> per window (a fixed window), then 429. Separate from the sign-in and proxy
+/// limiters. Only a signed-in, allowlisted admin's POST reaches it, so it counts in the shared counter: every copy of the server
+/// counts the same writes. It fails closed: when the counter cannot be reached, the write is refused with the whole window to wait.
+/// </summary>
 public sealed class AdminWriteLimiter
 {
-    private readonly IClock _clock;
-    private readonly int _max;
-    private readonly TimeSpan _window;
-    private readonly Dictionary<string, (DateTimeOffset Start, int Count)> _byAddress = new();
-    private readonly object _lock = new();
+    private readonly RateLimit _limit;
 
-    public AdminWriteLimiter(IClock clock, int max = 30, TimeSpan? window = null)
-    {
-        _clock = clock;
-        _max = max;
-        _window = window ?? TimeSpan.FromMinutes(1);
-    }
+    public AdminWriteLimiter(IRateCounter counter, int max = 30, TimeSpan? window = null) =>
+        _limit = new RateLimit(counter, RateScopes.AdminWrite, max, window ?? TimeSpan.FromMinutes(1));
 
     /// <summary>Counts this attempt. Returns null when it may proceed, otherwise the seconds to wait.</summary>
-    public int? TryAcquire(string address)
-    {
-        var now = _clock.UtcNow;
-        lock (_lock)
-        {
-            if (!_byAddress.TryGetValue(address, out var e) || now - e.Start >= _window) e = (now, 0);
-            if (e.Count >= _max) { _byAddress[address] = e; return Math.Max(1, (int)Math.Ceiling((e.Start + _window - now).TotalSeconds)); }
-            _byAddress[address] = (e.Start, e.Count + 1);
-            if (_byAddress.Count > 20_000)
-                foreach (var k in _byAddress.Where(kv => now - kv.Value.Start >= _window).Select(kv => kv.Key).ToList()) _byAddress.Remove(k);
-            return null;
-        }
-    }
+    public async Task<int?> TryAcquireAsync(string address, CancellationToken ct) =>
+        await _limit.HitAsync(address, ct) is { Allowed: false } refused ? refused.RetryAfterSeconds : null;
 }
 
 /// <summary>
-/// The admin site's own single-use nonces for "Issue token" forms, keyed by tenant id (see <see cref="Packmoat.Host.Web.FormNonces"/>).
-/// Never shared with the customer site.
+/// The admin site's own single-use nonces for "Issue token" forms, keyed by tenant id (see <see cref="Packmoat.Host.Web.FormNonces"/>), in
+/// the admin scope of the store. Never used on the customer site.
 /// </summary>
 public sealed class AdminFormNonces : Packmoat.Host.Web.FormNonces
 {
-    public AdminFormNonces(IClock clock) : base(clock) { }
+    public AdminFormNonces(IFormNonceStore store, ILoggerFactory? logs = null) : base(store, FormNonceScopes.Admin, logs) { }
 }
 
 /// <summary>
@@ -100,7 +85,7 @@ public static class AdminWrites
         ["failed"] = (false, "The action failed. Check the attempt on the Actions page."),
     };
 
-    /// <summary>The notice for <paramref name="key"/>: the core's, else the admin-site module's (#193). An unknown key shows nothing.</summary>
+    /// <summary>The notice for <paramref name="key"/>: the core's, else the admin-site module's. An unknown key shows nothing.</summary>
     internal static string Notice(HttpContext ctx, string? key) =>
         key is not null && (Messages.TryGetValue(key, out var m) || ctx.RequestServices.GetRequiredService<IAdminSiteModule>().Notices.TryGetValue(key, out m))
             ? $"<p class=\"{(m.Ok ? "ok" : "err")}\" role=\"status\">{E(m.Text)}</p>" : "";
@@ -167,7 +152,7 @@ public static class AdminWrites
         if (verb is null) return false;
 
         if (!OriginOk(ctx, s)) { await AdminSite.ErrorPage(ctx, 403, "Request refused", "The request did not come from this site."); return true; }
-        if (ctx.RequestServices.GetRequiredService<AdminWriteLimiter>().TryAcquire(Packmoat.Host.Auth.ClientAddress.Key(ctx)) is { } wait)
+        if (await ctx.RequestServices.GetRequiredService<AdminWriteLimiter>().TryAcquireAsync(Packmoat.Host.Auth.ClientAddress.Key(ctx), ctx.RequestAborted) is { } wait)
         {
             await AdminSite.ErrorPage(ctx, 429, "Too many requests", "Too many changes from this address. Wait a minute.", wait);
             return true;
@@ -214,7 +199,7 @@ public static class AdminWrites
     };
 
     /// <summary>
-    /// Refuses the start when the admin-site module's verbs or notice keys collide with the core's or repeat (#193): a module may add to
+    /// Refuses the start when the admin-site module's verbs or notice keys collide with the core's or repeat: a module may add to
     /// the site, never shadow what the core does.
     /// </summary>
     internal static void Validate(IAdminSiteModule module)
@@ -336,7 +321,7 @@ public static class AdminWrites
     }
 
     /// <summary>
-    /// A module's action, after every check of the core (#193): the confirm page first when the action asks for one (re-posting the
+    /// A module's action, after every check of the core: the confirm page first when the action asks for one (re-posting the
     /// form's own single-valued fields), then its handler. A trail that could not be written is "trail-failed": nothing was done.
     /// </summary>
     private static async Task RunModuleActionAsync(HttpContext ctx, ClaimsPrincipal who, IFormCollection form, Tenant tenant, IAdminSiteModule module, AdminTenantAction action)
@@ -427,7 +412,7 @@ public static class AdminWrites
         else if (kindText == "automation") kind = TokenKind.Automation;
         else { Redirect(ctx, t.Id, "bad-kind"); return; }
 
-        if (!ctx.RequestServices.GetRequiredService<AdminFormNonces>().Consume(Form(f, "nonce"), t.Id)) { Redirect(ctx, t.Id, "reload"); return; }
+        if (!await ctx.RequestServices.GetRequiredService<AdminFormNonces>().ConsumeAsync(Form(f, "nonce"), t.Id, ctx.RequestAborted)) { Redirect(ctx, t.Id, "reload"); return; }
 
         var detail = $"kind={kind}; label={CustomerTokenRules.Quote(label)}";   // the kind and label only (label last, quoted): the token itself is never recorded
         if (!await TryAppendAsync(ctx, who, "token.issue", t.Id, detail)) { Redirect(ctx, t.Id, "trail-failed"); return; }

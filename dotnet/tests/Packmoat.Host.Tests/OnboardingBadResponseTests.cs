@@ -8,7 +8,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// #63 H0: Azure DevOps answers a request it cannot authenticate with 203 and an HTML sign-in page, and other failures can come
+/// Azure DevOps answers a request it cannot authenticate with 203 and an HTML sign-in page, and other failures can come
 /// back as a redirect or as a 200 that is not JSON. None of those is a settings answer. Each must become a FAILED or NOT VERIFIED
 /// check that says what came back, never an exception out of the check (which crashed `onboard check`).
 /// </summary>

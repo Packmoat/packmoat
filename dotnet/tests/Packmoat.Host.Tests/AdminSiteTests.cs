@@ -532,7 +532,7 @@ public class AdminSiteTests
         Assert.Matches(@"Active developers, last 30 days: <strong>1</strong>", html);
     }
 
-    [Fact]   // mutation: drop the Source cell (#157)
+    [Fact]   // mutation: drop the Source cell
     public async Task The_waivers_table_has_a_source_column_saying_customer_or_operator()
     {
         await using var f = await StartAsync();

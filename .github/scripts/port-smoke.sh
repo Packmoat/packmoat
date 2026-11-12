@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PORT smoke (#233 E2): proves a built image follows PORT. CI runs it after image-smoke.sh.
+# PORT smoke: proves a built image follows PORT. CI runs it after image-smoke.sh.
 #   .github/scripts/port-smoke.sh <image> <port>      e.g.  packmoat-core:ci 9090
 # 1. With PORT=<port> and nothing else about addresses, /healthz answers 200 on <port> from outside the container.
 # 2. Nothing listens on 8080, the default, inside the container.
@@ -7,7 +7,7 @@
 # 4. /readyz answers "ready" on <port> (a fresh database, migrated, read with the master key that made it).
 # 5. PORT=0 stops the server at start, with an error that names PORT. 6. With no master key the server stops at start too, saying so.
 # Steps 5 and 6 run with no init (no --init), as a bare docker run does: the server must exit on its own within seconds, not hang as the
-# container's first process (#240).
+# container's first process.
 set -euo pipefail
 image="${1:?usage: port-smoke.sh <image> <port>}"
 port="${2:?usage: port-smoke.sh <image> <port>}"
@@ -59,7 +59,7 @@ docker rm -f "${name}" > /dev/null
 
 # A start that must fail: runs the image with no init and the given settings, and checks that the container exits 1 within 15 seconds
 # with the given error line in its log. Left unhandled, a start error ends .NET with an abort, which the kernel ignores for a container's
-# first process: the container would keep running and fail this check (#240).
+# first process: the container would keep running and fail this check.
 stops_at_start() {
   local what="$1" line="$2"
   shift 2

@@ -1,9 +1,21 @@
 using Packmoat.Application;
 using Packmoat.Domain;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
-/// <summary><see cref="DecisionRecordQueryContract"/> on SQLite, and the tests only SQLite has (#232 S1).</summary>
+/// <summary>
+/// <see cref="DecisionRecordQueryContract"/> on PostgreSQL, each test on a database of its own. The query plans are
+/// SQLite's own and stay in <see cref="DecisionRecordQueryTests"/>.
+/// </summary>
+[Collection(PostgresCollection.Name)]
+[Trait("Category", PostgresTestServer.Category)]
+public class PostgresDecisionRecordQueryTests : DecisionRecordQueryContract
+{
+    protected override IStoreEngine Engine => PostgresStoreEngine.Instance;
+}
+
+/// <summary><see cref="DecisionRecordQueryContract"/> on SQLite, and the tests only SQLite has.</summary>
 [Collection("sqlite-pools")]
 public class DecisionRecordQueryTests : DecisionRecordQueryContract
 {

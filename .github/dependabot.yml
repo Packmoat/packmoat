@@ -1,4 +1,4 @@
-# Dependency updates (#276): the workflows' actions (pinned to full commit SHAs), the .NET packages, the schema check's npm packages, and
+# Dependency updates: the workflows' actions (pinned to full commit SHAs), the .NET packages, the schema check's npm packages, and
 # the Dockerfile's base images (pinned by digest). Weekly, and only for a release at least 7 days old (cooldown), as dotnet/aspire does:
 # a release that is pulled or found bad in its first week is never proposed. Security updates are not held back by the cooldown.
 # Minor and patch updates come as one pull request per ecosystem; a major update comes on its own. CoreWorkflowTests checks all of this.

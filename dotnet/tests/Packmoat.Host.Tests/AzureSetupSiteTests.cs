@@ -17,7 +17,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The Azure setup wizard through the running host (#63 H2): the switch, Admins only, the pages and their wording, the step-up sign-in
+/// The Azure setup wizard through the running host: the switch, Admins only, the pages and their wording, the step-up sign-in
 /// and its callback (same person, Admin, fresh, no cookie), feed_checks written for self-made tenants only, check-only for an
 /// operator-made shared tenant, the limits, and a sentinel token that never reaches a response, a log line or the database.
 /// </summary>
@@ -50,7 +50,7 @@ public partial class AzureSetupSiteTests
         if (flag is null or "off")
         {
             Assert.Equal(404, (await b.GetTextAsync(AppAzureSetup.FeedAppAddedPath)).Status);
-            var consented = await b.GetTextAsync(AppAzureSetup.ConsentedPath);   // the Packmoat app's return page always exists (#118)
+            var consented = await b.GetTextAsync(AppAzureSetup.ConsentedPath);   // the Packmoat app's return page always exists
             Assert.Equal(200, consented.Status);
             Assert.Contains(AppHtml.E(AppAzureSetup.ConsentedLine), consented.Body);
             Assert.Null(await f.App.Services.GetRequiredService<IAuthenticationSchemeProvider>().GetSchemeAsync(AppAzureSetup.Scheme));
@@ -91,7 +91,7 @@ public partial class AzureSetupSiteTests
         foreach (var line in AppAzureSetup.Checklist) Assert.Contains(AppHtml.E(line), page);
         Assert.Contains(AppHtml.E("az ad sp create --id " + FakeAzureDevOps.SharedApp), page);
         // The approval page: the feed access app, in the person's own directory, returning to the fixed page (now through step 2's
-        // button, which keeps step 1 first: #119 item 2).
+        // button, which keeps step 1 first).
         var approve = await Post(b, page, AppAzureSetup.ApprovePath, true, GoodNames);
         Assert.Equal($"https://login.microsoftonline.com/{DirS}/adminconsent?client_id={FakeAzureDevOps.SharedApp}&redirect_uri=https%3A%2F%2F{AppHost}%2Fsetup%2Fazure%2Ffeed-app-added",
             approve.Headers.Location!.OriginalString);
@@ -531,15 +531,17 @@ public partial class AzureSetupSiteTests
     [Fact]
     public async Task One_check_at_a_time_per_tenant()
     {
-        await using var site = await StartAsync();
+        await using var site = await StartAsync(lease: true);
         var b = await SignIn(site.F);
         var state = site.F.App.Services.GetRequiredService<AzureSetupState>();
-        Assert.True(state.TryBegin("selfco"));   // another Admin's check is running
+        var other = await state.TryBeginAsync("selfco");   // another Admin's check is running
+        Assert.NotNull(other);
         var r = await RunCheck(site, b);
         Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
         Assert.Contains("A check is running", await r.Content.ReadAsStringAsync());
         Assert.Empty(site.Ado.Seen);
-        state.End("selfco");
+        await state.EndAsync("selfco", other!);
+        site.F.Clock.Advance(TimeSpan.FromTicks(1));   // a released lease is free once time has moved past its end
         Assert.Equal(HttpStatusCode.SeeOther, (await RunCheck(site, b)).StatusCode);
     }
 

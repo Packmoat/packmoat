@@ -3,7 +3,7 @@ using Packmoat.Application;
 namespace Packmoat.Application.Tests;
 
 /// <summary>
-/// #119 PR A, the customer's wording: the private check names one feed or many and explains ADO's default feed; the
+/// The customer's wording: the private check names one feed or many and explains ADO's default feed; the
 /// developer proof's site text says what happened in plain words; the bypass advisory names the feeds first and speaks to the reader. The
 /// CLI's shared verdict text (<see cref="DeveloperProbeVerdict.Index"/>, <see cref="DeveloperProbeVerdict.ListControl"/>) is unchanged.
 /// </summary>
@@ -89,7 +89,7 @@ public class DeveloperProofWordingTests
     public void Each_finding_has_its_own_site_sentence(DeveloperFinding finding, string sentence) =>
         Assert.Equal(sentence, DeveloperProbeVerdict.SiteDetail(finding));
 
-    /// <summary>The CLI's text comes from the shared verdict: byte for byte what it printed before #119.</summary>
+    /// <summary>The CLI's text comes from the shared verdict: byte for byte what it printed in an earlier version.</summary>
     [Fact]
     public void The_shared_verdict_text_the_cli_prints_is_unchanged()
     {

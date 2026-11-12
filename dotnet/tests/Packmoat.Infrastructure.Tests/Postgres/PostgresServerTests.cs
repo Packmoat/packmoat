@@ -14,7 +14,7 @@ public sealed class PostgresCollection : ICollectionFixture<PostgresTemplateFixt
 }
 
 /// <summary>
-/// Against the server PACKMOAT_TEST_POSTGRES names (#288; see <see cref="PostgresTestServer"/>): the CI guard, a connection and its version
+/// Against the server PACKMOAT_TEST_POSTGRES names (see <see cref="PostgresTestServer"/>): the CI guard, a connection and its version
 /// check, and a wrong password that never shows itself.
 /// </summary>
 [Collection(PostgresCollection.Name)]

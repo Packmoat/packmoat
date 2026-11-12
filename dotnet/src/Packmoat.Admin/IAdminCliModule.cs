@@ -5,7 +5,7 @@ using Packmoat.Infrastructure.Lifecycle;
 namespace Packmoat.Admin;
 
 /// <summary>
-/// A group of commands a module adds to packmoat-admin (#193), under one first word of its own. The core owns the database, the master key check,
+/// A group of commands a module adds to packmoat-admin, under one first word of its own. The core owns the database, the master key check,
 /// the operator's name and the error handling; a module's command runs through <see cref="AdminCliContext"/> only. A group that repeats
 /// or names one of the core's commands stops the tool (exit 2) before anything runs.
 /// <para>Unstable: may change in any release before 1.0.</para>
@@ -35,7 +35,7 @@ public interface IAdminCliModule
     IServingGate? Gate(IRelationalDatabase db, CliEnvironment env, Action<string> warn);
 
     /// <summary>
-    /// The tenant lifecycle's parts (#194: creation participants, purge contributors and the purge eligibility), or null for none. At
+    /// The tenant lifecycle's parts (creation participants, purge contributors and the purge eligibility), or null for none. At
     /// most one module may give one (more stops the tool, exit 2); with none, a new tenant gets only its own row and nobody is purged
     /// (<see cref="TenantLifecycle.None"/>). It must be cheap: it is asked on every run, and the eligibility's settings should be read
     /// only when the eligibility is made. <paramref name="note"/> takes lines a refused purge prints (what a payment provider logged).
@@ -43,23 +43,23 @@ public interface IAdminCliModule
     TenantLifecycle? Lifecycle(IRelationalDatabase db, CliEnvironment env, Action<string> note);
 
     /// <summary>
-    /// The module's own migration track (#196), or null for none: the same track its server module declares. Every command that opens
+    /// The module's own migration track, or null for none: the same track its server module declares. Every command that opens
     /// the database runs the core's migrations and then each module's track; `db check-migrations` runs them on a copy. Two modules may
     /// not declare the same track, and a track table no module declares stops the tool.
     /// </summary>
     MigrationTrack? Migrations { get; }
 
     /// <summary>
-    /// What the module's purge eligibility asks before anything is deleted, in the operator's words (#197 C3), or null for nothing: the help's
+    /// What the module's purge eligibility asks before anything is deleted, in the operator's words, or null for nothing: the help's
     /// <c>tenant purge</c> line and the hint under <c>tenant purge-due</c> name it.
     /// </summary>
     PurgeCheckNote? PurgeCheck => null;
 }
 
 /// <summary>
-/// The words for a module's last check before a purge (#197 C3). <paramref name="Help"/> goes in the help's <c>tenant purge</c> line, between
+/// The words for a module's last check before a purge. <paramref name="Help"/> goes in the help's <c>tenant purge</c> line, between
 /// "only when due" and "recorded"; <paramref name="Due"/> goes after "take a backup first" in the hint under <c>tenant purge-due</c>.
-/// <paramref name="DueLines"/>, when given, replace the core's words for <c>tenant purge-due</c> in the help (#226): the first line after the
+/// <paramref name="DueLines"/>, when given, replace the core's words for <c>tenant purge-due</c> in the help: the first line after the
 /// command, each later one in the help's column. At most one module may give them (more stops the tool, exit 2).
 /// </summary>
 public sealed record PurgeCheckNote(string Help, string Due, IReadOnlyList<string>? DueLines = null);

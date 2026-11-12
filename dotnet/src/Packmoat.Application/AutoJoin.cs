@@ -3,7 +3,7 @@ using Packmoat.Domain;
 namespace Packmoat.Application;
 
 /// <summary>
-/// Whether people with no Packmoat role in a linked directory join a tenant automatically, as Developer (#80). One setting per tenant.
+/// Whether people with no Packmoat role in a linked directory join a tenant automatically, as Developer. One setting per tenant.
 /// No row means ON. There is no cache: every sign-in and every click of an auto-joined session reads it again. A read that fails throws,
 /// so the caller fails closed (no session).
 /// </summary>
@@ -30,15 +30,16 @@ public sealed class AutoJoinCommands
     private readonly IAdminActionLog _log;
     private readonly IClock _clock;
     private readonly CustomerTokenGuard _guard;
-    private readonly PersonRateLimiter _changes;
+    private readonly RateLimit _changes;
 
-    public AutoJoinCommands(ITenantStore tenants, ISignInDirectoryStore directories, IAutoJoinSettingStore store, IAdminActionLog log, IClock clock)
+    /// <param name="rates">The shared rate counter: each person's changes are counted there.</param>
+    public AutoJoinCommands(ITenantStore tenants, ISignInDirectoryStore directories, IAutoJoinSettingStore store, IAdminActionLog log, IClock clock, IRateCounter rates)
     {
         _store = store;
         _log = log;
         _clock = clock;
         _guard = new CustomerTokenGuard(tenants, directories, shared: null);
-        _changes = new PersonRateLimiter(clock, MaxChangesPerWindow, CustomerTokenRules.RateWindow);
+        _changes = new RateLimit(rates, RateScopes.AutoJoinChange, MaxChangesPerWindow, CustomerTokenRules.RateWindow);
     }
 
     /// <summary>Packmoat.Admin only: whether auto-join is on for the actor's tenant.</summary>
@@ -59,7 +60,7 @@ public sealed class AutoJoinCommands
         if (actor.Role != CustomerRole.Admin) throw new CustomerTokenRefusedException(CustomerTokenRefusal.AdminOnly);
         if (!CustomerTokenRules.IsFresh(actor.SignedInAt, _clock.UtcNow)) throw new CustomerTokenRefusedException(CustomerTokenRefusal.FreshSignInRequired);
         var (tid, oid, tenant) = await _guard.CheckLinkedAsync(actor, ct);
-        if (!_changes.TryAcquire(tid + "/" + oid)) throw new CustomerTokenRefusedException(CustomerTokenRefusal.TooManyRequests);
+        if (!await _changes.TryAcquireAsync(tid + "/" + oid, ct)) throw new CustomerTokenRefusedException(CustomerTokenRefusal.TooManyRequests);
         var was = await _store.IsOnAsync(tenant.Id, ct);
         if (was == enabled) return false;
 

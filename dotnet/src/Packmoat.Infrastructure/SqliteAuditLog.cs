@@ -6,7 +6,7 @@ using Packmoat.Domain;
 namespace Packmoat.Infrastructure;
 
 /// <summary>
-/// The audit trail of package downloads (#136). The table refuses UPDATE, and refuses DELETE of a row less than 90 days old by the
+/// The audit trail of package downloads. The table refuses UPDATE, and refuses DELETE of a row less than 90 days old by the
 /// database's own clock unless the tenant's purge is running (migration 19). The server writes through <see cref="QueuedAuditLog"/>,
 /// which calls <see cref="AppendBatchAsync"/>; the daily retention pass calls <see cref="PruneAsync"/>.
 /// </summary>

@@ -6,10 +6,10 @@ using Packmoat.Host.Web;
 namespace Packmoat.Host.Modules;
 
 /// <summary>
-/// What a module adds to the customer site (#192): its own pages for members and for prospects, a banner and links on the home page, the
+/// What a module adds to the customer site: its own pages for members and for prospects, a banner and links on the home page, the
 /// Connect sentence, and what a directory that is not on this server is told. At most one is registered (more refuses the start); with
 /// none, the core registers <see cref="NoCustomerSiteModule"/>, which adds nothing. A page whose path does not start with exactly one "/", or
-/// prospect pages with no GET page among them, refuse the start too (#251).
+/// prospect pages with no GET page among them, refuse the start too.
 /// <para>The core owns every check. A module's route is matched by path and method; then <see cref="CustomerRoute{T}.Exists"/> (false: the
 /// site's 404, before anything else); then, for a POST, the Origin (403); then <see cref="CustomerRoute{T}.Handle"/>. Every POST has passed
 /// the antiforgery gate before any routing. A handler works only through <see cref="CustomerPage{T}"/>.</para>
@@ -49,18 +49,18 @@ public interface ICustomerSiteModule
 
     /// <summary>
     /// Trusted markup appended to the footer's links (fixed links only), or "". Shown only when the operator's website is set
-    /// (<paramref name="op"/>, #186): the footer's links are the website's.
+    /// (<paramref name="op"/>): the footer's links are the website's.
     /// </summary>
     string FooterLinks(OperatorLinks op) => "";
 
     /// <summary>
-    /// The token page's words when the serving gate refuses the tenant (#197), from the gate's <paramref name="notice"/> (null: the gate gave
+    /// The token page's words when the serving gate refuses the tenant, from the gate's <paramref name="notice"/> (null: the gate gave
     /// none), or null for the core's own neutral words. Plain text, encoded by the core.
     /// </summary>
     ServingRefusedWords? ServingRefused(ServingNotice? notice, SupportContact support) => null;
 
     /// <summary>
-    /// A sentence the suspended page (and the token page's suspended refusal) adds after the core's "what to do next" (#197 C3), or null for
+    /// A sentence the suspended page (and the token page's suspended refusal) adds after the core's "what to do next", or null for
     /// none. Plain text, encoded by the core.
     /// </summary>
     string? SuspendedNote => null;
@@ -102,17 +102,17 @@ public sealed class CustomerPage<T> where T : class
     /// <summary>The signed-in member, or the prospect, as the core resolved them on this request.</summary>
     public T Who { get; }
 
-    /// <summary>Who runs this server (#186): the website, the support address and the operator's name, each possibly unset.</summary>
+    /// <summary>Who runs this server: the website, the support address and the operator's name, each possibly unset.</summary>
     public OperatorLinks Operator => AppHtml.Op(Http);
 
     /// <summary>The antiforgery hidden field, for a form that posts to this site.</summary>
     public string AntiforgeryField() => AppHtml.Hidden(SignedInSite.AntiforgeryField, SignedInSite.AntiforgeryToken(Http));
 
-    /// <summary>A single-use form nonce for <paramref name="key"/> (the customer site's own store).</summary>
-    public string IssueNonce(string key) => Http.RequestServices.GetRequiredService<AppFormNonces>().Issue(key);
+    /// <summary>A single-use form nonce for <paramref name="key"/> (the customer site's own scope).</summary>
+    public Task<string> IssueNonceAsync(string key) => Http.RequestServices.GetRequiredService<AppFormNonces>().IssueAsync(key, Http.RequestAborted);
 
     /// <summary>True once for a live nonce issued for <paramref name="key"/>.</summary>
-    public bool ConsumeNonce(string? nonce, string key) => Http.RequestServices.GetRequiredService<AppFormNonces>().Consume(nonce, key);
+    public Task<bool> ConsumeNonceAsync(string? nonce, string key) => Http.RequestServices.GetRequiredService<AppFormNonces>().ConsumeAsync(nonce, key, Http.RequestAborted);
 
     /// <summary>
     /// A fresh Microsoft sign-in (prompt=login) that comes back to <paramref name="returnPath"/>, which must be one of this module's own

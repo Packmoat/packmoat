@@ -13,14 +13,14 @@ using static Packmoat.Host.Customer.AppHtml;
 namespace Packmoat.Host.Customer;
 
 /// <summary>
-/// The Azure setup wizard (#63 H2): GET /setup/azure, POST /setup/azure/check, the two consent return pages and the delegated Azure
-/// DevOps sign-in check; and Connect (#64 I1): POST /setup/azure/connect, which makes Packmoat serve the checked feed, and
+/// The Azure setup wizard: GET /setup/azure, POST /setup/azure/check, the two consent return pages and the delegated Azure
+/// DevOps sign-in check; and Connect: POST /setup/azure/connect, which makes Packmoat serve the checked feed, and
 /// POST /setup/azure/reauth, the fresh sign-in Connect may ask for. Exists only while PACKMOAT_AZURE_SETUP allows the person's directory (otherwise the site's 404).
 /// "Sign in and check" starts a second sign-in with the same customer app (scheme <see cref="Scheme"/>, callback <see cref="CallbackPath"/>),
 /// asking for read-only Azure DevOps scopes. Its token-validated event checks the new ID token against the session, runs the check with
 /// the access token (a local only: never saved, logged, stored or shown), records the result, and answers 303 to the page. It never
 /// signs anyone in and writes no session cookie. The typed names travel in the protected sign-in state.
-/// The developer proof (#64 I2): GET /setup/developer and POST /setup/developer/check, for Developers. The same scheme, with the scope
+/// The developer proof: GET /setup/developer and POST /setup/developer/check, for Developers. The same scheme, with the scope
 /// overridden to read Azure Artifacts only, and the protected-state purpose <see cref="DeveloperPurpose"/>: the callback branches on the
 /// purpose, which must match the page the sign-in returns to.
 /// </summary>
@@ -32,7 +32,7 @@ public static class AppAzureSetup
     public const string ConsentedPath = "/setup/azure/consented";
     public const string ConnectPath = "/setup/azure/connect";
     public const string ReauthPath = "/setup/azure/reauth";
-    /// <summary>Step 2's button (#119 item 2): keeps step 1 for this person, then sends the browser to Microsoft's approval page.</summary>
+    /// <summary>Step 2's button: keeps step 1 for this person, then sends the browser to Microsoft's approval page.</summary>
     public const string ApprovePath = "/setup/azure/approve";
     public const string DeveloperPath = "/setup/developer";
     public const string DeveloperCheckPath = "/setup/developer/check";
@@ -63,12 +63,12 @@ public static class AppAzureSetup
     /// <summary>"Confirm and check again": no prompt=login, so Microsoft can reuse a sign-in still inside max_age (auth_time is checked all the same).</summary>
     internal const string SilentItem = "packmoat.azure.silent";
 
-    // ---------------------------------------------------------------- wording (#63)
+    // ---------------------------------------------------------------- wording
 
     internal const string HomeCardSentence = "Packmoat isn't connected to your Azure Artifacts feed yet. Your developers can't use Packmoat until an Admin connects it.";
     internal const string HomeCardButton = "Connect your feed";
     internal const string Intro = "Packmoat reads public packages from one feed in your Azure DevOps organisation. That feed should hold only packages from nuget.org, and your developers mustn't be able to read it directly. Allow about 20 minutes. " + IntroAdminSentence;
-    /// <summary>#118 moment 4.</summary>
+    /// <summary>Moment 4 of the setup wizard.</summary>
     internal const string IntroAdminSentence = "You may need a Microsoft Entra directory administrator for steps 2 and 4.";
     internal const string OrgHelp = "Organisation: the name after dev.azure.com/.";
     internal const string ProjectHelp = "Project: leave empty for an organisation-scoped feed.";
@@ -78,31 +78,31 @@ public static class AppAzureSetup
     internal const string ProjectError = "A project name can't contain slashes, %, ? or #, and has at most 64 characters.";
     internal const string Step2 = "A directory administrator approves Packmoat's feed access app once. The app asks for no permissions in your directory. It can reach only what you give it in Azure DevOps in step 3.";
     internal const string Step2Button = "Open Microsoft's approval page";
-    /// <summary>#119 PR B review.</summary>
+    /// <summary>The page the setup wizard shows when the developer must approve.</summary>
     internal const string Step2SendLink = "Not a directory administrator? Send them this link:";
     internal const string Step2Return = "Thanks. Packmoat confirms this when it checks your setup.";
     internal const string Step3 = "In Azure DevOps: add Packmoat feed access to your organisation with Stakeholder access, in the project's Readers group only. Then, in the feed's settings under Permissions, give it the Collaborator role. Don't give it a role on any other feed. Azure DevOps also makes a feed named after your organisation that everyone in it can read. Remove Project Collection Valid Users from its Permissions, or delete it if you don't use it.";
     internal const string Step4 = "Packmoat checks your feed using your own Microsoft sign-in. You'll be asked to sign in again and to let Packmoat read your feeds, groups and identities in Azure DevOps. Packmoat uses this access only during the check, can't change anything, and doesn't keep it.";
     internal const string Step4Button = "Sign in and check";
-    /// <summary>#118 moment 3, the Approval needed page.</summary>
+    /// <summary>Moment 3 of the setup wizard, the Approval needed page.</summary>
     internal const string ConsentBlocked = "A directory administrator (Global Administrator, Cloud Application Administrator or Application Administrator) must approve Packmoat for your whole organisation. Send them this link, then check again once they've approved it.";
     internal const string NamedAdminsSentence = "These people are administrators of the feed. Administrators can read the feed directly and skip Packmoat. Confirm that each one is someone you trust with that.";
     internal const string ConfirmCheckbox = "I confirm these administrators";
     internal const string ConfirmButton = "Confirm and check again";
     internal const string WaitingOnDeveloper = "Your feed's settings pass. One step left: a developer confirms they can't reach the feed directly.";
-    /// <summary>A passed settings check when no developer is awaited: ready to connect, connected, or a check-only page (#119 item 10).</summary>
+    /// <summary>A passed settings check when no developer is awaited: ready to connect, connected, or a check-only page.</summary>
     internal const string SettingsPassLine = "Your feed's settings pass.";
-    /// <summary>Shown in place of a check that errored (#119): the stored detail is unchanged.</summary>
+    /// <summary>Shown in place of a check that errored: the stored detail is unchanged.</summary>
     internal static string CouldNotFinishLine(SupportContact support) => "Packmoat couldn't finish this check: Azure DevOps gave an answer Packmoat couldn't read. Check again; if it keeps happening, " + support.Phrase + ".";
-    // The #64 plan's privacy line.
+    // The privacy line.
     internal const string PrivacyLine = "When an Admin or a developer checks the setup, Packmoat uses a short-lived Microsoft token to read feed settings in Azure DevOps. The token is used only during the check and is never stored. Packmoat's own feed access is also tested against your other feeds. We keep the check's result, including the display names of the person who ran it and of the feed's administrators.";
-    // The developer proof (#64 plan wording).
+    // The developer proof.
     internal const string WaitingTitle = "Waiting for a developer";
     internal const string WaitingSendLink = "Send this link to one of your developers:";
     internal const string WaitingHow = "They sign in to Packmoat with their own work account and choose Check my access. It takes about a minute. Admins can't do this step, because Admins can often read the feed directly.";
     internal const string WaitingAutoJoinOn = "Anyone in your directory joins Packmoat as a Developer the first time they sign in.";
     internal const string WaitingAutoJoinOff = "They need the Packmoat Developer role in Microsoft Entra.";
-    /// <summary>#118 moment 5, followed by the directory's approval link.</summary>
+    /// <summary>Moment 5 of the setup wizard, followed by the directory's approval link.</summary>
     internal const string WaitingNeedAdmin = "If Microsoft tells them \"Need admin approval\", a directory administrator must approve Packmoat first. Send them this link:";
     internal const string WaitingSolo = "Use the account of someone who normally restores packages. A new account with no groups proves less.";
     internal const string DeveloperCardSentence = "Your Admin is connecting Packmoat to your Azure Artifacts feed. One check is left, and it needs a developer: confirm that you can't read that feed directly.";
@@ -117,7 +117,7 @@ public static class AppAzureSetup
     internal const string NotReadyTitle = "Not ready yet";
     internal const string NotReadyLine = "Your Admin hasn't finished checking the feed's settings yet.";
     // New wording, not in the plan's draft: listed in the PR for approval.
-    internal const string DeveloperUnclear = "Packmoat couldn't confirm this yet. Check again in a few minutes. If it keeps happening, ask your Admin to check the feed's settings again.";    // Connect (#64 plan wording).
+    internal const string DeveloperUnclear = "Packmoat couldn't confirm this yet. Check again in a few minutes. If it keeps happening, ask your Admin to check the feed's settings again.";    // Connect.
     internal const string ProofSentence = "{0} confirmed on {1} that they can't reach the feed directly.";
     internal const string ConnectButton = "Connect";
     /// <summary>The Connect sentence with no customer-site module; a module may say more (<see cref="Modules.ICustomerSiteModule.ConnectSentence"/>).</summary>
@@ -130,14 +130,14 @@ public static class AppAzureSetup
     internal const string ConnectStaleLine = "Your checks changed, or are too old, since this page was shown. Check again, then connect.";
     internal static string ConnectTakenLine(SupportContact support) => "Another Packmoat account already uses Packmoat feed access in your directory. " + support.CapitalPhrase + ".";
     internal const string ConnectFreshLine = "Connecting needs a sign-in within the last 15 minutes, confirmed by Microsoft.";
-    // #119 item 10, the Connect re-sign-in's return.
+    // The Connect re-sign-in's return.
     internal const string ReauthDoneLine = "You signed in again. Choose Connect to finish.";
     internal static string ReauthUnconfirmedLine(SupportContact support) => "Microsoft didn't confirm a recent sign-in. Try again. If it keeps happening, " + support.Phrase + ".";
     // New wording, not in the plan's draft: listed in the PR for approval.
     internal const string FailedLine = "Some checks failed. Fix them in Azure DevOps, then check again.";
     internal const string IncompleteLine = "Some checks didn't pass yet. Fix them, or confirm the administrators below, then check again.";
     internal const string CheckAgainButton = "Check again";
-    /// <summary>The operator set the connection up (#186): by name, or in neutral words.</summary>
+    /// <summary>The operator set the connection up: by name, or in neutral words.</summary>
     internal static string ReadOnlyLine(SupportContact support) => support.OperatorSubject + " set up the connection to your organisation's feed. To change it, " + support.Phrase + ".";
     internal static string ReadOnlyTitle(SupportContact support) => support.OperatorName is { } name ? "Set up by " + name : "Set up for you";
     internal const string CheckOnlyLine = "Check again reads your feed's settings with your own Microsoft sign-in. It changes nothing, and the result isn't kept.";
@@ -151,19 +151,20 @@ public static class AppAzureSetup
 
     // ---------------------------------------------------------------- services and the sign-in scheme
 
-    internal static void AddServices(IServiceCollection services, PackmoatOptions options, AppSiteSettings settings)
+    /// <param name="jobLease">The job lease a tenant's check runs under, made when the wizard's state is (not registered).</param>
+    internal static void AddServices(IServiceCollection services, PackmoatOptions options, AppSiteSettings settings, Func<IServiceProvider, IJobLease> jobLease)
     {
         // Redirects never followed, Azure DevOps API hosts only, and no request logging (the factory's loggers would log every URL).
         services.AddHttpClient(DelegatedFeedCheck.ClientName, c => c.Timeout = TimeSpan.FromSeconds(20))
             .ConfigurePrimaryHttpMessageHandler(() => options.AzureDevOpsHandlerOverride?.Invoke() ?? DelegatedFeedCheck.CreatePrimaryHandler())
             .AddHttpMessageHandler(() => new AzureDevOpsHostsOnlyHandler())
             .RemoveAllLoggers();
-        // The developer proof's client (#64 I2): feeds.dev.azure.com and the exact GUID feed index only, redirects never followed, no logging.
+        // The developer proof's client: feeds.dev.azure.com and the exact GUID feed index only, redirects never followed, no logging.
         services.AddHttpClient(DeveloperFeedProbe.ClientName, c => c.Timeout = TimeSpan.FromSeconds(20))
             .ConfigurePrimaryHttpMessageHandler(() => options.AzureDevOpsHandlerOverride?.Invoke() ?? DelegatedFeedCheck.CreatePrimaryHandler())
             .AddHttpMessageHandler(() => new DeveloperProbeHostsHandler())
             .RemoveAllLoggers();
-        // Packmoat's own identity (#64 I2): pkgs.dev.azure.com GUID feed indexes only, redirects never followed, no logging.
+        // Packmoat's own identity: pkgs.dev.azure.com GUID feed indexes only, redirects never followed, no logging.
         services.AddHttpClient(SharedAppFeedProbe.ClientName, c => c.Timeout = TimeSpan.FromSeconds(20))
             .ConfigurePrimaryHttpMessageHandler(() => options.AzureDevOpsHandlerOverride?.Invoke() ?? DelegatedFeedCheck.CreatePrimaryHandler())
             .AddHttpMessageHandler(() => new SharedAppProbeHostsHandler())
@@ -176,10 +177,11 @@ public static class AppAzureSetup
             sp.GetRequiredService<ISharedAppFeedProbe>(),
             log: sp.GetRequiredService<ILoggerFactory>().CreateLogger(LogCategory) is var checkLog ? message => checkLog.LogWarning("{Message}", message) : null,
             support: options.Operator.Support));
-        services.TryAddSingleton(sp => new AzureSetupState(sp.GetRequiredService<IClock>()));
+        // Each person's last check and draft in the shared scratch, and one check at a time per tenant under the job lease: every copy sees both.
+        services.TryAddSingleton(sp => new AzureSetupState(sp.GetRequiredService<IFeedSetupScratch>(), jobLease(sp), sp.GetRequiredService<IClock>()));
         services.TryAddSingleton(sp => new AzureSetupCommands(sp.GetRequiredService<ITenantStore>(), sp.GetRequiredService<ISignInDirectoryStore>(),
             sp.GetService<ISharedAppCredentialStore>(), sp.GetService<IFeedCheckStore>(), sp.GetService<IDelegatedFeedCheck>(),
-            sp.GetRequiredService<AzureSetupState>(), settings.AzureSetup, sp.GetRequiredService<IClock>(), feeds: sp.GetService<ISelfServiceFeedStore>(),
+            sp.GetRequiredService<AzureSetupState>(), settings.AzureSetup, sp.GetRequiredService<IClock>(), sp.GetRequiredService<IRateCounter>(), feeds: sp.GetService<ISelfServiceFeedStore>(),
             log: sp.GetRequiredService<ILoggerFactory>().CreateLogger(LogCategory) is var log
                 ? (level, message) => log.Log(level == SetupLogLevel.Error ? LogLevel.Error : LogLevel.Warning, "{Message}", message)
                 : null,
@@ -212,9 +214,9 @@ public static class AppAzureSetup
         o.Events.OnTokenValidated = CompleteAsync;
         // Never reached (the event above always handles the response); if it ever were, nobody is signed in.
         o.Events.OnTicketReceived = ctx => { ctx.Fail("The Azure DevOps check never signs anyone in."); return Task.CompletedTask; };
-        // Microsoft's error code alone picks the page (#143), as on the customer sign-in: a decline (access_denied, consent_required) shows
+        // Microsoft's error code alone picks the page, as on the customer sign-in: a decline (access_denied, consent_required) shows
         // Approval needed even when the handler could not match the reply to a sign-in. Nothing from the reply is shown; a log line names
-        // only an allowlisted code. Only a failure after Microsoft issued a code counts against the limiter (#145).
+        // only an allowlisted code. Only a failure after Microsoft issued a code counts against the limiter.
         o.Events.OnRemoteFailure = async ctx =>
         {
             SignedInSite.CountIfCodeReceived(ctx.HttpContext, ctx.HttpContext.RequestServices.GetRequiredService<AppSignInLimiter>());
@@ -232,7 +234,7 @@ public static class AppAzureSetup
             await Card(ctx.HttpContext, 400, "Sign-in failed", AppSite.FailedSentence(Support(ctx.HttpContext)), null, BackToSetup);
         };
         // error=access_denied: the person cancelled, or their organisation must approve the Azure DevOps access first. Not counted
-        // against the limiter (#145): a decline is not a guess.
+        // against the limiter: a decline is not a guess.
         o.Events.OnAccessDenied = async ctx =>
         {
             Log(ctx.HttpContext).LogWarning("Azure DevOps check sign-in cancelled or not approved");
@@ -255,7 +257,7 @@ public static class AppAzureSetup
     }
 
     /// <summary>
-    /// Microsoft's v2 admin-consent page for the Packmoat sign-in app (#118): one approval, for the whole organisation, of sign-in
+    /// Microsoft's v2 admin-consent page for the Packmoat sign-in app: one approval, for the whole organisation, of sign-in
     /// (openid profile) and the read-only Azure DevOps scopes (<see cref="AzureDevOpsScopes"/>, the one list), returning to
     /// <see cref="ConsentedPath"/>. <paramref name="directoryId"/> is the person's own directory when known; null gives "organizations",
     /// where Microsoft uses the approver's own directory. No .default, no prompt and no offline_access.
@@ -361,7 +363,7 @@ public static class AppAzureSetup
     private const string DeveloperFlowItem = "packmoat.azure.developer-flow";
 
     /// <summary>
-    /// The developer proof's callback (#64 I2). 1. The session must be a member session (auto-joined allowed while auto-join is on) of a
+    /// The developer proof's callback. 1. The session must be a member session (auto-joined allowed while auto-join is on) of a
     /// still-linked directory. 2. <see cref="CustomerSignIn.Decide"/> on the step-up's own claims (the same binding, and auto-join as at
     /// sign-in), then <see cref="AzureSetupRules.CheckDeveloperStepUp"/>: the same person, a Developer (never an Admin), auth_time fresh.
     /// 3. The probe, with the access token as a local only. 4. Recorded as a developer row. 5. 303 to the page.
@@ -467,7 +469,7 @@ public static class AppAzureSetup
 
     /// <summary>
     /// The two consent return pages: no sign-in needed (the approver may not use Packmoat), no state changed. The Packmoat app's
-    /// (<see cref="ConsentedPath"/>, #118) always exists, because sign-up and the sign-in cancelled card link to it; the feed-access
+    /// (<see cref="ConsentedPath"/>) always exists, because sign-up and the sign-in cancelled card link to it; the feed-access
     /// app's only while the switch is not off. Of Microsoft's reply only whether it carries error is read: no value from it (error,
     /// error_description, tenant) is ever shown or trusted.
     /// </summary>
@@ -488,7 +490,7 @@ public static class AppAzureSetup
         return true;
     }
 
-    // The Packmoat app's consent return page (#118). New wording, not in the plan's draft: listed in the PR for approval.
+    // The Packmoat app's consent return page. New wording, not in the plan's draft: listed in the PR for approval.
     internal const string ConsentedTitle = "Thanks";
     internal const string ConsentedLine = "Once a directory administrator has approved Packmoat for your organisation, your developers can sign in.";
     internal const string NotApprovedTitle = "Not approved";
@@ -576,7 +578,7 @@ public static class AppAzureSetup
         await ctx.ChallengeAsync(Scheme, properties);
     }
 
-    // ---------------------------------------------------------------- the developer proof (#64 I2)
+    // ---------------------------------------------------------------- the developer proof
 
     /// <summary>
     /// POST /setup/developer/check: the sign-in limits, the developer proof's rules, then the step-up sign-in: the scope replaced by
@@ -614,7 +616,7 @@ public static class AppAzureSetup
         sb.Append("<section class=\"card wide\" aria-labelledby=\"dev-h\"><p class=\"eyebrow\">Setup</p><h1 id=\"dev-h\">").Append(E(DeveloperCardButton)).Append("</h1>");
         sb.Append("<p class=\"lede\">").Append(E(DeveloperCardSentence)).Append("</p>");
         if (view.Held is { } held) sb.Append(DeveloperResults(held, Support(ctx)));
-        // The feed by name, with its URL under Details (#119 item 6); an older check without names shows the URL as before.
+        // The feed by name, with its URL under Details; an older check without names shows the URL as before.
         sb.Append("<dl class=\"facts\"><div><dt>Feed</dt><dd>");
         if (view.Settings.Names is { } names)
             sb.Append(E(FeedLabel(names))).Append("<details><summary>Details</summary><p>").Append(E(view.Settings.FeedIndexUrl)).Append("</p></details>");
@@ -646,7 +648,7 @@ public static class AppAzureSetup
         });
         var bypass = Bypass(held.Results);
         if (bypass is not null) sb.Append(BypassLine(bypass.Detail));
-        // The bypass sentence is shown once (#119 item 8): its result stays listed, without repeating it under Details.
+        // The bypass sentence is shown once: its result stays listed, without repeating it under Details.
         sb.Append(ResultList(held.Results, support, noDetails: bypass)).Append("</section>");
         return sb.ToString();
     }
@@ -659,7 +661,7 @@ public static class AppAzureSetup
 
     /// <summary>
     /// A result's detail as the page shows it. A check that errored keeps its stored "could not complete: {type}: {message}" text (the
-    /// withdraw and timeout rules read it), but the page shows one fixed sentence instead (#119).
+    /// withdraw and timeout rules read it), but the page shows one fixed sentence instead.
     /// </summary>
     internal static string Shown(CheckResult r, SupportContact support) =>
         r.Status == CheckStatus.Fail && r.Detail.StartsWith(ConnectRules.CouldNotComplete, StringComparison.Ordinal) ? CouldNotFinishLine(support) : r.Detail;
@@ -694,8 +696,8 @@ public static class AppAzureSetup
     // ---------------------------------------------------------------- POST /setup/azure/approve
 
     /// <summary>
-    /// Step 2 (#119 item 2): a submit button in step 1's form, so the typed names come along. The names that pass their rules are kept
-    /// for this person (30 minutes, in memory, names only), then 303 to Microsoft's approval page for the shared app in the person's own
+    /// Step 2: a submit button in step 1's form, so the typed names come along. The names that pass their rules are kept
+    /// for this person (30 minutes, in the shared scratch, names only), then 303 to Microsoft's approval page for the shared app in the person's own
     /// directory, returning to the fixed thanks page. A name that fails its rule is dropped, never echoed.
     /// </summary>
     private static async Task Approve(HttpContext ctx, CustomerActor actor, AppSiteSettings s)
@@ -757,7 +759,7 @@ public static class AppAzureSetup
         var sb = new StringBuilder();
         sb.Append("<section class=\"results\" aria-labelledby=\"connect-h\"><h2 id=\"connect-h\">").Append(E(ConnectButton)).Append("</h2>");
         sb.Append("<p>").Append(E(string.Format(System.Globalization.CultureInfo.InvariantCulture, ProofSentence, d.CheckedByName, date))).Append("</p>");
-        // advisory: shown, never blocking, and addressed to the Admin (#119 item 9)
+        // advisory: shown, never blocking, and addressed to the Admin
         if (Bypass(d.Results) is { } bypass && BypassAdvisory.AdminSentence(bypass) is { } sentence) sb.Append(BypassLine(sentence));
         sb.Append("<p>").Append(E(ctx.RequestServices.GetRequiredService<Modules.ICustomerSiteModule>().ConnectSentence(actor))).Append("</p>");
         sb.Append("<form method=\"post\" action=\"").Append(ConnectPath).Append("\" class=\"inline\">").Append(Af(ctx))
@@ -782,7 +784,7 @@ public static class AppAzureSetup
     {
         SignedInSite.UseLandingCsp(ctx);   // the forms post, then redirect to Microsoft's sign-in
         // Prefilled (after a refusal) with the values that passed, else from this person's last check, else from what they had typed when
-        // they opened the approval page (#119 item 2), else from the tenant's latest recorded check. A refused value is never echoed.
+        // they opened the approval page, else from the tenant's latest recorded check. A refused value is never echoed.
         var held = view.Held;
         // Of this person's held check and draft, the newer one wins.
         var heldNames = held?.Names;
@@ -805,7 +807,7 @@ public static class AppAzureSetup
         if (held?.WithdrawFailed == true) sb.Append("<p class=\"flash warn\" role=\"alert\">").Append(E(WithdrawFailedLine(Support(ctx)))).Append("</p>");
         else if (view.Readiness == UpstreamReadiness.Ready) sb.Append("<p class=\"flash\" role=\"status\">").Append(E(ConnectedLine)).Append("</p>");
         else if (held?.Withdrawn == true) sb.Append("<p class=\"flash warn\" role=\"alert\">").Append(E(WithdrawnLine)).Append("</p>");
-        // Back from Connect's fresh sign-in (#119 item 10): say whether Microsoft confirmed it, rather than showing the same page silently.
+        // Back from Connect's fresh sign-in: say whether Microsoft confirmed it, rather than showing the same page silently.
         if (QueryOne(ctx, "m") == "reauth" && view.Readiness != UpstreamReadiness.Ready)
         {
             if (!CustomerTokenRules.IsFresh(actor.SignedInAt, ctx.RequestServices.GetRequiredService<IClock>().UtcNow))
@@ -839,7 +841,7 @@ public static class AppAzureSetup
         sb.Append("<li><h2>Approve Packmoat feed access</h2><p>").Append(E(Step2)).Append("</p>");
         if (view.SharedClientId is { } feedApp)
         {
-            // A submit in step 1's form (#119 item 2): the names come along and are kept while the person is at Microsoft. No browser
+            // A submit in step 1's form: the names come along and are kept while the person is at Microsoft. No browser
             // validation, so it works before step 1 is filled in.
             sb.Append("<p><button type=\"submit\" class=\"btn ghost\" formaction=\"").Append(ApprovePath).Append("\" formnovalidate>")
               .Append(E(Step2Button)).Append("</button></p>");
@@ -901,7 +903,7 @@ public static class AppAzureSetup
             _ => $"<p class=\"flash warn\" role=\"status\">{E(IncompleteLine)}</p>",
         });
         sb.Append(ResultList(results, Support(ctx)));
-        // The confirmation: only for this person's own check held in memory, when the permissions check is waiting on named admins.
+        // The confirmation: only for this person's own check held in the shared scratch, when the permissions check is waiting on named admins.
         if (held is not null && held.NamedAdmins.Count is > 0 and <= AzureSetupRules.MaxConfirmableAdmins
             && held.Results.FirstOrDefault(r => r.Id == "permissions")?.Status == CheckStatus.Warn && view.CanCheck)
         {
@@ -926,7 +928,7 @@ public static class AppAzureSetup
 
     /// <summary>
     /// The home cards, while the switch allows the directory; "" otherwise. A self-made tenant with no feed yet: the "not connected" card
-    /// (only Admins get the button). A Developer whose proof is open (#64 I2): the developer card with "Check my access".
+    /// (only Admins get the button). A Developer whose proof is open: the developer card with "Check my access".
     /// </summary>
     internal static async Task<string> HomeCardAsync(HttpContext ctx, CustomerActor actor, AppSiteSettings s)
     {

@@ -108,7 +108,7 @@ public static class CustomerTokenRules
             : throw new CustomerTokenRefusedException(CustomerTokenRefusal.NotLinked);
 
     /// <summary>
-    /// The role and the fresh sign-in every admin-only customer-site write checks first (tokens, and waivers #157): Packmoat.Admin, and a
+    /// The role and the fresh sign-in every admin-only customer-site write checks first (tokens, and waivers): Packmoat.Admin, and a
     /// sign-in within <see cref="FreshSignIn"/> of <paramref name="now"/>. Checked here, in the Application layer, because the scope the core
     /// commands receive (<see cref="ActorScope"/>) carries neither a role nor a sign-in time.
     /// </summary>
@@ -199,11 +199,12 @@ public sealed class CustomerTokenCommands
     private readonly IClock _clock;
     private readonly CustomerTokenGuard _guard;
     private readonly IServingGate _gate;
-    private readonly PersonRateLimiter _issues;
-    private readonly PersonRateLimiter _revokes;
+    private readonly RateLimit _issues;
+    private readonly RateLimit _revokes;
 
+    /// <param name="rates">The shared rate counter: each person's issues and revokes are counted there.</param>
     public CustomerTokenCommands(ITenantStore tenants, ITokenService tokens, IMemberStore members, ISignInDirectoryStore directories,
-        IAdminActionLog log, IClock clock, ISharedAppCredentialStore? shared, IServingGate gate)
+        IAdminActionLog log, IClock clock, ISharedAppCredentialStore? shared, IServingGate gate, IRateCounter rates)
     {
         _tokens = tokens;
         _members = members;
@@ -211,8 +212,8 @@ public sealed class CustomerTokenCommands
         _clock = clock;
         _guard = new CustomerTokenGuard(tenants, directories, shared);
         _gate = gate;
-        _issues = new PersonRateLimiter(clock, CustomerTokenRules.MaxIssuesPerWindow, CustomerTokenRules.RateWindow);
-        _revokes = new PersonRateLimiter(clock, CustomerTokenRules.MaxRevokesPerWindow, CustomerTokenRules.RateWindow);
+        _issues = new RateLimit(rates, RateScopes.TokenIssue, CustomerTokenRules.MaxIssuesPerWindow, CustomerTokenRules.RateWindow);
+        _revokes = new RateLimit(rates, RateScopes.TokenRevoke, CustomerTokenRules.MaxRevokesPerWindow, CustomerTokenRules.RateWindow);
     }
 
     /// <summary>Admin-only writes need a recent sign-in, so a left-open session cannot mint automation tokens or revoke other people's.</summary>
@@ -252,7 +253,7 @@ public sealed class CustomerTokenCommands
     {
         var clean = CustomerTokenRules.CleanLabel(label) ?? throw new CustomerTokenRefusedException(CustomerTokenRefusal.BadLabel);
         var (tid, oid, tenant) = await _guard.CheckServingAsync(actor, _gate, ct);
-        if (!_issues.TryAcquire(tid + "/" + oid)) throw new CustomerTokenRefusedException(CustomerTokenRefusal.TooManyRequests);
+        if (!await _issues.TryAcquireAsync(tid + "/" + oid, ct)) throw new CustomerTokenRefusedException(CustomerTokenRefusal.TooManyRequests);
         var now = _clock.UtcNow;
         var expires = now.AddDays(days);
 
@@ -291,7 +292,7 @@ public sealed class CustomerTokenCommands
     public async Task<bool> RevokeOwnTokenAsync(CustomerActor actor, string tokenId, CancellationToken ct)
     {
         var (tid, oid, tenant) = await _guard.CheckLinkedAsync(actor, ct);
-        if (!_revokes.TryAcquire(tid + "/" + oid)) throw new CustomerTokenRefusedException(CustomerTokenRefusal.TooManyRequests);
+        if (!await _revokes.TryAcquireAsync(tid + "/" + oid, ct)) throw new CustomerTokenRefusedException(CustomerTokenRefusal.TooManyRequests);
         var token = (await _tokens.ListForMemberAsync(tenant.Id, tid, oid, ct)).FirstOrDefault(t => t.TokenId == tokenId && t.RevokedAt is null);
         if (token is null) return false;
         var detail = $"token={token.TokenId}; kind={token.Kind}; owner=self; label={CustomerTokenRules.Quote(token.Label)}";
@@ -309,7 +310,7 @@ public sealed class CustomerTokenCommands
     {
         RequireFreshAdmin(actor);
         var (tid, oid, tenant) = await _guard.CheckLinkedAsync(actor, ct);
-        if (!_revokes.TryAcquire(tid + "/" + oid)) throw new CustomerTokenRefusedException(CustomerTokenRefusal.TooManyRequests);
+        if (!await _revokes.TryAcquireAsync(tid + "/" + oid, ct)) throw new CustomerTokenRefusedException(CustomerTokenRefusal.TooManyRequests);
         var token = (await _tokens.ListAsync(tenant.Id, ct)).FirstOrDefault(t => t.TokenId == tokenId && t.RevokedAt is null);
         if (token is null || token.TenantId != tenant.Id) return false;
         var detail = $"token={token.TokenId}; kind={token.Kind}; owner={token.OwnerOid ?? "operator-issued"}; label={CustomerTokenRules.Quote(token.Label)}";
@@ -330,7 +331,7 @@ public sealed class CustomerTokenCommands
 }
 
 /// <summary>
-/// Why issuing a token would be refused right now (#200): the refusal the issue POST would answer with, and for
+/// Why issuing a token would be refused right now: the refusal the issue POST would answer with, and for
 /// <see cref="CustomerTokenRefusal.ServingRefused"/> the serving gate's notice.
 /// </summary>
 public sealed record CustomerTokenBlocker(CustomerTokenRefusal Reason, ServingNotice? Notice);
@@ -378,40 +379,5 @@ public sealed class CustomerTokenQueries
         if (actor.Role != CustomerRole.Admin) throw new CustomerTokenRefusedException(CustomerTokenRefusal.AdminOnly);
         var (_, _, tenant) = await _guard.CheckLinkedAsync(actor, ct);
         return (await _tokens.ListAsync(tenant.Id, ct)).Where(t => t.TenantId == tenant.Id).ToList();
-    }
-}
-
-/// <summary>
-/// At most <c>max</c> attempts per key (a person) in a fixed window, in memory. A restart forgets the counts, which only makes the limit
-/// looser for one window. Bounded: old windows are dropped when the table grows.
-/// </summary>
-public sealed class PersonRateLimiter
-{
-    private readonly IClock _clock;
-    private readonly int _max;
-    private readonly TimeSpan _window;
-    private readonly Dictionary<string, (DateTimeOffset Start, int Count)> _counts = new(StringComparer.Ordinal);
-    private readonly object _lock = new();
-
-    public PersonRateLimiter(IClock clock, int max, TimeSpan window)
-    {
-        _clock = clock;
-        _max = max;
-        _window = window;
-    }
-
-    /// <summary>Counts this attempt; false when the key already used all of this window's attempts.</summary>
-    public bool TryAcquire(string key)
-    {
-        var now = _clock.UtcNow;
-        lock (_lock)
-        {
-            if (!_counts.TryGetValue(key, out var e) || now - e.Start >= _window || now < e.Start) e = (now, 0);
-            if (e.Count >= _max) { _counts[key] = e; return false; }
-            _counts[key] = (e.Start, e.Count + 1);
-            if (_counts.Count > 20_000)
-                foreach (var k in _counts.Where(kv => now - kv.Value.Start >= _window).Select(kv => kv.Key).ToList()) _counts.Remove(k);
-            return true;
-        }
     }
 }

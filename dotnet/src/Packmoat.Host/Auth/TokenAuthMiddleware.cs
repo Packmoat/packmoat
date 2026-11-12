@@ -30,7 +30,7 @@ public sealed class TokenAuthMiddleware
 
     public async Task InvokeAsync(HttpContext context)
     {
-        // The health and readiness checks (#233) answer without a token: a probe has none, and neither says anything about a tenant.
+        // The health and readiness checks answer without a token: a probe has none, and neither says anything about a tenant.
         if (context.Request.Path.StartsWithSegments("/healthz") || context.Request.Path.StartsWithSegments(Readiness.Route)) { await _next(context); return; }
 
         var address = ClientKey.Of(context.Connection.RemoteIpAddress);
@@ -45,7 +45,7 @@ public sealed class TokenAuthMiddleware
             return;
         }
 
-        // Reserve, then settle (#127): the reservation is held while the store is asked, so parallel guesses from one address
+        // Reserve, then settle: the reservation is held while the store is asked, so parallel guesses from one address
         // cannot all reach the store before the first is counted. It is released in the finally, whatever the outcome.
         if (!_limiter.TryBeginLookup(address, out var lookup, out var wait)) { TooMany(context, wait); return; }
         AuthResult? auth;

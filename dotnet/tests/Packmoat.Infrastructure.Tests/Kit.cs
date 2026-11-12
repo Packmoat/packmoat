@@ -6,22 +6,6 @@ using Packmoat.Infrastructure.Lifecycle;
 
 namespace Packmoat.Infrastructure.Tests;
 
-public sealed class FakeClock : IClock
-{
-    public DateTimeOffset UtcNow { get; set; } = new(2026, 10, 10, 12, 0, 0, TimeSpan.Zero);
-    public void Advance(TimeSpan by) => UtcNow += by;
-}
-
-/// <summary>
-/// The handle a store contract holds on one fresh database (#288), with nothing of any engine in it: the clock its stores are timed by and
-/// the master key its stores encrypt with. Everything else a contract reaches through its engine.
-/// </summary>
-public interface IEngineDb : IAsyncDisposable
-{
-    FakeClock Clock { get; }
-    AesGcmSecretProtector Protector { get; }
-}
-
 /// <summary>The tenants the tests make.</summary>
 public static class TestTenants
 {
@@ -32,7 +16,7 @@ public static class TestTenants
 
 /// <summary>
 /// A migrated database with its stores, built with the test project's composition (<c>TestComposition.cs</c>): the core's tests run the
-/// core alone, the hosted tests run the hosted service's parts as production does (#197). This file is shared by both projects. It is the
+/// core alone, the hosted tests run the hosted service's parts as production does. This file is shared by both projects. It is the
 /// SQLite engine's <see cref="IEngineDb"/>; only that engine and the SQLite fixtures see it as a <see cref="TestDb"/>.
 /// </summary>
 public sealed partial class TestDb : IEngineDb
@@ -67,7 +51,7 @@ public sealed partial class TestDb : IEngineDb
         }
         catch
         {
-            _temp.Dispose();   // #292: nobody else holds the folder yet
+            _temp.Dispose();   // Nobody else holds the folder yet
             throw;
         }
     }
@@ -82,7 +66,7 @@ public sealed partial class TestDb : IEngineDb
         }
         catch
         {
-            await t.DisposeAsync();   // #292: a failed migration leaves no folder behind
+            await t.DisposeAsync();   // A failed migration leaves no folder behind
             throw;
         }
     }
@@ -91,7 +75,7 @@ public sealed partial class TestDb : IEngineDb
 
     /// <summary>
     /// A tenant made by the core alone, with no module's creation participant (so no module's row): for tests that build an older,
-    /// core-only database and then upgrade it (#196: a module's tables come only with its own track, after core version 21).
+    /// core-only database and then upgrade it (a module's tables come only with its own track, after core version 21).
     /// </summary>
     public Task AddCoreTenantAsync(string id = "acme", int cooldown = 14) =>
         new SqliteTenantStore(Db, Clock, Protector, []).CreateAsync(TestTenants.Operator(id, cooldown), default);

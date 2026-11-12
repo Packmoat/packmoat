@@ -4,7 +4,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Modules;
 
 /// <summary>
-/// A piece of the server that is not the core proxy (#190): its own services, and optionally its own site on its own hostname. The
+/// A piece of the server that is not the core proxy: its own services, and optionally its own site on its own hostname. The
 /// composition root (<see cref="PackmoatApp.Build"/>) calls each module in order and names none of their types. The core with no modules
 /// is a complete proxy.
 /// <para>Unstable: may change in any release before 1.0.</para>
@@ -25,7 +25,7 @@ public interface IPackmoatModule
     ModuleSite? ConfigureSite(PackmoatModuleContext context, IReadOnlyCollection<string> takenHosts);
 
     /// <summary>
-    /// The module's own migration track (#196), or null for none. The core's migrations run first, then each module's track in order,
+    /// The module's own migration track, or null for none. The core's migrations run first, then each module's track in order,
     /// at every start. Two modules may not declare the same track (the start is refused), and a track table in the database that no
     /// module declares refuses the start too.
     /// </summary>
@@ -34,14 +34,14 @@ public interface IPackmoatModule
 
 /// <summary>
 /// What a module is given: the builder it registers into, the core's parsed options, the core's database (PACKMOAT_DB), or null
-/// when there is none (a module's stores are made over it, as the core's are), and the database engine (PACKMOAT_DB_ENGINE, #232 P1).
+/// when there is none (a module's stores are made over it, as the core's are), and the database engine (PACKMOAT_DB_ENGINE).
 /// A module that can run on only one engine refuses to start on any other. A module reads its own settings itself.
 /// <para>Unstable: may change in any release before 1.0.</para>
 /// </summary>
 public sealed record PackmoatModuleContext(WebApplicationBuilder Builder, PackmoatOptions Options, IRelationalDatabase? Database, DatabaseEngine Engine)
 {
     /// <summary>
-    /// The job lease a module's scheduled jobs take (#232 M2), through the core's port: the one the core's retention pass takes, over the
+    /// The job lease a module's scheduled jobs take, through the core's port: the one the core's retention pass takes, over the
     /// core's database. Call it when the job is made (it needs the built services). Always granted when there is no database.
     /// </summary>
     public Func<IServiceProvider, IJobLease> JobLease { get; init; } = _ => UnsharedJobLease.Instance;

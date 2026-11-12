@@ -4,7 +4,7 @@ using Packmoat.Infrastructure.Tests.Postgres;
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// The rules the schema enforces itself (#288 P2, PR 6), checked by what they do, on every engine: each of SQLite's triggers
+/// The rules the schema enforces itself, checked by what they do, on every engine: each of SQLite's triggers
 /// (<see cref="SchemaTriggerTests.Current"/>) has tests named <c>&lt;trigger&gt;__&lt;behaviour&gt;</c> (SchemaRulesTests checks the names
 /// match), and every CHECK constraint refuses a probe row and accepts one at its boundary (<see cref="CheckProbes"/>). A trigger with the
 /// right name and a body that does nothing, or a CHECK with its operator changed, passes the schema comparison but fails here. Raw SQL
@@ -139,7 +139,7 @@ public abstract class SchemaRulesContract : SqlContract<ISqlEngine>
         Assert.Equal(0L, await ScalarAsync(t, "SELECT COUNT(*) FROM admin_actions WHERE detail='changed'"));
     }
 
-    [EngineFact]   // mutations: 364 days; 366 days; ">" for "<"; a do-nothing body (nothing tested this floor before PR 6, on either engine)
+    [EngineFact]   // mutations: 364 days; 366 days; ">" for "<"; a do-nothing body (nothing tested this floor, on either engine)
     public async Task admin_actions_no_delete__refuses_a_minute_younger_than_365_days_allows_a_minute_older()
     {
         await using var t = await CreateDbAsync();
@@ -259,7 +259,7 @@ public abstract class SchemaRulesContract : SqlContract<ISqlEngine>
     /// accept and the rows it must refuse, at the boundary (a <c>&gt;= 0</c> accepts 0 and refuses -1, so <c>&gt;</c> for <c>&gt;=</c>
     /// fails) and one for each branch. In the INSERT and the values: <c>{t}</c> is a tenant made for the row, <c>{n}</c> a number of the
     /// row's own, <c>{guid}</c> a lower-case 36-character id of its own (<c>{GUID}</c> upper-case, <c>{guid35}</c> one character short)
-    /// and <c>{blob}</c> a blob. Each refused row must be refused by this very CHECK (#298 review L2), named by <see cref="Name"/>
+    /// and <c>{blob}</c> a blob. Each refused row must be refused by this very CHECK, named by <see cref="Name"/>
     /// where the engine names constraints (PostgreSQL) and by <see cref="Check"/>, its text, where it does not (SQLite): a row another
     /// CHECK on the table also refuses would otherwise pass with this one weakened.
     /// </summary>
@@ -327,6 +327,8 @@ public abstract class SchemaRulesContract : SqlContract<ISqlEngine>
         new("decision_records", "decision_records_seen_count_check", "seen_count >= 1",
             "INSERT INTO decision_records(tenant_id, ecosystem, package_id, version, decision, reason, policy_revision, first_seen_at, last_seen_at, seen_count) " +
             $"VALUES('{{t}}', 'nuget', 'p', '1.0.0', 'allowed', 'r', 1, {T}, {T}, {{v}})", ["1"], ["0"]),
+        new("rate_counters", "rate_counters_hits_check", "hits >= 1",
+            $"INSERT INTO rate_counters(scope, subject, started_at, ends_at, hits) VALUES('s{{n}}', 'k', {T}, {T}, {{v}})", ["1"], ["0", "-1"]),
     ];
 
     // mutations (N1): an operator changed (>= to >, = 36 to >= 36); a CHECK dropped on one engine; a branch of upstream_identities' dropped

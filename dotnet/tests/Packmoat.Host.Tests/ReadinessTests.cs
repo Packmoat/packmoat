@@ -14,7 +14,7 @@ using static Packmoat.Host.Tests.ProxyFixture;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// /readyz (#233): through the whole production server (a database, PACKMOAT_HOSTS, a module with its own migration track), it answers
+/// /readyz: through the whole production server (a database, PACKMOAT_HOSTS, a module with its own migration track), it answers
 /// exactly "ready" or "not ready", says nothing of why, logs only the kind and only when the answer changes, keeps an answer for 5 seconds,
 /// fails closed, and writes nothing. It is reached without a token and is otherwise filtered as /healthz is.
 /// </summary>
@@ -52,7 +52,7 @@ public class ReadinessTests
             }
             catch
             {
-                await s.DisposeAsync();   // the folder, and a server that started (#292)
+                await s.DisposeAsync();   // the folder, and a server that started
                 throw;
             }
         }
@@ -66,7 +66,7 @@ public class ReadinessTests
                 services.AddSingleton<ILoggerProvider>(s.Logs);
             }, o =>
             {
-                o.DatabasePath = s.DbPath;
+                o.Database = s.DbPath;
                 o.MasterKeyBase64 = s.Key;
                 o.AllowedHosts = Host;
             });
@@ -330,4 +330,68 @@ public class ReadinessTests
     [InlineData(3, null, 0, false)]   // no table
     public void A_track_is_current_only_with_every_known_version_and_none_newer(int latest, int? newest, int recorded, bool current) =>
         Assert.Equal(current, new TrackVersion("t", latest, newest, recorded).IsCurrent);
+
+    [Theory]   // mutations: a newer track taken without every version this build knows; a track behind taken as migrated past
+    [InlineData(3, 3, 3, true)]
+    [InlineData(3, 4, 3, true)]       // the next release's migration recorded too
+    [InlineData(3, 9, 3, true)]
+    [InlineData(3, 4, 2, false)]      // newer, but a row this build knows removed
+    [InlineData(3, 2, 2, false)]      // behind
+    [InlineData(3, null, 0, false)]   // no table
+    public void A_track_migrated_past_this_build_needs_every_version_it_knows(int latest, int? newest, int recorded, bool ok) =>
+        Assert.Equal(ok, new TrackVersion("t", latest, newest, recorded).IsCurrentOrMigratedPast);
+
+    /// <summary>
+    /// A schema a newer release migrated is ready only where the composition says so (PostgreSQL's: the previous release's copies keep
+    /// serving through a rolling upgrade); by default, as on SQLite, it is not.
+    /// </summary>
+    [Fact]   // mutations: the newer schema ready by default; the setting ignored
+    public async Task A_schema_migrated_past_this_build_is_ready_only_when_allowed()
+    {
+        static Task<IReadOnlyList<TrackVersion>> Newer(CancellationToken _) => Task.FromResult<IReadOnlyList<TrackVersion>>([new("core", 3, 4, 3), new("probe", 2, 2, 2)]);
+        static Task<IReadOnlyList<TrackVersion>> Gap(CancellationToken _) => Task.FromResult<IReadOnlyList<TrackVersion>>([new("core", 3, 4, 2)]);
+        static Task<bool> Key(CancellationToken _) => Task.FromResult(true);
+        Assert.Equal(Readiness.Failure.Schema, await Check(Newer, Key).CheckAsync(default));
+        Assert.Equal(Readiness.Failure.None, await new Readiness(Newer, Key, new FakeClock(), NullLogger.Instance, newerSchemaReady: true).CheckAsync(default));
+        Assert.Equal(Readiness.Failure.Schema, await new Readiness(Gap, Key, new FakeClock(), NullLogger.Instance, newerSchemaReady: true).CheckAsync(default));
+        Assert.Equal(Readiness.Failure.None, await new Readiness(Current, Key, new FakeClock(), NullLogger.Instance, newerSchemaReady: true).CheckAsync(default));
+    }
+
+    [Fact]   // mutations: the warning removed; logged on every probe; logged on a current schema; logged where a newer schema is not ready (SQLite)
+    public async Task A_copy_ready_on_a_newer_schema_warns_once_to_finish_the_rollout()
+    {
+        static Task<IReadOnlyList<TrackVersion>> Newer(CancellationToken _) => Task.FromResult<IReadOnlyList<TrackVersion>>([new("core", 3, 4, 3)]);
+        static Task<bool> Key(CancellationToken _) => Task.FromResult(true);
+        const string Warning = "a newer release has migrated the database; finish the rollout";
+        static int Warnings(CapturingLoggerProvider p) { lock (p.Lines) return p.Lines.Count(l => l.Contains(Warning, StringComparison.Ordinal)); }
+
+        var logs = new CapturingLoggerProvider();
+        var clock = new FakeClock();
+        var ready = new Readiness(Newer, Key, clock, logs.CreateLogger(Readiness.LogCategory), newerSchemaReady: true);
+        Assert.Equal(Readiness.Failure.None, await ready.CheckAsync(default));
+        Assert.Equal(1, Warnings(logs));
+        for (var i = 0; i < 3; i++)
+        {
+            clock.Advance(Readiness.CacheFor + TimeSpan.FromSeconds(1));   // a fresh probe each time
+            Assert.Equal(Readiness.Failure.None, await ready.CheckAsync(default));
+        }
+        Assert.Equal(1, Warnings(logs));   // once per process
+
+        var current = new CapturingLoggerProvider();
+        await new Readiness(Current, Key, new FakeClock(), current.CreateLogger(Readiness.LogCategory), newerSchemaReady: true).CheckAsync(default);
+        Assert.Equal(0, Warnings(current));
+
+        var sqlite = new CapturingLoggerProvider();   // not ready there, so nothing to finish
+        Assert.Equal(Readiness.Failure.Schema, await new Readiness(Newer, Key, new FakeClock(), sqlite.CreateLogger(Readiness.LogCategory)).CheckAsync(default));
+        Assert.Equal(0, Warnings(sqlite));
+    }
+
+    [Fact]   // mutation: the SQLite server's readiness takes a newer schema as ready (its one server is never upgraded under itself)
+    public async Task On_sqlite_a_schema_a_newer_build_migrated_is_not_ready()
+    {
+        await using var s = await Server.StartAsync();
+        await s.Sql("INSERT INTO schema_migrations(version, applied_at) VALUES(9999, '2026-01-01T00:00:00.0000000+00:00')");
+        AssertNotReady(await s.Get());
+        Assert.Contains("not ready (schema)", string.Join("\n", s.ReadinessLines()));
+    }
 }

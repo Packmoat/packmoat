@@ -1,6 +1,6 @@
 namespace Packmoat.Infrastructure.Tests;
 
-/// <summary>The settings reader (#233): a variable, or the file its _FILE variable names, and the errors that stop the start.</summary>
+/// <summary>The settings reader: a variable, or the file its _FILE variable names, and the errors that stop the start.</summary>
 public class SettingsTests
 {
     private const string Name = "PACKMOAT_EXAMPLE";
@@ -126,11 +126,11 @@ public class SettingsTests
     }
 }
 
-/// <summary>The settings reader's errors in packmoat-admin (#233). Apart from SettingsTests because it opens a database.</summary>
+/// <summary>The settings reader's errors in packmoat-admin. Apart from SettingsTests because it opens a database.</summary>
 [Collection("sqlite-pools")]
 public class SettingsCliTests
 {
-    [Fact]   // a bad file setting in packmoat-admin is the usual "error:" line and exit 1, not a crash (#233)
+    [Fact]   // a bad file setting in packmoat-admin is the usual "error:" line and exit 1, not a crash
     public async Task The_admin_tool_reports_a_bad_file_setting_as_an_error_line()
     {
         const string variable = "PACKMOAT_SETTINGS_TEST_CLI_KEY_7F3A";

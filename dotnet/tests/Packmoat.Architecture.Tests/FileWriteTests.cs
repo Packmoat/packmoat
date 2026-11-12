@@ -1,7 +1,7 @@
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// No file writes in the core outside an allowlist (#278 step 0, architecture test 6). A copy of the server does not share its disk with
+/// No file writes in the core outside an allowlist. A copy of the server does not share its disk with
 /// another copy, so whatever it writes to a file only it has. Each file below writes, and says what and why; anything else keeps its state
 /// behind a port. The hosted projects have their own twin.
 /// </summary>
@@ -14,6 +14,7 @@ public class FileWriteTests
         ["Packmoat.Infrastructure/MigrationDryRun.cs"] = "db check-migrations: a private temporary copy of a database file, deleted after",
         ["Packmoat.Infrastructure/SqliteBackup.cs"] = "the admin tool's backup and restore of the SQLite database file",
         ["Packmoat.Infrastructure/SqliteDatabase.cs"] = "the SQLite database file itself (owner-only), and its folder",
+        ["Packmoat.Infrastructure/SqliteInstanceLock.cs"] = "the SQLite server's empty, owner-only lock file beside the database: SQLite runs one copy",
     };
 
     private static (string Named, string Source)[] CoreSource() => EngineTypeScan.SourceFiles(Path.Combine(CoreRoot.Path(), "dotnet", "src"));

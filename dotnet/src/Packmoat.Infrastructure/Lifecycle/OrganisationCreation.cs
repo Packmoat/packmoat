@@ -10,7 +10,7 @@ namespace Packmoat.Infrastructure.Lifecycle;
 public sealed record OrganisationMember(string ObjectId, string DisplayName);
 
 /// <summary>
-/// One organisation to make (#195): the tenant, the customer Microsoft directory linked to it, who linked it, and optionally its first
+/// One organisation to make: the tenant, the customer Microsoft directory linked to it, who linked it, and optionally its first
 /// member and the admin_actions record of making it. All are written in one transaction, or nothing is.
 /// </summary>
 /// <param name="AzureTenantId">The directory (tenant) id: a GUID, stored lower-case.</param>
@@ -27,7 +27,7 @@ public enum OrganisationCreateResult
 }
 
 /// <summary>
-/// Where an organisation is made (#195, #288): the tenant, its directory link, the first member and the record, in one transaction or
+/// Where an organisation is made: the tenant, its directory link, the first member and the record, in one transaction or
 /// not at all. <see cref="SqliteOrganisationStore"/> is the SQLite adapter; the store contract holds what every adapter must do.
 /// </summary>
 public interface IOrganisationStore
@@ -41,7 +41,7 @@ public interface IOrganisationStore
 }
 
 /// <summary>
-/// The core's one way to make an organisation (#195): a tenant and its directory link in a single IMMEDIATE transaction (the write lock
+/// The core's one way to make an organisation: a tenant and its directory link in a single IMMEDIATE transaction (the write lock
 /// is taken before the first read), so two creations for one directory, or a creation and the operator's bind, are serialised: the
 /// second sees the first's link and gets <see cref="OrganisationCreateResult.DirectoryTaken"/>. In order:
 /// <list type="number">

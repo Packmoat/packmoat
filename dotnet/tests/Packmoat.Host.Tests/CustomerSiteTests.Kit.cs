@@ -55,7 +55,7 @@ public sealed class CapturingLoggerProvider : ILoggerProvider
     }
 }
 
-/// <summary>The customer site's test names (#197): the core's tests and the hosted tests (which compile this file in) share them.</summary>
+/// <summary>The customer site's test names: the core's tests and the hosted tests (which compile this file in) share them.</summary>
 public partial class CustomerSiteTests
 {
     public const string AppHost = "app.packmoat.test";

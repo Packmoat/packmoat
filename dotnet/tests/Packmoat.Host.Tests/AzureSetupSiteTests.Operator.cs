@@ -8,7 +8,7 @@ using Packmoat.Host.Web;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// #207: an operator-made tenant made for its customer to connect (feed_setup 'customer'), on a self-hosted install: no hosted module
+/// An operator-made tenant made for its customer to connect (feed_setup 'customer'), on a self-hosted install: no hosted module
 /// at all. Its Admin gets the home card and the wizard; until Connect it has no upstream, so it serves nothing and
 /// the customer site issues no token.
 /// </summary>

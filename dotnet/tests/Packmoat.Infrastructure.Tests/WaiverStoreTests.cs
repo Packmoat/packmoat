@@ -2,10 +2,23 @@ using System.Globalization;
 using Microsoft.Data.Sqlite;
 using Packmoat.Application;
 using Packmoat.Domain;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
-/// <summary><see cref="WaiverStoreContract"/> on SQLite, and the tests only SQLite has (#232 S1).</summary>
+/// <summary>
+/// <see cref="WaiverStoreContract"/> on PostgreSQL, each test on a database of its own. Its cap test
+/// (<see cref="WaiverStoreContract.Twenty_six_concurrent_customer_inserts_leave_exactly_twenty_five"/>) is the waiver cap's race test:
+/// it fails without the tenant row's FOR NO KEY UPDATE.
+/// </summary>
+[Collection(PostgresCollection.Name)]
+[Trait("Category", PostgresTestServer.Category)]
+public class PostgresWaiverStoreTests : WaiverStoreContract
+{
+    protected override IStoreEngine Engine => PostgresStoreEngine.Instance;
+}
+
+/// <summary><see cref="WaiverStoreContract"/> on SQLite, and the tests only SQLite has.</summary>
 [Collection("sqlite-pools")]
 public class WaiverStoreTests : WaiverStoreContract
 {
@@ -106,12 +119,12 @@ public class WaiverStoreTests : WaiverStoreContract
     }
 
     [Fact]
-    public async Task This_build_refuses_a_database_one_migration_newer_than_twenty_three()
+    public async Task This_build_refuses_a_database_one_migration_newer_than_twenty_six()
     {
         await using var t = await TestDb.CreateAsync();
-        Assert.Equal(23, SqliteDatabase.LatestVersion);   // #207 added migration 22, #232 M1 migration 23
-        await ExecAsync(t.Db, "INSERT INTO schema_migrations(version, applied_at) VALUES(24, 'later')");
+        Assert.Equal(26, SqliteDatabase.LatestVersion);   // migration 22 was added, then 23, then 24 (the rate counter), 25 (the form nonces), 26 (the feed setup scratch)
+        await ExecAsync(t.Db, "INSERT INTO schema_migrations(version, applied_at) VALUES(27, 'later')");
         var ex = await Assert.ThrowsAsync<SchemaTooNewException>(() => t.Db.MigrateAsync(TestTracks.Modules));
-        Assert.Contains("version 24, newer than this build knows (23)", ex.Message);
+        Assert.Contains("version 27, newer than this build knows (26)", ex.Message);
     }
 }

@@ -5,8 +5,10 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// PACKMOAT_DB_ENGINE (#232 P1): unset (as on the live server) and <c>sqlite</c> compose exactly as before; <c>postgres</c>, which this
-/// build cannot run yet, and any unknown value stop the start with one <c>error:</c> line naming the setting, before anything is written.
+/// PACKMOAT_DB_ENGINE: unset (as on the live server) and <c>sqlite</c> compose exactly as before; any unknown value stops the
+/// start with one <c>error:</c> line naming the setting, before anything is written. <c>postgres</c> is selectable
+/// (declared change: it was refused): it starts only with a connection string and the database's cookie keys, and only once the start's
+/// checks pass (PostgresServerStartTests).
 /// </summary>
 [Collection("sqlite-pools")]
 public class DatabaseEngineTests
@@ -39,13 +41,12 @@ public class DatabaseEngineTests
     [InlineData(DatabaseEngine.Postgres, false)]
     public void Only_sqlites_database_is_a_file(DatabaseEngine engine, bool file) => Assert.Equal(file, DatabaseEngines.IsFile(engine));
 
-    [Fact]
-    public void Only_sqlite_is_available_in_this_build()
+    [Fact]   // mutation: RequireAvailable still refuses postgres
+    public void Both_engines_are_available_in_this_build()
     {
         Assert.Equal(DatabaseEngine.Sqlite, DatabaseEngines.RequireAvailable(null));
         Assert.Equal(DatabaseEngine.Sqlite, DatabaseEngines.RequireAvailable("sqlite"));
-        var ex = Assert.Throws<SettingsException>(() => DatabaseEngines.RequireAvailable("postgres"));
-        Assert.Equal("PACKMOAT_DB_ENGINE=postgres is not available in this build yet.", ex.Message);
+        Assert.Equal(DatabaseEngine.Postgres, DatabaseEngines.RequireAvailable("postgres"));
     }
 
     [Fact]   // the setting is read through the one settings reader, so it can come from a file as every other can
@@ -66,7 +67,7 @@ public class DatabaseEngineTests
 
     private static void Options(PackmoatOptions o, string dir, string? engine)
     {
-        o.DatabasePath = Path.Combine(dir, "packmoat.db");
+        o.Database = Path.Combine(dir, "packmoat.db");
         o.MasterKeyBase64 = AesGcmSecretProtector.GenerateKeyBase64();
         o.AllowedHosts = "feeds.example.test";
         o.DatabaseEngine = engine;
@@ -100,10 +101,15 @@ public class DatabaseEngineTests
     /// <summary>Thrown when the server built, which these tests say it must not.</summary>
     private sealed class StartedException : Exception;
 
-    [Theory]   // mutations: the server starts on postgres; an unknown value is taken
-    [InlineData("postgres", "error: PACKMOAT_DB_ENGINE=postgres is not available in this build yet.")]
-    [InlineData("mysql-xyz", "error: PACKMOAT_DB_ENGINE must be sqlite or postgres.")]
-    public void Postgres_and_an_unknown_value_stop_the_start_with_one_error_line_before_anything_is_written(string engine, string line)
+    [Theory]   // mutations: an unknown value is taken; postgres given a key folder, a file path or a bad PACKMOAT_DB_SINGLE_ROLE starts
+    [InlineData("mysql-xyz", null, null, "error: PACKMOAT_DB_ENGINE must be sqlite or postgres.")]
+    // Postgres is taken now, but not with folder cookie keys (the default), whose folder would sit beside no file
+    [InlineData("postgres", null, null, "error: PACKMOAT_DB_ENGINE=postgres needs PACKMOAT_COOKIE_KEYS=database: its PACKMOAT_DB is no file to keep a key folder next to.")]
+    // nor with a file path for PACKMOAT_DB (named, never echoed)
+    [InlineData("postgres", "database", null, "error: PACKMOAT_DB is not a valid PostgreSQL connection string.")]
+    // nor with PACKMOAT_DB_SINGLE_ROLE anything but on or off (read on postgres only)
+    [InlineData("postgres", "database", "yes", "error: PACKMOAT_DB_SINGLE_ROLE must be on or off.")]
+    public void A_bad_engine_setting_stops_the_start_with_one_error_line_before_anything_is_written(string engine, string? cookieKeys, string? singleRole, string line)
     {
         var dir = Directory.CreateTempSubdirectory("packmoat-engine-bad-").FullName;
         try
@@ -113,7 +119,12 @@ public class DatabaseEngineTests
             // A build that succeeds is never run (that would serve until killed): it is disposed and reported as a plain failure.
             var code = StartupFailure.Run(() =>
             {
-                var app = PackmoatApp.Build(["--urls", "http://127.0.0.1:0"], [probe], null, o => Options(o, dir, engine));
+                var app = PackmoatApp.Build(["--urls", "http://127.0.0.1:0"], [probe], null, o =>
+                {
+                    Options(o, dir, engine);
+                    o.CookieKeys = cookieKeys;
+                    o.DatabaseSingleRole = singleRole;
+                });
                 app.DisposeAsync().AsTask().GetAwaiter().GetResult();
                 throw new StartedException();
             }, error);

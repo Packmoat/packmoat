@@ -5,9 +5,9 @@ using System.Threading.Channels;
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// In-memory state is declared (#278 step 0, architecture test 7). Every field of a core class that holds a mutable collection, a
+/// In-memory state is declared. Every field of a core class that holds a mutable collection, a
 /// concurrent collection, a channel, a cache or an in-process lock is on this list, which says how it behaves with more than one copy of
-/// the server: "per copy: why that is safe", "per copy until #250: what breaks" (E10 #250 gives it a port; until then more than one copy
+/// the server: "per copy: why that is safe", "per copy until shared: what breaks" (a port will share it; until then more than one copy
 /// needs sticky sessions), or "shared via port: which". The hosted projects have their own twin.
 /// </summary>
 public class InMemoryStateTests
@@ -49,28 +49,21 @@ public class InMemoryStateTests
         ["Packmoat.Application.RecordingPackageGate._tenantKeys"] = "per copy: caps one tenant's share of this copy's buffer",
         ["Packmoat.Application.RecordingPackageGate._droppedByTenant"] = "per copy: this copy's dropped-record counts, for its warning",
         ["Packmoat.Application.RecordingPackageGate._flushing"] = "per copy: one flush at a time from this copy's buffer",
-        // the token limiters stay per copy (store-agnostic plan): with N copies an address gets N times the limit, accepted
-        ["Packmoat.Host.Auth.TokenRateLimiter._windows"] = "per copy: a token's requests per minute; N copies allow N times, accepted",
-        ["Packmoat.Host.Auth.AddressWindows._byKey"] = "per copy: the token guess limiter; N copies allow N times the guesses, accepted",
-        ["Packmoat.Host.Auth.AddressWindows+Window.TokenKeys"] = "per copy: the token guess limiter's tokens per address, as above",
-        // breaks with more than one copy: E10 #250
-        ["Packmoat.Host.Auth.FailedAuthLimiter._byAddress"] = "per copy until #250: each copy counts an address's failed sign-ins alone",
-        ["Packmoat.Host.Web.FormNonces._live"] = "per copy until #250: a form posted to another copy is refused",
-        ["Packmoat.Application.AzureSetupState._drafts"] = "per copy until #250: the setup wizard's step 1 draft is lost on another copy",
-        ["Packmoat.Application.AzureSetupState._held"] = "per copy until #250: the setup wizard's last check result is lost on another copy",
-        ["Packmoat.Application.AzureSetupState._running"] = "per copy until #250: two copies can run a tenant's check at once",
-        ["Packmoat.Application.PersonRateLimiter._counts"] = "per copy until #250: each copy counts a person's attempts alone",
-        ["Packmoat.Host.Admin.AdminWriteLimiter._byAddress"] = "per copy until #250: each copy counts an address's admin writes alone",
+        // the limiters of traffic nobody has signed in to stay per copy: with N copies an address gets N times the limit, accepted
+        ["Packmoat.Host.Auth.TokenRateLimiter._windows"] = "per copy: N× looser with N replicas, accepted; unauthenticated traffic must not write to the database",
+        ["Packmoat.Host.Auth.AddressWindows._byKey"] = "per copy: N× looser with N replicas, accepted; unauthenticated traffic must not write to the database",
+        ["Packmoat.Host.Auth.AddressWindows+Window.TokenKeys"] = "per copy: N× looser with N replicas, accepted; unauthenticated traffic must not write to the database",
+        ["Packmoat.Host.Auth.FailedAuthLimiter._byAddress"] = "per copy: N× looser with N replicas, accepted; unauthenticated traffic must not write to the database",
+        // the shared stores' stand-ins where there is no database: never a server's
+        ["Packmoat.Application.InProcessRateCounter._windows"] = "per copy: only with no database (test hosts with fakes); a server counts in IRateCounter's store",
+        ["Packmoat.Application.InProcessFormNonceStore._nonces"] = "per copy: only with no database (test hosts with fakes); a server keeps them in IFormNonceStore's store",
+        ["Packmoat.Application.InProcessFeedSetupScratch._rows"] = "per copy: only with no database (test hosts with fakes); a server keeps them in IFeedSetupScratch's store",
     };
 
-    /// <summary>What is known to break with more than one copy (store-agnostic plan, E10 #250). It must say so until #250 lands.</summary>
-    internal static readonly string[] UntilE10 =
-    [
-        "Packmoat.Host.Web.FormNonces._live",
-        "Packmoat.Application.AzureSetupState._drafts", "Packmoat.Application.AzureSetupState._held", "Packmoat.Application.AzureSetupState._running",
-        "Packmoat.Application.PersonRateLimiter._counts", "Packmoat.Host.Admin.AdminWriteLimiter._byAddress",
-        "Packmoat.Host.Auth.FailedAuthLimiter._byAddress",
-    ];
+    /// <summary>What is known to break with more than one copy. It must say so until a port shares it.</summary>
+    /// <para>Empty since the setup wizard's state is shared (its last checks and drafts in IFeedSetupScratch, its one check at a time
+    /// under the job lease): nothing declared is known to break.</para>
+    internal static readonly string[] UntilE10 = [];
 
     private static string[] CoreState() =>
         InMemoryStateScan.StateFields(InMemoryStateScan.PackmoatTypes(Assemblies.Select(n => Assembly.Load(n))));
@@ -81,7 +74,7 @@ public class InMemoryStateTests
     {
         var undeclared = InMemoryStateScan.Undeclared(CoreState(), Declared);
         Assert.True(undeclared.Length == 0, "These fields hold in-memory state another copy of the server does not see. Keep it behind a " +
-            "port, or declare it here (\"per copy: why safe\", \"per copy until #250: what breaks\" or \"shared via port: which\"):\n  "
+            "port, or declare it here (\"per copy: why safe\", \"per copy until shared: what breaks\" or \"shared via port: which\"):\n  "
             + string.Join("\n  ", undeclared));
     }
 
@@ -92,8 +85,116 @@ public class InMemoryStateTests
     public void Every_reason_is_one_short_line_of_a_known_kind() => Assert.Empty(InMemoryStateScan.BadReasons(Declared));
 
     [Fact]   // not hidden: what breaks multi-copy says so
-    public void What_breaks_with_more_than_one_copy_says_until_250() =>
-        Assert.All(UntilE10, f => Assert.StartsWith("per copy until #250: ", Declared[f]));
+    public void What_breaks_with_more_than_one_copy_says_until_250()
+    {
+        Assert.All(UntilE10, f => Assert.StartsWith("per copy until shared: ", Declared[f]));
+        // and the list is every such declaration: one added without being listed here fails
+        Assert.Equal(UntilE10.Order(StringComparer.Ordinal),
+            Declared.Where(d => d.Value.StartsWith("per copy until shared: ", StringComparison.Ordinal)).Select(d => d.Key).Order(StringComparer.Ordinal));
+    }
+
+    /// <summary>The limiters of traffic nobody has signed in to: they stay per copy, so it never becomes database writes.</summary>
+    internal static readonly string[] UnauthenticatedLimiters =
+    [
+        "Packmoat.Host.Auth.TokenRateLimiter._windows", "Packmoat.Host.Auth.AddressWindows._byKey", "Packmoat.Host.Auth.AddressWindows+Window.TokenKeys",
+        "Packmoat.Host.Auth.FailedAuthLimiter._byAddress",
+    ];
+
+    [Fact]   // per copy on purpose, and saying so in the one agreed sentence
+    public void The_unauthenticated_limiters_stay_per_copy_and_say_why() =>
+        Assert.All(UnauthenticatedLimiters, f =>
+            Assert.Equal("per copy: N× looser with N replicas, accepted; unauthenticated traffic must not write to the database", Declared[f]));
+
+    /// <summary>
+    /// The signed-in limits count in the shared counter. The in-process counter is made in one place only, the composition
+    /// root's no-database fallback; a limit built over one anywhere else would count per copy again, unseen by the declarations above.
+    /// </summary>
+    [Fact]   // mutation: a call site given new InProcessRateCounter(clock) instead of the registered IRateCounter
+    public void Only_the_no_database_fallback_makes_an_in_process_rate_counter()
+    {
+        var files = EngineTypeScan.SourceFiles(Path.Combine(CoreRoot.Path(), "dotnet", "src"));
+        Assert.True(files.Length > 100, "the scan found too few source files to mean anything");
+        var makers = files.Where(f => f.Source.Contains("new InProcessRateCounter(", StringComparison.Ordinal)).Select(f => f.Named).ToArray();
+        Assert.Equal(["Packmoat.Host/PackmoatApp.cs"], makers);
+        var app = files.Single(f => f.Named == "Packmoat.Host/PackmoatApp.cs").Source;
+        Assert.Contains("if (stores is null) builder.Services.TryAddSingleton<IRateCounter>(sp => new InProcessRateCounter(", app);
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Count(app, "new InProcessRateCounter\\("));
+        Assert.DoesNotContain(files, f => System.Text.RegularExpressions.Regex.IsMatch(f.Source, @"\bclass PersonRateLimiter\b"));
+    }
+
+    /// <summary>
+    /// The form nonces are kept in the shared store. The in-process store is made in one place only, the composition root's no-database
+    /// fallback; a site's nonces over one anywhere else would be per copy again (a form posted to another copy refused), unseen above.
+    /// </summary>
+    [Fact]   // mutation: a site's FormNonces given new InProcessFormNonceStore(clock) instead of the registered IFormNonceStore
+    public void Only_the_no_database_fallback_makes_an_in_process_form_nonce_store()
+    {
+        var files = EngineTypeScan.SourceFiles(Path.Combine(CoreRoot.Path(), "dotnet", "src"));
+        Assert.True(files.Length > 100, "the scan found too few source files to mean anything");
+        var makers = files.Where(f => f.Source.Contains("new InProcessFormNonceStore(", StringComparison.Ordinal)).Select(f => f.Named).ToArray();
+        Assert.Equal(["Packmoat.Host/PackmoatApp.cs"], makers);
+        var app = files.Single(f => f.Named == "Packmoat.Host/PackmoatApp.cs").Source;
+        Assert.Contains("if (stores is null) builder.Services.TryAddSingleton<IFormNonceStore>(sp => new InProcessFormNonceStore(", app);
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Count(app, "new InProcessFormNonceStore\\("));
+    }
+
+    /// <summary>
+    /// The setup wizard's last checks and drafts are kept in the shared scratch. The in-process scratch is made in one place only, the
+    /// composition root's no-database fallback; the wizard's state over one anywhere else would be per copy again (a sign-in's return to
+    /// another copy would confirm nobody), unseen above.
+    /// </summary>
+    [Fact]   // mutation: the wizard's AzureSetupState given new InProcessFeedSetupScratch(clock) instead of the registered IFeedSetupScratch
+    public void Only_the_no_database_fallback_makes_an_in_process_feed_setup_scratch()
+    {
+        var files = EngineTypeScan.SourceFiles(Path.Combine(CoreRoot.Path(), "dotnet", "src"));
+        Assert.True(files.Length > 100, "the scan found too few source files to mean anything");
+        var makers = files.Where(f => f.Source.Contains("new InProcessFeedSetupScratch(", StringComparison.Ordinal)).Select(f => f.Named).ToArray();
+        Assert.Equal(["Packmoat.Host/PackmoatApp.cs"], makers);
+        var app = files.Single(f => f.Named == "Packmoat.Host/PackmoatApp.cs").Source;
+        Assert.Contains("if (stores is null) builder.Services.TryAddSingleton<IFeedSetupScratch>(sp => new InProcessFeedSetupScratch(", app);
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Count(app, "new InProcessFeedSetupScratch\\("));
+        // and the wizard's state is made over the registered scratch and the composition root's job lease, nowhere else
+        var setup = files.Single(f => f.Named == "Packmoat.Host/Customer/AppAzureSetup.cs").Source;
+        Assert.Contains("new AzureSetupState(sp.GetRequiredService<IFeedSetupScratch>(), jobLease(sp), ", setup);
+        Assert.Equal(["Packmoat.Host/Customer/AppAzureSetup.cs"], files.Where(f => f.Source.Contains("new AzureSetupState(", StringComparison.Ordinal)).Select(f => f.Named));
+        Assert.Contains("AppSite.Configure(builder, options, engine, admin?.Host, sp => JobLeaseFor(sp, stores, options.JobLeaseTtl))", app);
+    }
+
+    [Fact]   // the wizard's scratch keeps each kind apart, and every kind is one the store takes
+    public void The_feed_setup_scratch_kinds_are_distinct_and_one_per_constant()
+    {
+        var kinds = Packmoat.Application.FeedSetupScratchKinds.All;
+        Assert.Equal(kinds.Count, kinds.Distinct(StringComparer.Ordinal).Count());
+        var constants = typeof(Packmoat.Application.FeedSetupScratchKinds).GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral).Select(f => (string)f.GetRawConstantValue()!).Order(StringComparer.Ordinal);
+        Assert.Equal(constants, kinds.Order(StringComparer.Ordinal));
+    }
+
+    [Fact]   // mutation: the two sites given one scope (each could use, and push out, the other's nonces)
+    public void The_form_nonce_scopes_are_distinct_valid_and_one_per_site()
+    {
+        var scopes = Packmoat.Application.FormNonceScopes.All;
+        Assert.Equal(scopes.Count, scopes.Distinct(StringComparer.Ordinal).Count());
+        Assert.All(scopes, s => Assert.True(Packmoat.Application.FormNonceRules.IsValidScope(s), s));
+        var constants = typeof(Packmoat.Application.FormNonceScopes).GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral).Select(f => (string)f.GetRawConstantValue()!).Order(StringComparer.Ordinal);
+        Assert.Equal(constants, scopes.Order(StringComparer.Ordinal));
+        var clock = new Packmoat.Domain.SystemClock();
+        var store = new Packmoat.Application.InProcessFormNonceStore(clock);
+        Assert.NotEqual(new Packmoat.Host.Admin.AdminFormNonces(store).Scope, new Packmoat.Host.Customer.AppFormNonces(store).Scope);
+    }
+
+    [Fact]   // two limits never share a scope, and every scope is one the counter takes
+    public void The_core_rate_scopes_are_distinct_and_valid()
+    {
+        var scopes = Packmoat.Application.RateScopes.All;
+        Assert.Equal(scopes.Count, scopes.Distinct(StringComparer.Ordinal).Count());
+        Assert.All(scopes, s => Assert.True(Packmoat.Application.RateCounters.IsValidScope(s), s));
+        Assert.DoesNotContain(scopes, s => s.StartsWith("hosted-", StringComparison.Ordinal));
+        var constants = typeof(Packmoat.Application.RateScopes).GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral).Select(f => (string)f.GetRawConstantValue()!).Order(StringComparer.Ordinal);
+        Assert.Equal(constants, scopes.Order(StringComparer.Ordinal));
+    }
 
     [Fact]
     public void The_scan_reads_every_core_assembly() =>
@@ -164,7 +265,7 @@ public class InMemoryStateTests
         var found = new[] { "A._live", "B._cache" };
         var declared = new Dictionary<string, string>
         {
-            ["A._live"] = "per copy until #250: a form posted to another copy is refused",
+            ["A._live"] = "per copy until shared: a form posted to another copy is refused",
             ["C._gone"] = "per copy: a field that is no longer there",
             ["D._x"] = "fine",
             ["E._y"] = "per copy: ok",

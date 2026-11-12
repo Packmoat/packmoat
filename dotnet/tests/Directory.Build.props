@@ -1,6 +1,6 @@
 <Project>
   <!-- The core's build settings, as every core project has them; MSBuild stops at the first Directory.Build.props it finds. -->
   <Import Project="$(MSBuildThisFileDirectory)../Directory.Build.props" />
-  <!-- #292: every test project here runs under TempLeakGuard. -->
+  <!-- Every test project here runs under TempLeakGuard. -->
   <Import Project="$(MSBuildThisFileDirectory)Shared/TempLeakGuard.props" />
 </Project>

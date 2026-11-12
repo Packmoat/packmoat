@@ -1,15 +1,38 @@
 using Packmoat.Application;
 using Packmoat.Infrastructure;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
-/// <summary>The token-activity contract (#232 S1): kinds, the active-developer count and the recording decorator over the store.</summary>
+/// <summary>The token-activity contract: kinds, the active-developer count and the recording decorator over the store.</summary>
 public abstract class DeveloperCountingContract : StoreContract
 {
     protected TokenActivityPorts Activity(IEngineDb t) => Engine.TokenActivity(t);
     protected static DateOnly Today(IEngineDb t) => DateOnly.FromDateTime(t.Clock.UtcNow.UtcDateTime);
 
-    [Fact]
+    /// <summary>
+    /// Moved from MemberTokenContract, whose other tests run on PostgreSQL now: this one needs the token-activity store,
+    /// which PostgreSQL has too, as the rest of this contract does.
+    /// </summary>
+    [EngineFact]
+    public async Task Self_issued_developer_tokens_count_as_active_developers_and_automation_tokens_do_not()
+    {
+        const string Dir = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        await using var t = await CreateDbAsync();
+        await AddTenantAsync(t, "acme");
+        var activity = Activity(t);
+        var dev = (await Engine.Tokens(t).IssueForMemberAsync("acme", Dir, "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "laptop", t.Clock.UtcNow.AddDays(90),
+            TokenKind.Developer, 5, default))!;
+        var auto = (await Engine.Tokens(t).IssueForMemberAsync("acme", Dir, "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "laptop", t.Clock.UtcNow.AddDays(90),
+            TokenKind.Automation, 5, default))!;
+        var op = await Engine.Tokens(t).IssueAsync("acme", "operator-dev", default);
+        foreach (var id in new[] { dev.TokenId, auto.TokenId, op.TokenId }) await activity.RecordAsync(id, Today(t), default);
+        var active = await activity.GetAsync("acme", 30, default);
+        Assert.Equal(2, active.Count);
+        Assert.Equal(new[] { dev.TokenId, op.TokenId }.Order(), active.Tokens.Select(x => x.TokenId).Order());
+    }
+
+    [EngineFact]
     public async Task A_token_with_no_kind_is_a_developer_token_and_automation_round_trips()
     {
         await using var t = await CreateDbAsync();
@@ -22,7 +45,7 @@ public abstract class DeveloperCountingContract : StoreContract
         Assert.Equal(TokenKind.Automation, list.Single(x => x.TokenId == bot.TokenId).Kind);
     }
 
-    [Fact]
+    [EngineFact]
     public async Task Counts_distinct_developer_tokens_with_label_and_last_active_day()
     {
         await using var t = await CreateDbAsync();
@@ -41,7 +64,7 @@ public abstract class DeveloperCountingContract : StoreContract
         Assert.Equal(new[] { ("bob", Today(t)), ("ann", Today(t).AddDays(-1)) }, r.Tokens.Select(x => (x.Label, x.LastActiveDay)));
     }
 
-    [Fact]
+    [EngineFact]
     public async Task Automation_tokens_are_not_counted()
     {
         await using var t = await CreateDbAsync();
@@ -58,7 +81,7 @@ public abstract class DeveloperCountingContract : StoreContract
         Assert.Equal("ann", r.Tokens.Single().Label);
     }
 
-    [Fact]
+    [EngineFact]
     public async Task A_revoked_token_is_not_counted()
     {
         await using var t = await CreateDbAsync();
@@ -76,7 +99,7 @@ public abstract class DeveloperCountingContract : StoreContract
         Assert.Equal("ann", r.Tokens.Single().Label);
     }
 
-    [Fact]
+    [EngineFact]
     public async Task Another_tenants_tokens_are_never_counted_or_listed()
     {
         await using var t = await CreateDbAsync();
@@ -96,7 +119,7 @@ public abstract class DeveloperCountingContract : StoreContract
         Assert.Equal(0, (await a.GetAsync("nobody", 30, default)).Count);
     }
 
-    [Fact]
+    [EngineFact]
     public async Task The_window_includes_today_and_n_minus_one_days_back_and_no_further()
     {
         await using var t = await CreateDbAsync();
@@ -112,7 +135,7 @@ public abstract class DeveloperCountingContract : StoreContract
         Assert.Equal(2, (await a.GetAsync("acme", 31, default)).Count);
     }
 
-    [Fact]
+    [EngineFact]
     public async Task The_decorator_writes_once_per_token_per_day_and_never_surfaces_a_failure()
     {
         await using var t = await CreateDbAsync();
@@ -141,7 +164,7 @@ public abstract class DeveloperCountingContract : StoreContract
         Assert.Equal("Token activity write failed (InvalidOperationException); 1 failure(s) so far. The active-developer count may be too low.", warning);
     }
 
-    [Fact]
+    [EngineFact]
     public async Task The_request_path_does_not_wait_for_storage()
     {
         await using var t = await CreateDbAsync();
@@ -159,7 +182,7 @@ public abstract class DeveloperCountingContract : StoreContract
         Assert.Equal(0, auth.FailedWrites);
     }
 
-    [Fact]
+    [EngineFact]
     public async Task A_full_queue_drops_notes_without_failing_requests_and_counts_them()
     {
         await using var t = await CreateDbAsync();
@@ -175,7 +198,7 @@ public abstract class DeveloperCountingContract : StoreContract
         blocked.Release.SetResult();
     }
 
-    [Fact]
+    [EngineFact]
     public async Task A_cancelled_write_is_not_a_failure_and_does_not_start_the_backoff()
     {
         await using var t = await CreateDbAsync();
@@ -199,7 +222,7 @@ public abstract class DeveloperCountingContract : StoreContract
         Assert.True(condition());
     }
 
-    [Fact]
+    [EngineFact]
     public async Task A_token_dropped_on_a_full_queue_can_be_noted_again_once_there_is_room()
     {
         await using var t = await CreateDbAsync();
@@ -223,7 +246,7 @@ public abstract class DeveloperCountingContract : StoreContract
         Assert.Contains("overflow", blocked.Ids);
     }
 
-    [Fact]
+    [EngineFact]
     public async Task A_throwing_warn_callback_does_not_stop_the_writer()
     {
         await using var t = await CreateDbAsync();
@@ -240,7 +263,7 @@ public abstract class DeveloperCountingContract : StoreContract
         Assert.Equal(5, log.Recorded.Count);   // the writer is alive and draining
     }
 
-    [Fact]
+    [EngineFact]
     public async Task A_token_whose_write_failed_is_retried_after_the_pause_and_again_on_the_next_day()
     {
         await using var t = await CreateDbAsync();
@@ -265,7 +288,7 @@ public abstract class DeveloperCountingContract : StoreContract
         Assert.Equal(2, log.Recorded.Count);
     }
 
-    [Fact]
+    [EngineFact]
     public async Task During_an_outage_there_is_one_warning_per_pause_not_one_per_item()
     {
         await using var t = await CreateDbAsync();
@@ -280,7 +303,7 @@ public abstract class DeveloperCountingContract : StoreContract
         Assert.True(auth.FailedWrites >= 1);
     }
 
-    [Fact]
+    [EngineFact]
     public async Task Disposal_writes_what_is_queued_and_later_notes_are_reported_as_shutting_down()
     {
         await using var t = await CreateDbAsync();

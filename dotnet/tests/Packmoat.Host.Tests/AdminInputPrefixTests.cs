@@ -3,7 +3,7 @@ using Packmoat.Host.Admin;
 
 namespace Packmoat.Host.Tests;
 
-/// <summary>#64 I1: the admin site's path prefix field takes the wizard's longest tight prefix, so an operator can edit a connected tenant.</summary>
+/// <summary>The admin site's path prefix field takes the wizard's longest tight prefix, so an operator can edit a connected tenant.</summary>
 public class AdminInputPrefixTests
 {
     [Fact]

@@ -67,8 +67,9 @@ public sealed class AdminCommands
     private readonly ICertificateInspector? _inspector;
     private readonly IOpsAlerts _alerts;
 
-    public AdminCommands(ITenantStore tenants, ITokenService tokens, IClock clock, ISharedAppCredentialStore? shared = null, ICertificateInspector? inspector = null,
-        IOpsAlerts? alerts = null)
+    /// <param name="rates">The shared rate counter: the per-tenant throttle of <see cref="OpsAlert.WaiverCapReached"/>.</param>
+    public AdminCommands(ITenantStore tenants, ITokenService tokens, IClock clock, IRateCounter rates, ISharedAppCredentialStore? shared = null,
+        ICertificateInspector? inspector = null, IOpsAlerts? alerts = null)
     {
         _tenants = tenants;
         _tokens = tokens;
@@ -76,15 +77,23 @@ public sealed class AdminCommands
         _shared = shared;
         _inspector = inspector;
         _alerts = alerts ?? NullOpsAlerts.Instance;
-        _capAlerts = new PersonRateLimiter(clock, 1, CapAlertInterval);
+        _sendsAlerts = alerts is not null and not NullOpsAlerts;
+        _capAlerts = new RateLimit(rates, RateScopes.WaiverCapAlert, 1, CapAlertInterval);
     }
 
     /// <summary>
-    /// At most one <see cref="OpsAlert.WaiverCapReached"/> per tenant in this long (#161 review): a revoke then an add back to the cap
-    /// would otherwise alert the operator every time. In memory, so a restart may send one more.
+    /// At most one <see cref="OpsAlert.WaiverCapReached"/> per tenant in this long: a revoke then an add back to the cap
+    /// would otherwise alert the operator every time. Counted in the shared counter, so every copy shares the one alert; when
+    /// the counter cannot be reached, no alert is sent (it fails closed, as every limit does).
     /// </summary>
     public static readonly TimeSpan CapAlertInterval = TimeSpan.FromHours(1);
-    private readonly PersonRateLimiter _capAlerts;
+    private readonly RateLimit _capAlerts;
+
+    /// <summary>
+    /// Whether this instance has somewhere to send alerts . Without one (the admin command line) the cap alert is not
+    /// counted either: an operator's waiver must not use up the tenant's shared hourly alert and send nothing.
+    /// </summary>
+    private readonly bool _sendsAlerts;
 
     /// <summary>
     /// Letters, digits, '-' and '_' only. Besides keeping ids tidy, this is what guarantees a tenant id can never equal the
@@ -102,13 +111,13 @@ public sealed class AdminCommands
 
     /// <summary>
     /// What the operator's create checks before anything is written: the operator, the id, and the upstream URLs. Also used by the
-    /// command line's create-and-link (#195), which writes through the organisation store instead.
+    /// command line's create-and-link, which writes through the organisation store instead.
     /// </summary>
     public static void CheckNewTenant(ActorScope actor, NewTenant tenant)
     {
         if (!actor.IsOperator) throw new AccessDeniedException("Only the operator can create tenants.");
         if (!IsValidTenantId(tenant.Id)) throw new ArgumentException("A tenant id is 1 to 63 letters, digits, '-' or '_', starting with a letter or digit.", nameof(tenant));
-        // A tenant its customer connects (#207) has no upstream URLs at all until Connect writes them; only an operator-made one.
+        // A tenant its customer connects has no upstream URLs at all until Connect writes them; only an operator-made one.
         if (tenant.FeedSetup == FeedSetup.Customer)
         {
             if (tenant.Origin != TenantOrigin.Operator || tenant.UpstreamBase.Length + tenant.AllowedPathPrefix.Length + tenant.FeedIndexUrl.Length != 0)
@@ -144,7 +153,7 @@ public sealed class AdminCommands
     /// and version) is refused for everyone.
     /// <list type="bullet">
     /// <item>The operator: 1 to 3650 days, checked here and only here; an exact version or "*"; never capped.</item>
-    /// <item>A tenant actor (#157): the customer limits in <see cref="WaiverRules"/>, all checked before anything is written: one exact version,
+    /// <item>A tenant actor: the customer limits in <see cref="WaiverRules"/>, all checked before anything is written: one exact version,
     /// <see cref="WaiverRules.MinCustomerDays"/> to <see cref="WaiverRules.MaxCustomerDays"/> days, a reason of
     /// <see cref="WaiverRules.MinReason"/> to <see cref="WaiverRules.MaxReason"/> plain characters, no package under an internal prefix, and at
     /// most <see cref="WaiverRules.MaxActiveCustomerWaivers"/> active customer waivers (checked by the store in the insert's transaction).
@@ -176,7 +185,9 @@ public sealed class AdminCommands
             case WaiverInsertOutcome.CapReached: throw new WaiverRefusedException(WaiverRefusal.TooManyWaivers);
         }
         var waiver = result.Waiver ?? throw new InvalidOperationException("The store reported a waiver added but returned none.");
-        if (result.ActiveCustomerWaivers == WaiverRules.MaxActiveCustomerWaivers && _capAlerts.TryAcquire(tenantId))
+        // Counted only once the cap is reached, and only where an alert can be sent. Best effort, after the waiver is stored: never with the
+        // caller's token, so a cancellation now cannot fail an add that already happened .
+        if (result.ActiveCustomerWaivers == WaiverRules.MaxActiveCustomerWaivers && _sendsAlerts && await _capAlerts.TryAcquireAsync(tenantId, CancellationToken.None))
             _alerts.Raise(new OpsAlert.WaiverCapReached(TenantRef.For(tenantId, result.Origin), WaiverRules.MaxActiveCustomerWaivers));
         return waiver;
     }
@@ -380,7 +391,7 @@ public sealed class AdminCommands
 
 /// <summary>
 /// A tenant and, for the operator only, how it signs in upstream: <c>Binding</c> (no key material) and, in own-app mode,
-/// <c>Identity</c> (with the private key), and <c>Setup</c>: who made it and who sets up its feed (#207).
+/// <c>Identity</c> (with the private key), and <c>Setup</c>: who made it and who sets up its feed.
 /// </summary>
 public sealed record TenantDetail(Tenant Tenant, UpstreamIdentity? Identity, UpstreamBinding? Binding = null)
 {
@@ -409,7 +420,7 @@ public sealed class AdminQueries
     }
 
     public const int MinActiveDays = 1;
-    /// <summary>No further back than token_activity is kept (#136).</summary>
+    /// <summary>No further back than token_activity is kept.</summary>
     public const int MaxActiveDays = AuditPolicy.TokenActivityRetentionDays;
 
     /// <summary>Distinct developer tokens used in the last <paramref name="days"/> days (1 to <see cref="MaxActiveDays"/>, checked here only). Token labels may be personal data.</summary>
@@ -511,7 +522,7 @@ public sealed class AdminQueries
     public bool HasDecisionRecord => _decisions is not null;
 
     /// <summary>
-    /// Operator only: one tenant's decision record (#123), newest last-seen first, at most the query's limit (1 to
+    /// Operator only: one tenant's decision record, newest last-seen first, at most the query's limit (1 to
     /// <see cref="DecisionRecordQuery.MaxLimit"/>). The package id is trimmed and lower-cased and the version normalised, as the recorder
     /// stores them; a version needs a package; a prefix must not be empty; neither may be longer than the recorder keeps. All checked
     /// here, before the store is read. Package ids and versions in the rows are whatever clients asked for: callers treat them as untrusted.

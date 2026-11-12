@@ -18,11 +18,11 @@ namespace Packmoat.Host.Auth;
 /// Only the first 8 bytes of the token's SHA-256 are kept, never the token.
 /// </summary>
 /// <remarks>
-/// <para>Reserve, then settle (#127). A presented token first reserves a lookup with <see cref="TryBeginLookup"/>, and the caller releases
+/// <para>Reserve, then settle. A presented token first reserves a lookup with <see cref="TryBeginLookup"/>, and the caller releases
 /// it with <see cref="EndLookup"/> in a <c>finally</c>. An address is refused a lookup when its wrong attempts plus its lookups in flight
 /// reach the backstop, so parallel guesses cannot all reach the store before the first one is counted. The distinct-token rule is not
 /// reserved: a build farm behind one NAT address restoring in parallel with one stale secret must not get 429s.</para>
-/// <para>Memory, and the network overflow (#153). Expired windows are swept at most once per window, on whichever call comes next.
+/// <para>Memory, and the network overflow. Expired windows are swept at most once per window, on whichever call comes next.
 /// The address map holds at most <c>maxAddresses</c> addresses. When it is full, a new address is tracked by its
 /// <see cref="ClientKey.Network"/> (/48 or /24) in a second map, of at most <c>maxNetworks</c> networks, under the same rules; so an attacker
 /// who fills the address map still needs about <c>maxNetworks</c> networks to escape counting. When both are full a new client is not

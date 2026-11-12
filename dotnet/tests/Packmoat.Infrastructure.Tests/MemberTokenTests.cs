@@ -2,10 +2,22 @@ using Microsoft.Data.Sqlite;
 using Packmoat.Admin;
 using Packmoat.Application;
 using Packmoat.Domain;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
-/// <summary><see cref="MemberTokenContract"/> on SQLite, and the tests only SQLite has (#232 S1).</summary>
+/// <summary>
+/// <see cref="MemberTokenContract"/> on PostgreSQL, each test on a database of its own: the members and the sign-in
+/// directory with the token service, and the members' list sorted by bytes.
+/// </summary>
+[Collection(PostgresCollection.Name)]
+[Trait("Category", PostgresTestServer.Category)]
+public class PostgresMemberTokenTests : MemberTokenContract
+{
+    protected override IStoreEngine Engine => PostgresStoreEngine.Instance;
+}
+
+/// <summary><see cref="MemberTokenContract"/> on SQLite, and the tests only SQLite has.</summary>
 [Collection("sqlite-pools")]
 public class MemberTokenTests : MemberTokenContract
 {

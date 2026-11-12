@@ -3,7 +3,7 @@ using Packmoat.Application;
 namespace Packmoat.Host.Admin;
 
 /// <summary>
-/// The admin action trail could not be written, so the action was not done (#193). A module's handler lets it through; the core answers
+/// The admin action trail could not be written, so the action was not done. A module's handler lets it through; the core answers
 /// "trail-failed". Never carries the underlying message.
 /// </summary>
 public sealed class AdminTrailException : Exception

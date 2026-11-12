@@ -5,7 +5,7 @@ using Packmoat.Domain;
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// `decision show` (#123 PR 2): one tenant's decision record for a package, newest last seen first, bounded, with every field the support
+/// `decision show`: one tenant's decision record for a package, newest last seen first, bounded, with every field the support
 /// question needs. Package ids and versions came from clients, so no control or direction character reaches the terminal.
 /// </summary>
 [Collection("sqlite-pools")]

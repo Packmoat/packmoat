@@ -5,7 +5,7 @@ using Xunit.Sdk;
 namespace Packmoat.Infrastructure.Tests.Postgres;
 
 /// <summary>
-/// <see cref="EngineFactDiscoverer"/> (#288 P2, review F3): a contract test on the SQLite fixture always runs, and on a PostgreSQL fixture
+/// <see cref="EngineFactDiscoverer"/>: a contract test on the SQLite fixture always runs, and on a PostgreSQL fixture
 /// it skips exactly when a [PostgresFact] would. A discoverer that skipped everything would otherwise let every SQLite contract test
 /// skip unseen. No server needed.
 /// </summary>
@@ -42,6 +42,28 @@ public class EngineFactTests
             var expected = EngineFactDiscoverer.SkipFor(typeof(PostgresMasterKeyCheckTests), PostgresTestServer.Value, Environment.GetEnvironmentVariable("CI"));
             Assert.All(Discover(typeof(PostgresMasterKeyCheckTests), method), c => Assert.Equal(expected, c.SkipReason));
         }
+    }
+
+    /// <summary>
+    /// A test marked NotAsAppRole skips on the app-role fixture alone, with its reason, and runs on the owner's PostgreSQL
+    /// fixture and on SQLite's; every other test runs on the app-role fixture. And only the pinned tests are marked: a test that fails as
+    /// the app role is not to be skipped by marking it.
+    /// </summary>
+    [Fact]   // mutations: AppRoleSkip skips the owner's fixture too, or ignores the mark
+    public void Only_a_marked_test_skips_and_only_as_the_app_role()
+    {
+        const string marked = nameof(OrganisationStoreContract.No_record_means_no_organisation);
+        Assert.StartsWith("Not run as the app role: ", Discover(typeof(PostgresAppRoleOrganisationStoreTests), marked).Single().SkipReason ?? "", StringComparison.Ordinal);
+        var server = EngineFactDiscoverer.SkipFor(typeof(PostgresOrganisationStoreTests), PostgresTestServer.Value, Environment.GetEnvironmentVariable("CI"));
+        Assert.Equal(server, Discover(typeof(PostgresOrganisationStoreTests), marked).Single().SkipReason);
+        Assert.Null(Discover(typeof(OrganisationStoreTests), marked).Single().SkipReason);
+        foreach (var method in typeof(OrganisationStoreContract).GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
+                     .Where(m => m.GetCustomAttribute<EngineFactAttribute>() is not null && m.Name != marked))
+            Assert.Equal(server, Discover(typeof(PostgresAppRoleOrganisationStoreTests), method.Name).Single().SkipReason);
+
+        var everyMarked = StoreContractCoverageTests.Types.SelectMany(t => t.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly))
+            .Where(m => m.GetCustomAttribute<EngineFactAttribute>()?.NotAsAppRole is not null).Select(m => m.DeclaringType!.Name + "." + m.Name);
+        Assert.Equal(["OrganisationStoreContract." + marked], everyMarked);
     }
 
     internal static IEnumerable<string> ContractTests() =>

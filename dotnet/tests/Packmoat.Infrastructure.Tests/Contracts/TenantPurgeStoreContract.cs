@@ -2,11 +2,12 @@ using System.Data.Common;
 using Packmoat.Application;
 using Packmoat.Domain;
 using Packmoat.Infrastructure.Lifecycle;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// The tenant purge's store as a contract (#288 P2, from #105, #194): the core's lifecycle only (no module's tables). A purge happens only
+/// The tenant purge's store as a contract : the core's lifecycle only (no module's tables). A purge happens only
 /// when the eligibility still finds the tenant due inside the purge's own transaction; it deletes the tenant's rows, its audit events and
 /// its decision records, and nothing of any other tenant; it is recorded once, so a second purge does nothing and the id is never used
 /// again; and a failure part way leaves every row where it was. A module's purge (its own tables, its eligibility's rules) is tested with
@@ -72,6 +73,36 @@ public abstract class TenantPurgeStoreContract : StoreContract
         }
     }
 
+    /// <summary>A module's purge contributor that classifies <paramref name="tables"/> and deletes nothing.</summary>
+    protected sealed class Forgetful(params PurgeTable[] tables) : IPurgeContributor
+    {
+        public IReadOnlyList<PurgeTable> Tables => tables;
+        public IReadOnlyList<string> NotReached => [];
+        public Task<IReadOnlyList<PurgedTable>> DeleteAsync(DbTransaction transaction, string tenantId, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<PurgedTable>>([]);
+    }
+
+    /// <summary>A module's purge contributor that classifies <paramref name="table"/> as deleted (by its tenant column) and deletes it.</summary>
+    protected sealed class Deletes(PurgeTable table) : IPurgeContributor
+    {
+        public IReadOnlyList<PurgeTable> Tables => [table];
+        public IReadOnlyList<string> NotReached => [];
+        public async Task<IReadOnlyList<PurgedTable>> DeleteAsync(DbTransaction transaction, string tenantId, CancellationToken ct)
+        {
+            await using var cmd = transaction.Connection!.CreateCommand();
+            cmd.Transaction = transaction;
+            cmd.CommandText = $"DELETE FROM {table.Table} WHERE {table.TenantColumn}='{tenantId}'";
+            return [new PurgedTable(table.Table, await cmd.ExecuteNonQueryAsync(ct))];
+        }
+    }
+
+    /// <summary>A tenant authenticator that lets every request in as <paramref name="tokenId"/> of acme, for the activity writer.</summary>
+    private sealed class AuthenticatesAs(string tokenId) : ITenantAuthenticator
+    {
+        private static readonly Tenant Acme = new("acme", "Acme", "https://x/", "o/", "https://x/i.json", new TenantPolicy(14));
+        public ValueTask<AuthResult?> AuthenticateAsync(string token, CancellationToken ct) => ValueTask.FromResult<AuthResult?>(new AuthResult(Acme, tokenId));
+    }
+
     /// <summary>The purge store with this eligibility (none: every purge refused) and these contributors, as a lifecycle gives them.</summary>
     protected ITenantPurgeStore Store(IEngineDb t, IPurgeRecheck? eligibility, params IPurgeContributor[] contributors) =>
         Engine.Purge(t, new TenantLifecycle([], contributors, eligibility is null ? null : () => eligibility));
@@ -127,7 +158,7 @@ public abstract class TenantPurgeStoreContract : StoreContract
 
     // ---------------------------------------------------------------- only when due
 
-    [Fact]
+    [EngineFact]
     public async Task With_no_eligibility_every_purge_is_refused_and_nothing_is_deleted()
     {
         await using var t = await CreateDbAsync();
@@ -140,7 +171,7 @@ public abstract class TenantPurgeStoreContract : StoreContract
         Assert.Equal(Seeded, await RowsAsync(t, "acme", token));
     }
 
-    [Fact]   // mutation: the re-check's answer ignored
+    [EngineFact]   // mutation: the re-check's answer ignored
     public async Task A_tenant_no_longer_due_inside_the_transaction_is_refused_and_nothing_is_deleted()
     {
         await using var t = await CreateDbAsync();
@@ -156,7 +187,7 @@ public abstract class TenantPurgeStoreContract : StoreContract
         Assert.Equal(0L, await MarkersAsync(t, "acme"));
     }
 
-    [Fact]
+    [EngineFact]
     public async Task A_tenant_the_eligibility_does_not_list_is_refused_by_the_command_and_nothing_is_deleted()
     {
         await using var t = await CreateDbAsync();
@@ -170,7 +201,7 @@ public abstract class TenantPurgeStoreContract : StoreContract
 
     // ---------------------------------------------------------------- what a purge deletes
 
-    [Fact]   // mutations: skip purging=1 (on SQLite the audit trigger then refuses the delete); the re-check on another connection
+    [EngineFact]   // mutations: skip purging=1 (on SQLite the audit trigger then refuses the delete); the re-check on another connection
     public async Task A_purge_deletes_the_tenants_rows_audit_and_decisions_and_keeps_every_other_tenants()
     {
         await using var t = await CreateDbAsync();
@@ -188,14 +219,48 @@ public abstract class TenantPurgeStoreContract : StoreContract
         Assert.Equal(1, counts.Single(c => c.Table == "tenants").Rows);
         Assert.Equal(new TenantPurgeRecord("acme", t.Clock.UtcNow, "ended", "operator"), await store.FindPurgeAsync("acme", Ct));
         // The record is closed: no other connection may ever see a purge running.
-        // (purging stays an integer 0/1 on every engine, so it reads as a long: PR 5's schema keeps it bigint with the same CHECK.)
+        // (purging stays an integer 0/1 on every engine, so it reads as a long: the PostgreSQL schema keeps it bigint with the same CHECK.)
         Assert.Equal(0L, await ScalarAsync(t, "SELECT purging FROM tenant_purges WHERE tenant_id='acme'"));
         // The re-check ran on the purge's transaction: its marker was committed with it.
         Assert.Equal(1L, await MarkersAsync(t, "acme"));
     }
 
-    /// <summary>Rests on the engine's triggers (SQLite: migrations 15 and 17's RAISE(IGNORE); Postgres: P2 PR 6).</summary>
-    [Fact]
+    /// <summary>
+    /// The feed setup scratch may hold the names of a feed's administrators: a purge deletes the tenant's rows, every person's and kind's,
+    /// live or expired, and keeps every other tenant's (the same person in another tenant too).
+    /// </summary>
+    [EngineFact]   // mutations: the purge skipping the scratch (its second guard then refuses), or the tenant's feed-check lease; the table left out of the classification
+    public async Task A_purge_deletes_the_tenants_feed_setup_scratch_and_keeps_every_other_tenants()
+    {
+        await using var t = await CreateDbAsync();
+        var acme = await SeedAsync(t, "acme", Directory1);
+        var globex = await SeedAsync(t, "globex", Directory2);
+        var scratch = Engine.FeedSetupScratch(t);
+        var ada = Guid.Parse(Oid);
+        var grace = Guid.Parse("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+        foreach (var kind in FeedSetupScratchKinds.All)
+            await scratch.PutAsync("acme", ada, kind, "{\"NamedAdmins\":[{\"Name\":\"Ada Lovelace\"}]}", TimeSpan.FromMinutes(30), Ct);
+        await scratch.PutAsync("acme", grace, FeedSetupScratchKinds.Developer, "{}", TimeSpan.FromMinutes(1), Ct);
+        await scratch.PutAsync("globex", ada, FeedSetupScratchKinds.Settings, "globex's", TimeSpan.FromMinutes(30), Ct);
+        var lease = Engine.JobLease(t);
+        foreach (var job in new[] { AzureSetupState.LeaseJob("acme"), AzureSetupState.LeaseJob("globex"), JobLeases.Retention, AzureSetupState.LeaseJob("acme-2") })
+            Assert.True(await lease.TryAcquireAsync(job, "copy-1", TimeSpan.FromMinutes(2), Ct));
+        t.Clock.Advance(TimeSpan.FromMinutes(5));   // grace's has expired, but is not yet pruned: the purge deletes it too
+
+        var counts = await Store(t, new Eligibility("acme")).PurgeAsync(Due("acme"), Record(t, "acme"), Ct);
+
+        Assert.Equal(4, counts.Single(c => c.Table == "feed_setup_scratch").Rows);
+        Assert.Equal(0L, await ScalarAsync(t, "SELECT COUNT(*) FROM feed_setup_scratch WHERE tenant_id = 'acme'"));
+        Assert.Equal("globex's", await scratch.GetAsync("globex", ada, FeedSetupScratchKinds.Settings, Ct));
+        // and the tenant's feed-check lease, which names it, while every other job's stays (not counted: job_leases holds no tenant data)
+        Assert.Equal(["feed-check:acme-2", "feed-check:globex", "retention"], await ColumnAsync(t, "SELECT job FROM job_leases ORDER BY job"));
+        Assert.DoesNotContain(counts, c => c.Table == "job_leases");
+        Assert.Equal(Purged, await RowsAsync(t, "acme", acme));
+        Assert.Equal(Seeded, await RowsAsync(t, "globex", globex));
+    }
+
+    /// <summary>Rests on the engine's triggers (SQLite: migrations 15 and 17's RAISE(IGNORE); Postgres: its triggers).</summary>
+    [EngineFact]
     [Trait(Needs, Triggers)]
     public async Task A_late_audit_event_or_decision_record_for_a_purged_tenant_is_dropped_and_another_tenants_is_kept()
     {
@@ -214,9 +279,75 @@ public abstract class TenantPurgeStoreContract : StoreContract
         Assert.Equal(new[] { "globex-1", "globex-2" }, await ColumnAsync(t, "SELECT request_id FROM audit_events ORDER BY request_id"));
     }
 
+    /// <summary>
+    /// What a token's activity note meets once its tenant's purge has committed, on every engine. On
+    /// PostgreSQL that is where a note that arrived while the purge ran ends up (the purge holds the tenant's tokens, so the note's
+    /// foreign-key check waits for it). The token is gone, so the note is refused by its foreign key: SQLite's INSERT OR IGNORE does not
+    /// ignore a foreign key, and PostgreSQL's ON CONFLICT DO NOTHING does not either. The activity writer, which drains the notes off the
+    /// request path, counts it as one failed write and logs its warning, the same on both; nothing is recorded and the request was answered.
+    /// </summary>
+    [EngineFact]
+    public async Task A_token_activity_note_for_a_purged_tenants_token_is_refused_and_the_activity_writer_counts_it()
+    {
+        await using var t = await CreateDbAsync();
+        var acme = await SeedAsync(t, "acme", Directory1);
+        await Store(t, new Eligibility("acme")).PurgeAsync(Due("acme"), Record(t, "acme"), Ct);
+        var tomorrow = DateOnly.FromDateTime(t.Clock.UtcNow.UtcDateTime).AddDays(1);
+
+        await RefusedAsync(() => Engine.TokenActivity(t).RecordAsync(acme, tomorrow, Ct).AsTask());
+
+        var warnings = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        using (var writer = new ActivityRecordingAuthenticator(new AuthenticatesAs(acme), Engine.TokenActivity(t), t.Clock, warnings.Enqueue))
+        {
+            Assert.NotNull(await writer.AuthenticateAsync("a request's token", Ct));   // the request is answered; the note is queued
+            await writer.DrainAsync(TimeSpan.FromSeconds(30));
+            Assert.Equal(1, writer.FailedWrites);
+            Assert.Equal(0, writer.DroppedWrites);
+        }
+        var warning = Assert.Single(warnings);
+        Assert.StartsWith("Token activity write failed (", warning, StringComparison.Ordinal);
+        Assert.EndsWith("); 1 failure(s) so far. The active-developer count may be too low.", warning, StringComparison.Ordinal);
+        Assert.Equal(0L, await ScalarAsync(t, $"SELECT COUNT(*) FROM token_activity WHERE token_id='{acme}'"));
+    }
+
+    // ---------------------------------------------------------------- the second guard
+
+    /// <summary>
+    /// The second guard: a module that declares a table of its own deleted but leaves the tenant's row in it
+    /// refuses the purge, once every delete has run and before the commit, so nothing is deleted. The module's table has no foreign key
+    /// to tenants, so nothing but the guard stops the purge. Deleted, the same row no longer refuses.
+    /// </summary>
+    [EngineFact]   // mutation: the second guard (RequireDeletedAsync) skipped, on either engine
+    public async Task A_module_table_declared_deleted_but_left_holding_a_row_refuses_the_purge_and_nothing_is_deleted()
+    {
+        await using var t = await CreateDbAsync();
+        var acme = await SeedAsync(t, "acme", Directory1);
+        var globex = await SeedAsync(t, "globex", Directory2);
+        await ExecAsync(t, "CREATE TABLE module_notes(tenant_id TEXT NOT NULL)");
+        await ExecAsync(t, "INSERT INTO module_notes(tenant_id) VALUES('acme')");
+        await ExecAsync(t, "INSERT INTO module_notes(tenant_id) VALUES('globex')");
+        var notes = new PurgeTable("module_notes", PurgeTableFate.Deleted, "the module's notes", "tenant_id");
+
+        var refused = await Assert.ThrowsAsync<PurgeRefusedException>(() =>
+            Store(t, new Eligibility("acme"), new Forgetful(notes)).PurgeAsync(Due("acme"), Record(t, "acme"), Ct));
+
+        Assert.Equal("Table module_notes still holds 1 row(s) for tenant acme after the purge. Nothing was deleted.", refused.Message);
+        Assert.Equal(Seeded, await RowsAsync(t, "acme", acme));
+        Assert.Equal(Seeded, await RowsAsync(t, "globex", globex));
+        Assert.Equal(2L, await ScalarAsync(t, "SELECT COUNT(*) FROM module_notes"));
+        Assert.Null(await Store(t, new Eligibility("acme")).FindPurgeAsync("acme", Ct));
+        Assert.Equal(0L, await MarkersAsync(t, "acme"));
+
+        // A module that deletes its row: the purge goes, and the other tenant's row stays.
+        var counts = await Store(t, new Eligibility("acme"), new Deletes(notes)).PurgeAsync(Due("acme"), Record(t, "acme"), Ct);
+        Assert.Equal(1, counts.Single(c => c.Table == "module_notes").Rows);
+        Assert.Equal(Purged, await RowsAsync(t, "acme", acme));
+        Assert.Equal(new[] { "globex" }, await ColumnAsync(t, "SELECT tenant_id FROM module_notes"));
+    }
+
     // ---------------------------------------------------------------- once only
 
-    [Fact]
+    [EngineFact]
     public async Task A_second_purge_does_nothing()
     {
         await using var t = await CreateDbAsync();
@@ -243,8 +374,8 @@ public abstract class TenantPurgeStoreContract : StoreContract
         Assert.Equal(Seeded, await RowsAsync(t, "globex", globex));
     }
 
-    /// <summary>Rests on the engine's triggers (SQLite: migration 15's; Postgres: P2 PR 6).</summary>
-    [Fact]
+    /// <summary>Rests on the engine's triggers (SQLite: migration 15's; Postgres: its triggers).</summary>
+    [EngineFact]
     [Trait(Needs, Triggers)]
     public async Task A_purged_id_is_never_used_again_and_its_record_cannot_be_written_twice()
     {
@@ -266,7 +397,7 @@ public abstract class TenantPurgeStoreContract : StoreContract
 
     // ---------------------------------------------------------------- all or nothing
 
-    [Fact]
+    [EngineFact]
     public async Task A_failure_part_way_leaves_every_row_where_it_was()
     {
         await using var t = await CreateDbAsync();

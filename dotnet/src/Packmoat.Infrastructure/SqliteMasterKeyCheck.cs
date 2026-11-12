@@ -22,7 +22,7 @@ public sealed class SqliteMasterKeyCheck : IMasterKeyCheck
     /// every later run must be able to read it. A wrong key stops the server instead of failing later, one customer at a time.
     /// <para>
     /// A database with a marker is only read, so a later start never takes the write lock. With none, the marker is written only if there
-    /// is still none (<c>INSERT OR IGNORE</c>), then whatever marker the database holds is read back and must decrypt (#295): so of two
+    /// is still none (<c>INSERT OR IGNORE</c>), then whatever marker the database holds is read back and must decrypt: so of two
     /// servers starting at once on a new database with different keys, exactly one marker is kept and the other server stops, whichever
     /// wrote first. The connection is in autocommit (WAL, busy_timeout), so each statement reads the newest committed state.
     /// </para>
@@ -46,7 +46,7 @@ public sealed class SqliteMasterKeyCheck : IMasterKeyCheck
     }
 
     /// <summary>
-    /// True when the master key in use reads this database's key marker (#233: the readiness check). Read only: unlike
+    /// True when the master key in use reads this database's key marker (the readiness check). Read only: unlike
     /// <see cref="EnsureAsync"/> it never records a marker, and a database with none is false (the start always records one).
     /// </summary>
     public async Task<bool> MatchesAsync(CancellationToken ct)

@@ -6,7 +6,7 @@ using Npgsql;
 namespace Packmoat.Infrastructure.Tests.Postgres;
 
 /// <summary>
-/// A database's core schema in one shape for both engines (#288 P2, PR 5), read from each engine's own catalogue: SQLite's sqlite_master and
+/// A database's core schema in one shape for both engines, read from each engine's own catalogue: SQLite's sqlite_master and
 /// pragma_* tables, PostgreSQL's information_schema, pg_index and pg_constraint. One line per fact, so two schemas compare as two lists:
 /// <list type="bullet">
 /// <item>"table t";</item>
@@ -14,28 +14,29 @@ namespace Packmoat.Infrastructure.Tests.Postgres;
 /// mapped by <see cref="SqliteTypes"/>);</item>
 /// <item>"t unique(a, b)": a UNIQUE constraint (not the primary key), sorted;</item>
 /// <item>"t fk(a) -> u(b) on update … on delete …", sorted, and "t fks deferrable=N initially-deferred=M";</item>
-/// <item>"t collations=[…]": every column collation other than byte order (#303). SQLite: each COLLATE in the table's text but BINARY,
+/// <item>"t collations=[…]": every column collation other than byte order. SQLite: each COLLATE in the table's text but BINARY,
 /// its default. PostgreSQL: the collation of every column that has one (text) and is not "C", so a text column left on the database's
 /// default collation reads "default" and differs from SQLite;</item>
 /// <item>"t checks=N": how many CHECK constraints (column and table), and "t check-literals=[…]": the string literals (exactly) and
 /// numbers inside them, sorted;</item>
 /// <item>"index name on t(…) [unique] [where …]": every index made by CREATE INDEX, expressions and predicates normalised;</item>
-/// <item>"trigger name on t before|after|instead of event[ of a, b] row|statement[ disabled|replica|always]": every trigger (PR 6), its
+/// <item>"trigger name on t before|after|instead of event[ of a, b] row|statement[ disabled|replica|always]": every trigger, its
 /// events joined with " or ". A trigger that does not fire (DISABLE TRIGGER) or fires only in another replication role reads so.</item>
 /// </list>
 /// The track tables (schema_migrations and *_schema_migrations) are left out: each engine makes its own.
 /// </summary>
-internal static partial class SchemaShape
+public static partial class SchemaShape
 {
     /// <summary>
-    /// Every column that holds a time: timestamptz on PostgreSQL, text ("O" format) on SQLite (#288 design 3). Pinned: a time column added
+    /// Every column that holds a time: timestamptz on PostgreSQL, text ("O" format) on SQLite. Pinned: a time column added
     /// to the core is added here in the same pull request (<c>Every_column_named_like_a_time_is_on_the_pinned_lists</c> checks).
     /// </summary>
     public static readonly string[] TimeColumns =
     [
         "admin_actions.time", "audit_events.time", "auto_join_settings.changed_at", "cookie_keys.created",
         "decision_records.first_seen_at", "decision_records.last_seen_at", "decision_records.published_at",
-        "feed_checks.checked_at", "job_leases.expires_at", "members.first_seen_at", "members.last_seen_at",
+        "feed_checks.checked_at", "feed_setup_scratch.expires_at", "form_nonces.expires_at", "job_leases.expires_at", "members.first_seen_at", "members.last_seen_at",
+        "rate_counters.ends_at", "rate_counters.started_at",
         "shared_app_credentials.updated_at", "shared_app_verifications.verified_at", "sign_in_directories.bound_at",
         "tenant_purges.purged_at", "tenants.created_at",
         "tokens.created_at", "tokens.expires_at", "tokens.last_used_at", "tokens.revoked_at",
@@ -44,7 +45,7 @@ internal static partial class SchemaShape
     ];
 
     /// <summary>
-    /// The triggers only PostgreSQL has (#288 P2, PR 6), as their shape lines: TRUNCATE skips row triggers there, so each append-only table
+    /// The triggers only PostgreSQL has, as their shape lines: TRUNCATE skips row triggers there, so each append-only table
     /// refuses it with a statement trigger. SQLite has no TRUNCATE. PostgresTriggerGuardTests has a test for each.
     /// </summary>
     public static readonly string[] PostgresOnlyTriggers =
@@ -60,10 +61,14 @@ internal static partial class SchemaShape
     /// <summary>The columns that hold a day (no time): date on PostgreSQL.</summary>
     public static readonly string[] DateColumns = ["token_activity.day"];
 
-    /// <summary>A SQLite column's declared type as PostgreSQL's baseline names it (#288 design 3). Anything else stays unmapped, and differs.</summary>
-    public static string SqliteTypes(string table, string column, string declared) => declared.ToUpperInvariant() switch
+    /// <summary>
+    /// A SQLite column's declared type as PostgreSQL's baseline names it. Anything else stays unmapped, and differs.
+    /// <paramref name="moduleTimeColumns"/> are a module track's time columns ("table.column"), read as <see cref="TimeColumns"/> are: a
+    /// module pins its own list, so the core's stays the core's alone.
+    /// </summary>
+    public static string SqliteTypes(string table, string column, string declared, IReadOnlyCollection<string>? moduleTimeColumns = null) => declared.ToUpperInvariant() switch
     {
-        "TEXT" when TimeColumns.Contains($"{table}.{column}") => "timestamptz",
+        "TEXT" when TimeColumns.Contains($"{table}.{column}") || moduleTimeColumns?.Contains($"{table}.{column}") == true => "timestamptz",
         "TEXT" when DateColumns.Contains($"{table}.{column}") => "date",
         "TEXT" => "text",
         "INTEGER" => "bigint",
@@ -197,7 +202,11 @@ internal static partial class SchemaShape
 
     // ---- SQLite ----
 
-    public static async Task<List<string>> ReadAsync(SqliteConnection c)
+    /// <summary>
+    /// The SQLite database's shape. Its TEXT columns read as timestamptz when on <see cref="TimeColumns"/> or on
+    /// <paramref name="moduleTimeColumns"/> (a module track's own pinned list, for a database with its tables too).
+    /// </summary>
+    public static async Task<List<string>> ReadAsync(SqliteConnection c, IReadOnlyCollection<string>? moduleTimeColumns = null)
     {
         var lines = new List<string>();
         var tables = (await Rows(c, "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite%' ORDER BY name"))
@@ -217,7 +226,7 @@ internal static partial class SchemaShape
                 // AUTOINCREMENT counts from 1 in steps of 1, and the database always picks the value (an explicit id is the exception).
                 var identity = pk == 1 && pkCount == 1 && declared.Equals("INTEGER", StringComparison.OrdinalIgnoreCase)
                     && sql.Contains("AUTOINCREMENT", StringComparison.OrdinalIgnoreCase) ? "always start 1 increment 1" : null;
-                lines.Add(Column(table, Convert.ToInt32(r[0], CultureInfo.InvariantCulture) + 1, name, SqliteTypes(table, name, declared), notNull, pk, r[4] as string, identity));
+                lines.Add(Column(table, Convert.ToInt32(r[0], CultureInfo.InvariantCulture) + 1, name, SqliteTypes(table, name, declared, moduleTimeColumns), notNull, pk, r[4] as string, identity));
             }
             var uniques = new List<string>();
             foreach (var u in await Rows(c, $"SELECT name FROM pragma_index_list('{table}') WHERE origin = 'u'"))
@@ -307,6 +316,16 @@ internal static partial class SchemaShape
         _ => "unknown " + code,
     };
 
+    /// <summary>
+    /// The oid of PostgreSQL's built-in "C" collation, byte order: the one in pg_catalog. A column is compared with it
+    /// by oid, never by name, since any schema can hold a collation named "C" that orders some other way.
+    /// </summary>
+    public const string BuiltInC = "(SELECT oid FROM pg_catalog.pg_collation WHERE collname = 'C' AND collnamespace = 'pg_catalog'::regnamespace)";
+
+    /// <summary>A collation's name (<c>l</c>): bare when it is a built-in one (pg_catalog's), else with its schema, so a "C" of another schema reads as itself.</summary>
+    internal const string CollationName =
+        "CASE WHEN l.collnamespace = 'pg_catalog'::regnamespace THEN l.collname::text ELSE l.collnamespace::regnamespace::text || '.' || l.collname::text END";
+
     public static async Task<List<string>> ReadAsync(NpgsqlConnection c)
     {
         var lines = new List<string>();
@@ -362,8 +381,8 @@ internal static partial class SchemaShape
             lines.Add(Deferral(table, deferrable, deferred));
             lines.Add(Collations(table, (await Rows(c,
                 $"""
-                SELECT l.collname::text FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_collation l ON l.oid = a.attcollation
-                WHERE a.attrelid = '{Ident(table)}'::regclass AND a.attnum > 0 AND NOT a.attisdropped AND l.collname <> 'C'
+                SELECT {CollationName} FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_collation l ON l.oid = a.attcollation
+                WHERE a.attrelid = '{Ident(table)}'::regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.attcollation <> {BuiltInC}
                 """)).Select(r => (string)r[0]!)));
             var checks = (await Rows(c, $"SELECT pg_catalog.pg_get_constraintdef(oid) FROM pg_catalog.pg_constraint WHERE contype = 'c' AND conrelid = '{Ident(table)}'::regclass"))
                 .Select(r => (string)r[0]!).ToList();

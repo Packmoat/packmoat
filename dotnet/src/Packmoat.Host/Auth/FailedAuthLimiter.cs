@@ -9,10 +9,10 @@ namespace Packmoat.Host.Auth;
 /// window passes. Short blocks only, because many developers can share one address behind a customer's NAT.
 /// </summary>
 /// <remarks>
-/// Memory, as in <see cref="TokenGuessLimiter"/> (#127): expired windows are swept at most once per window, and at most
+/// Memory, as in <see cref="TokenGuessLimiter"/>: expired windows are swept at most once per window, and at most
 /// <c>maxAddresses</c> addresses are held. When full, a new address is not tracked and one Warning is logged per window; it does not fail
 /// closed, which would lock out every person signing in. Parallel failures from one address are counted only after the check, so they
-/// can overshoot the limit; that is accepted here (#127).
+/// can overshoot the limit; that is accepted here.
 /// </remarks>
 public sealed class FailedAuthLimiter
 {

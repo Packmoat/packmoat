@@ -2,7 +2,7 @@ using Packmoat.Application;
 
 namespace Packmoat.Application.Tests;
 
-/// <summary>#107: the 30-day redaction of a check's results keeps what was checked and how it went, and no detail (which may name a person).</summary>
+/// <summary>The 30-day redaction of a check's results keeps what was checked and how it went, and no detail (which may name a person).</summary>
 public class FeedCheckRedactionTests
 {
     [Fact]

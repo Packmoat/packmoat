@@ -8,10 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="coverlet.collector" Version="6.0.4" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="coverlet.collector" Version="10.1.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
     <PackageReference Include="xunit" Version="2.9.3" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
   </ItemGroup>
 
   <ItemGroup>
@@ -24,6 +24,13 @@
     <ProjectReference Include="..\..\src\Packmoat.Application\Packmoat.Application.csproj" />
     <ProjectReference Include="..\..\src\Packmoat.Domain\Packmoat.Domain.csproj" />
     <ProjectReference Include="..\..\src\Packmoat.Admin\Packmoat.Admin.csproj" />
+    <!-- AddSqliteStores, for the PostgreSQL registration's parity test. -->
+    <ProjectReference Include="..\..\src\Packmoat.Host\Packmoat.Host.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The fake Azure Artifacts feed, for the PostgreSQL end-to-end test. -->
+    <Compile Include="..\Packmoat.Host.Tests\FakeUpstream.cs" Link="Postgres\FakeUpstream.cs" />
   </ItemGroup>
 
   <ItemGroup>

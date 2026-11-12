@@ -4,7 +4,7 @@ using Packmoat.Domain;
 
 namespace Packmoat.Infrastructure.Tests;
 
-// The composition the core's tests run (#197): the core alone. No module's creation participant (a new tenant gets only its own row), no
+// The composition the core's tests run: the core alone. No module's creation participant (a new tenant gets only its own row), no
 // module's migration track, every tenant served, and no command-line module. The hosted tests have their own TestComposition.cs.
 
 /// <summary>The creation participants the tests' stores use: none (the core alone).</summary>

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the Helm chart into a throwaway kind cluster with a local image, then check that it serves (#249):
+# Install the Helm chart into a throwaway kind cluster with a local image, then check that it serves:
 # - the pod runs as user 10001 and cannot write its root filesystem;
 # - /healthz and /readyz answer 200 through the Service, with Host: localhost and with a feed host name, and another host name gets 400;
 # - packmoat-admin works in the pod (it reads the master key from its file, as the server does), and can take a backup;

@@ -25,7 +25,7 @@ public partial class MasterKeyCheckTests : MasterKeyCheckContract
     }
 }
 
-/// <summary>The master-key check on PostgreSQL (#288 P2): <see cref="MasterKeyCheckContract"/>, each test on a database of its own.</summary>
+/// <summary>The master-key check on PostgreSQL: <see cref="MasterKeyCheckContract"/>, each test on a database of its own.</summary>
 [Collection(PostgresCollection.Name)]
 [Trait("Category", PostgresTestServer.Category)]
 public class PostgresMasterKeyCheckTests : MasterKeyCheckContract
@@ -35,7 +35,7 @@ public class PostgresMasterKeyCheckTests : MasterKeyCheckContract
     /// <summary>
     /// Review F4 under real concurrency: two first starts at once with different keys, as two real sessions. Exactly one passes, the other
     /// stops with the start's message, and one marker is kept: the winner's. The deterministic case, the same on every engine, is
-    /// <see cref="MasterKeyCheckContract.Of_two_first_starts_with_different_keys_exactly_one_passes"/> (#295); this one checks the same
+    /// <see cref="MasterKeyCheckContract.Of_two_first_starts_with_different_keys_exactly_one_passes"/>; this one checks the same
     /// outcome with no test hook in the database, PostgreSQL only.
     /// </summary>
     // mutation: read first, then insert or upsert (both read no marker and both pass)
@@ -51,9 +51,9 @@ public class PostgresMasterKeyCheckTests : MasterKeyCheckContract
 
             // The start gate: meta is held in EXCLUSIVE mode, which lets reads through and stops every write. Both starts are let go only
             // once both wait on it, so whatever each reads first, both read before either has written: the worst interleaving of the reads,
-            // every round. The order of the two writes once let go is left to chance (#296 re-review N2): a variant that reads first, then
+            // every round. The order of the two writes once let go is left to chance: a variant that reads first, then
             // upserts with DO UPDATE and reads back, is caught here only in the rounds where the loser writes last; the contract's
-            // deterministic test (#295) catches it every time.
+            // deterministic test catches it every time.
             await using var holder = await db.OpenAsync();
             await using var hold = await holder.BeginTransactionAsync();
             await using (var lockMeta = new NpgsqlCommand("LOCK TABLE meta IN EXCLUSIVE MODE", holder, hold)) await lockMeta.ExecuteNonQueryAsync();

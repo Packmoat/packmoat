@@ -1,7 +1,7 @@
 namespace Packmoat.Host.Auth;
 
 /// <summary>
-/// One map of one-minute windows for <see cref="TokenGuessLimiter"/>, keyed by address or by network (#153). It holds at most
+/// One map of one-minute windows for <see cref="TokenGuessLimiter"/>, keyed by address or by network. It holds at most
 /// <c>max</c> entries and sweeps expired ones at most once per window. Not thread-safe: the limiter's lock guards it.
 /// </summary>
 internal sealed class AddressWindows

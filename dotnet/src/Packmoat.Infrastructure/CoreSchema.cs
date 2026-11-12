@@ -1,8 +1,8 @@
 namespace Packmoat.Infrastructure;
 
 /// <summary>
-/// The core's migration track on every engine (#288 P2): SQLite's statements (<see cref="SqliteDatabase"/>, frozen by hash, never moved)
-/// and PostgreSQL's (<see cref="PostgresCoreMigrations"/>), with the same 23 versions. <see cref="SqliteDatabase.Core"/> is this track.
+/// The core's migration track on every engine: SQLite's statements (<see cref="SqliteDatabase"/>, frozen by hash, never moved)
+/// and PostgreSQL's (<see cref="PostgresCoreMigrations"/>), with the same 26 versions. <see cref="SqliteDatabase.Core"/> is this track.
 /// A core migration added for one engine and not the other stops the track being made (the constructor refuses unequal counts), so no
 /// build can ship one.
 /// <para>Unstable: may change in any release before 1.0.</para>

@@ -4,13 +4,15 @@
     <ProjectReference Include="..\Packmoat.Application\Packmoat.Application.csproj" />
     <ProjectReference Include="..\Packmoat.Protocols.NuGet\Packmoat.Protocols.NuGet.csproj" />
     <ProjectReference Include="..\Packmoat.Infrastructure\Packmoat.Infrastructure.csproj" />
+    <!-- The PostgreSQL adapter: the composition roots (PackmoatApp and AdminCli) pick the engine, so only they reference it. -->
+    <ProjectReference Include="..\Packmoat.Infrastructure.Postgres\Packmoat.Infrastructure.Postgres.csproj" />
     <ProjectReference Include="..\Packmoat.Domain\Packmoat.Domain.csproj" />
     <ProjectReference Include="..\Packmoat.Policy\Packmoat.Policy.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
-    <!-- A library (#197): the entry points are the core's Packmoat.Server and the hosted Packmoat.Hosted.Host. -->
+    <!-- A library: the entry points are the core's Packmoat.Server and the hosted Packmoat.Hosted.Host. -->
     <OutputType>Library</OutputType>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -21,8 +23,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.12" />
-    <PackageReference Include="Microsoft.IdentityModel.Validators" Version="8.19.2" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.14" />
+    <PackageReference Include="Microsoft.IdentityModel.Validators" Version="8.23.0" />
   </ItemGroup>
 
 </Project>

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- The PostgreSQL adapter (#288). No src project references it yet: PACKMOAT_DB_ENGINE=postgres is still refused, so no image ships
-       Npgsql. DependencyRuleTests pins both: it references only Domain, Application and Infrastructure, and nothing in src/ references it. -->
+  <!-- The PostgreSQL adapter. Only the composition roots (PackmoatApp and AdminCli) reference it, and the image carries Npgsql.
+       DependencyRuleTests pins both: it references only Domain, Application and Infrastructure, and only the composition roots reference it. -->
 
   <ItemGroup>
     <ProjectReference Include="..\Packmoat.Domain\Packmoat.Domain.csproj" />

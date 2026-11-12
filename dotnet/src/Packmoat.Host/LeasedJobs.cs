@@ -3,7 +3,7 @@ using Packmoat.Application;
 namespace Packmoat.Host;
 
 /// <summary>
-/// A scheduled job's pass under its lease (#232 M2), with its log lines: the pass's duration (Information), or that it was skipped because
+/// A scheduled job's pass under its lease, with its log lines: the pass's duration (Information), or that it was skipped because
 /// another copy holds the lease (Information), or that the lease could not be taken (Error, by kind only; the pass is skipped and tried
 /// again next time). The core's retention pass and a module's own jobs all run through it; a module gets the lease from
 /// <see cref="Modules.PackmoatModuleContext.JobLease"/>.
@@ -25,4 +25,24 @@ public static class LeasedJobs
             log.LogWarning("Job {Job}: ending its lease failed ({Kind}); it runs out by itself within {Minutes} minutes", job, release.GetType().Name, (int)JobLeases.Ttl.TotalMinutes);
         return run.Ran;
     }
+}
+
+/// <summary>
+/// A job lease whose every lease runs for <see cref="Ttl"/>, whatever length the job asks for: the test seam
+/// <see cref="PackmoatOptions.JobLeaseTtl"/>, never production's. Taking and ending a lease are the inner lease's, unchanged.
+/// </summary>
+internal sealed class FixedTtlJobLease : IJobLease
+{
+    public FixedTtlJobLease(IJobLease inner, TimeSpan ttl)
+    {
+        Inner = inner ?? throw new ArgumentNullException(nameof(inner));
+        Ttl = ttl > TimeSpan.Zero ? ttl : throw new ArgumentOutOfRangeException(nameof(ttl), "A lease must run for some time.");
+    }
+
+    public IJobLease Inner { get; }
+    public TimeSpan Ttl { get; }
+
+    public Task<bool> TryAcquireAsync(string job, string holder, TimeSpan ttl, CancellationToken ct = default) => Inner.TryAcquireAsync(job, holder, Ttl, ct);
+
+    public Task<bool> ReleaseAsync(string job, string holder, CancellationToken ct = default) => Inner.ReleaseAsync(job, holder, ct);
 }

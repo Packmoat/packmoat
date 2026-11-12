@@ -4,14 +4,14 @@ using static Packmoat.Policy.Tests.PolicyTestKit;
 namespace Packmoat.Policy.Tests;
 
 /// <summary>
-/// Waivers and internal prefixes as the engine decides them are conformance vectors: spec/vectors/policy/decisions.json (#209).
+/// Waivers and internal prefixes as the engine decides them are conformance vectors: spec/vectors/policy/decisions.json.
 /// What stays here is the shared prefix rule itself, which the customer waiver check also uses.
 /// </summary>
 public class WaiverAndInternalTests
 {
     private static Verdict Decide(PackageVersionFacts f, TenantPolicy t) => Engine().Engine.Decide(f, t);
 
-    // ---- the internal-prefix rule, shared by the engine and the waiver command (#157)
+    // ---- the internal-prefix rule, shared by the engine and the waiver command
 
     [Theory]
     [InlineData("contoso.core", true)]

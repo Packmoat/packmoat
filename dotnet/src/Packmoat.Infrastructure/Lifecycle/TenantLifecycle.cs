@@ -5,7 +5,7 @@ using Packmoat.Application;
 namespace Packmoat.Infrastructure.Lifecycle;
 
 /// <summary>
-/// Takes part in making a tenant (#194): runs after the tenant row is inserted, inside the same transaction (for example a module writes
+/// Takes part in making a tenant: runs after the tenant row is inserted, inside the same transaction (for example a module writes
 /// its own row for the tenant). To veto, it throws <see cref="TenantCreationRefusedException"/>: the transaction rolls back and no tenant
 /// row is left. Any other exception rolls back too.
 /// <para>Unstable: may change in any release before 1.0.</para>
@@ -17,7 +17,7 @@ public interface ITenantCreationParticipant
 
 /// <summary>
 /// A creation participant refused the new tenant. Nothing was written. The message names the reason, never a secret; <see cref="Code"/>
-/// is the participant's own short name for it, so its caller can tell its refusals apart (#195). The core gives it no meaning.
+/// is the participant's own short name for it, so its caller can tell its refusals apart. The core gives it no meaning.
 /// </summary>
 public sealed class TenantCreationRefusedException : InvalidOperationException
 {
@@ -51,7 +51,7 @@ public sealed record PurgeTable(string Table, PurgeTableFate Fate, string Why, s
 }
 
 /// <summary>
-/// Deletes its own tables' rows for a purged tenant (#194), inside the purge's one transaction, before the tenant row is deleted.
+/// Deletes its own tables' rows for a purged tenant, inside the purge's one transaction, before the tenant row is deleted.
 /// Every table in the database must be classified by the core or by exactly one contributor, or the purge is refused.
 /// <para>Unstable: may change in any release before 1.0.</para>
 /// </summary>
@@ -68,27 +68,29 @@ public interface IPurgeContributor
 }
 
 /// <summary>
-/// The purge eligibility that can also re-check inside the purge, where no other writer can change it (#194): one object decides who is due and checks again
+/// The purge eligibility that can also re-check inside the purge, where no other writer can change it: one object decides who is due and checks again
 /// inside the delete's transaction, so the two cannot disagree.
 /// <para>Unstable: may change in any release before 1.0.</para>
 /// </summary>
 public interface IPurgeRecheck : IPurgeEligibility
 {
     /// <summary>
-    /// Inside the purge's transaction (nothing it reads can change before it commits): true only when <paramref name="candidate"/> is still due as decided, at
-    /// <paramref name="now"/>. False refuses the purge and nothing is deleted.
+    /// Inside the purge's transaction: true only when <paramref name="candidate"/> is still due as decided, at <paramref name="now"/>. False
+    /// refuses the purge and nothing is deleted. Anything it reads that the purge's own locks (the tenant's row and its tokens) do not
+    /// already hold, it must lock first on the purge's transaction, so no other writer can change it between the re-check and the purge's
+    /// commit.
     /// </summary>
     Task<bool> StillDueAsync(DbTransaction transaction, PurgeCandidate candidate, DateTimeOffset now, CancellationToken cancellationToken);
 
     /// <summary>
-    /// What the re-check reads, in the operator's words, for the refusal when it says no (#197 C3): "changed while it was being checked
+    /// What the re-check reads, in the operator's words, for the refusal when it says no: "changed while it was being checked
     /// (&lt;this&gt;)". Null: the refusal names nothing.
     /// </summary>
     string? Rechecked => null;
 }
 
 /// <summary>
-/// The tenant lifecycle's parts a module gives (#194): creation participants, purge contributors, and the purge eligibility (made when
+/// The tenant lifecycle's parts a module gives: creation participants, purge contributors, and the purge eligibility (made when
 /// it is needed, so its settings are read only then). The core has none (<see cref="None"/>): a new tenant gets only its own row, and
 /// nobody is ever purged.
 /// <para>Unstable: may change in any release before 1.0.</para>
@@ -102,7 +104,7 @@ public sealed record TenantLifecycle(
 }
 
 /// <summary>
-/// How a server module gives its <see cref="TenantLifecycle"/> (#194): made by the composition root for its database, so the module itself
+/// How a server module gives its <see cref="TenantLifecycle"/>: made by the composition root for its database, so the module itself
 /// never names the database. At most one may be registered.
 /// <para>Unstable: may change in any release before 1.0.</para>
 /// </summary>

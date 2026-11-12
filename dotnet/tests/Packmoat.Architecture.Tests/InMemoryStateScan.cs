@@ -4,7 +4,7 @@ using System.Runtime.CompilerServices;
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// Architecture test 7's scanner (#278 step 0): every field, in a Packmoat class, that holds in-memory state one copy of the server keeps
+/// Architecture test 7's scanner: every field, in a Packmoat class, that holds in-memory state one copy of the server keeps
 /// to itself: a mutable collection, a concurrent collection, a channel, a cache or an in-process lock. Two copies behind a load balancer
 /// do not share such a field, so each one must be declared: safe per copy (and why), or shared through a port. Shared with the hosted
 /// twin (linked into Packmoat.Hosted.Architecture.Tests), which passes the hosted assemblies and its own list.
@@ -97,12 +97,12 @@ internal static class InMemoryStateScan
     }
 
     /// <summary>
-    /// The entries whose reason is not one short line saying why: "per copy: why that is safe", "per copy until #250: what breaks with two
-    /// copies" (multi-copy needs sticky sessions until E10 #250 gives it a port), or "shared via port: which port".
+    /// The entries whose reason is not one short line saying why: "per copy: why that is safe", "per copy until shared: what breaks with two
+    /// copies" (multi-copy needs sticky sessions until a port shares it), or "shared via port: which port".
     /// </summary>
     internal static string[] BadReasons(IReadOnlyDictionary<string, string> declared) =>
         declared.Where(e => !(e.Value.StartsWith("shared via port: ", StringComparison.Ordinal) || e.Value.StartsWith("per copy: ", StringComparison.Ordinal)
-                || e.Value.StartsWith("per copy until #250: ", StringComparison.Ordinal))
+                || e.Value.StartsWith("per copy until shared: ", StringComparison.Ordinal))
                 || e.Value[(e.Value.IndexOf(':') + 1)..].Trim().Length < 10 || e.Value.Contains('\n') || e.Value.Length > 130)
             .Select(e => $"{e.Key}: \"{e.Value}\"").Order(StringComparer.Ordinal).ToArray();
 }

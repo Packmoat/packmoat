@@ -5,17 +5,22 @@ namespace Packmoat.Protocols.NuGet;
 /// <summary>Removes hidden versions from NuGet JSON. The decision itself is made elsewhere (the policy engine).</summary>
 public static class VersionFilters
 {
-    /// <summary>Versions listed in a flat-container <c>index.json</c> body: <c>{"versions":[...]}</c>.</summary>
+    /// <summary>
+    /// Versions listed in a flat-container <c>index.json</c> body: <c>{"versions":[...]}</c>. A version that holds a control character is
+    /// left out (as a registration leaf's): no NuGet version holds one, so it is never decided on or recorded, and
+    /// <see cref="FilterFlat"/> removes it (fail closed).
+    /// </summary>
     public static IReadOnlyList<string> FlatVersions(string json) =>
         (JsonNode.Parse(json)?["versions"] as JsonArray ?? new JsonArray())
-            .Select(v => v!.GetValue<string>()).ToArray();
+            .Select(v => v!.GetValue<string>()).Where(v => ReadableVersion(v) is not null).ToArray();
 
+    /// <summary>The flat-container list without the versions <paramref name="isHidden"/> hides, nor any that holds a control character.</summary>
     public static string FilterFlat(string json, Func<string, bool> isHidden, UrlMap map)
     {
         var root = JsonNode.Parse(json) as JsonObject ?? throw new FormatException("Version list is not a JSON object.");
         if (root["versions"] is JsonArray versions)
             foreach (var v in versions.ToList())
-                if (isHidden(v!.GetValue<string>())) versions.Remove(v);
+                if (ReadableVersion(v!.GetValue<string>()) is not { } version || isHidden(version)) versions.Remove(v);
         return map.Rewrite(root.ToJsonString());
     }
 
@@ -79,7 +84,17 @@ public static class VersionFilters
         }
     }
 
-    private static string? LeafVersion(JsonNode leaf)
+    /// <summary>
+    /// A leaf's version: its catalog entry's, else the last segment of its @id, unescaped. Null when neither can be read, or when what was
+    /// read holds a control character once unescaped (as the route parser refuses one): no NuGet version holds
+    /// one, and this text is the tenant's upstream's, not a request's. Null is no version, so the leaf is hidden (fail closed) and the
+    /// version is never decided on or recorded (PostgreSQL's text, for one, cannot hold a NUL).
+    /// </summary>
+    private static string? LeafVersion(JsonNode leaf) => ReadableVersion(RawLeafVersion(leaf));
+
+    private static string? ReadableVersion(string? version) => version is not null && version.Any(char.IsControl) ? null : version;
+
+    private static string? RawLeafVersion(JsonNode leaf)
     {
         if (leaf["catalogEntry"] is JsonObject entry && entry["version"] is JsonValue v && v.TryGetValue<string>(out var s)) return s;
         if (leaf["@id"] is JsonValue id && id.TryGetValue<string>(out var url))

@@ -19,8 +19,8 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The customer site's sessions and pages as the core decides them, with no module and with a test module that offers setup (#192, moved
-/// here from the hosted tests in #197): the not-linked card, when a prospect session is read, the sign-in's roles and auth time, the
+/// The customer site's sessions and pages as the core decides them, with no module and with a test module that offers setup (moved
+/// here from the hosted tests): the not-linked card, when a prospect session is read, the sign-in's roles and auth time, the
 /// confirmed sign-in's marker, a module page's form targets, and the refusal pages' neutral words.
 /// </summary>
 [Collection("sqlite-pools")]
@@ -96,7 +96,7 @@ public class CustomerSiteSessionTests
                 services?.Invoke(s);
             }, o =>
             {
-                o.DatabasePath = Path.Combine(dir, "packmoat.db");
+                o.Database = Path.Combine(dir, "packmoat.db");
                 o.MasterKeyBase64 = AesGcmSecretProtector.GenerateKeyBase64();
                 o.AllowedHosts = "feeds.example.test";
                 o.AdminKeysDir = Path.Combine(dir, "admin-keys");
@@ -113,7 +113,7 @@ public class CustomerSiteSessionTests
         catch
         {
             if (app is not null) await app.DisposeAsync();
-            temp.Dispose();   // #292: a failed start leaves no folder behind
+            temp.Dispose();   // A failed start leaves no folder behind
             throw;
         }
     }
@@ -154,7 +154,7 @@ public class CustomerSiteSessionTests
         var body = await callback.Content.ReadAsStringAsync();
         Assert.Contains("<title>" + AppHtml.E(NoCustomerSiteModule.NotLinkedTitle) + " - Packmoat</title>", body);
         var card = body[body.IndexOf("<main", StringComparison.Ordinal)..body.IndexOf("</main>", StringComparison.Ordinal)];
-        // The wording of option B on #192.
+        // The wording chosen for the not-linked card.
         Assert.Contains($"<h1>{AppHtml.E("Your organisation isn't on Packmoat here yet")}</h1>", card);
         Assert.Contains(AppHtml.E("Ask your IT team, or whoever runs Packmoat for you, to add your organisation. Give them this directory id. Once they've added it, sign in again."), card);
         Assert.Contains("Directory id: " + DirX, card);
@@ -239,7 +239,7 @@ public class CustomerSiteSessionTests
         Assert.False(site.Identity.LastChallenge.Items.ContainsKey(AppSite.ConfirmItem));
     }
 
-    // ---------------------------------------------------------------- a module the start refuses (#251, moved from #200 items 8 and 9)
+    // ---------------------------------------------------------------- a module the start refuses
 
     /// <summary>A module with the pages it is given, offering every directory a setup unless told not to.</summary>
     private sealed class PagesModule(IReadOnlyList<CustomerRoute<CustomerActor>> member, IReadOnlyList<CustomerRoute<Prospect>> prospect) : ICustomerSiteModule
@@ -264,7 +264,7 @@ public class CustomerSiteSessionTests
         {
             WebApplication Build() => PackmoatApp.Build(new[] { "--urls", "http://127.0.0.1:0" }, TestModules.Server, s => s.AddSingleton(module), o =>
             {
-                o.DatabasePath = Path.Combine(dir, "packmoat.db");
+                o.Database = Path.Combine(dir, "packmoat.db");
                 o.MasterKeyBase64 = AesGcmSecretProtector.GenerateKeyBase64();
                 o.AllowedHosts = "feeds.example.test";
             });
@@ -299,7 +299,7 @@ public class CustomerSiteSessionTests
             var (code, error, thrown) = Start(module);
             Assert.IsType<InvalidOperationException>(thrown);
             Assert.Equal(1, code);
-            Assert.Equal(expected + "\n", error.ReplaceLineEndings("\n"));   // one error: line, exit 1 (#240)
+            Assert.Equal(expected + "\n", error.ReplaceLineEndings("\n"));   // one error: line, exit 1
         }
     }
 
@@ -325,7 +325,7 @@ public class CustomerSiteSessionTests
     [Fact]   // mutation: the sign-in makes a prospect session without asking whether the module has prospect pages
     public async Task A_module_that_offers_a_setup_but_has_no_prospect_pages_makes_no_prospect_session()
     {
-        // Before #251 the person got a prospect session that no page reads: every visit went back round the sign-in.
+        // Earlier, the person got a prospect session that no page reads: every visit went back round the sign-in.
         await using var site = await StartAsync(s => s.AddSingleton<ICustomerSiteModule>(new PagesModule([Page<CustomerActor>("/member")], [])));
         var (b, callback) = await SignInAsync(site, DirX, CustomerSignIn.AdminRole);
         Assert.Equal(HttpStatusCode.Forbidden, callback.StatusCode);
@@ -371,7 +371,7 @@ public class CustomerSiteSessionTests
 
     // ---------------------------------------------------------------- neutral words with no operator set
 
-    /// <summary>An operator's own address: none may reach a page of a server that has not set one (#186).</summary>
+    /// <summary>An operator's own address: none may reach a page of a server that has not set one.</summary>
     private static void AssertNeutral(string where, string text)
     {
         Assert.False(text.Contains("packmoat.com", StringComparison.OrdinalIgnoreCase), $"{where} names packmoat.com");
@@ -399,7 +399,7 @@ public class CustomerSiteSessionTests
             .SelectMany(t => t.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
             .Where(m => m.Name.EndsWith("Refused", StringComparison.Ordinal) && m.ReturnType == typeof(Task)
                 && m.GetParameters() is [{ ParameterType: var c }, { ParameterType: { IsEnum: true } }, .. var rest] && c == typeof(Microsoft.AspNetCore.Http.HttpContext)
-                && rest.All(p => p.IsOptional))   // #197: the serving gate's notice, when there is one
+                && rest.All(p => p.IsOptional))   // The serving gate's notice, when there is one
             .ToList();
         Assert.Contains(refusals, m => m.DeclaringType == typeof(AppTokens));
         Assert.Contains(refusals, m => m.DeclaringType == typeof(AppAzureSetup));

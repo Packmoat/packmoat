@@ -5,7 +5,7 @@ using Packmoat.Policy;
 namespace Packmoat.Application.Tests;
 
 /// <summary>
-/// The per-version decision record (#123): the gate decorator notes every verdict in memory (coalesced per tenant, package, version,
+/// The per-version decision record: the gate decorator notes every verdict in memory (coalesced per tenant, package, version,
 /// decision and reason), a background writer flushes it, and nothing about recording can change or fail what the gate answers.
 /// </summary>
 public class RecordingPackageGateTests

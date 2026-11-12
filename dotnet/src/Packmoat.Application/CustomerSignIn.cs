@@ -284,7 +284,7 @@ public sealed class DirectoryBindingCommands
 
     /// <summary>
     /// A directory that may be linked to a tenant: a GUID (returned lower-case), and not the directory for personal Microsoft accounts.
-    /// Anything else is refused, naming the option. Also used by the command line's create-and-link (#195).
+    /// Anything else is refused, naming the option. Also used by the command line's create-and-link.
     /// </summary>
     public static string LinkableDirectory(string azureTenantId) => Directory(azureTenantId);
 

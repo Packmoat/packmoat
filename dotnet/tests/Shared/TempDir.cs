@@ -3,7 +3,7 @@ using System.Collections.Concurrent;
 namespace Packmoat.TestSupport;
 
 /// <summary>
-/// A temporary folder a test owns (#292): made by <see cref="Create"/>, deleted, with everything in it, when disposed. Use it with
+/// A temporary folder a test owns: made by <see cref="Create"/>, deleted, with everything in it, when disposed. Use it with
 /// <c>using</c> (or as a field a fixture disposes), so the folder goes whether the test passes or fails. A failed delete is not hidden:
 /// after a short retry it throws. <c>TempLeakGuard</c> also fails the run if anything is left behind. Compiled into every test project
 /// under dotnet/tests (and every tests folder built on the core) by TempLeakGuard.props.
@@ -74,7 +74,7 @@ internal sealed class TempDir : IDisposable, IAsyncDisposable
 
     /// <summary>
     /// Marks that the code using <paramref name="path"/> has thrown, so that the delete in its <c>finally</c> cannot replace that failure
-    /// with its own (#292): if the delete fails as well, the test's exception stays the one reported, and <c>TempLeakGuard</c> reports
+    /// with its own: if the delete fails as well, the test's exception stays the one reported, and <c>TempLeakGuard</c> reports
     /// the failed delete after the last test (the folder is left behind too). Always false: use it only as the filter of a catch between
     /// the try and the finally, <c>catch when (TempDir.Failing(dir)) { throw; }</c>; a filter runs before any finally does. A
     /// <c>using</c> cannot see its body's exception, so a site whose delete can fail after its body has failed uses this form.

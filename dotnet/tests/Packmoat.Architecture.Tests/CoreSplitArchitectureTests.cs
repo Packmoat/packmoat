@@ -4,9 +4,9 @@ using System.Xml.Linq;
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// The open-source split (#197): core/ stands alone. No core project references a project outside core/, nothing in the core references
+/// The open-source split: core/ stands alone. No core project references a project outside core/, nothing in the core references
 /// a hosted assembly, and the core grants its internals only to its own test assemblies. That core/ names none of the hosted service's
-/// words or packages is checked from the hosted side (#197 C3), so that this repository's tests need not name them either.
+/// words or packages is checked from the hosted side, so that this repository's tests need not name them either.
 /// </summary>
 public class CoreSplitArchitectureTests
 {
@@ -38,7 +38,7 @@ public class CoreSplitArchitectureTests
         Assembly.Load("Packmoat.Cli"),
     ];
 
-    // The hosted service's assemblies, by name: all of them are Packmoat.Hosted.* (#197 PR C).
+    // The hosted service's assemblies, by name: all of them are Packmoat.Hosted.*.
     private static bool IsHosted(string assembly) => assembly.StartsWith("Packmoat.Hosted", StringComparison.Ordinal);
 
     [Fact]   // mutation: a core project references ..\..\..\..\hosted\dotnet\src\Packmoat.Hosted.Application
@@ -80,7 +80,7 @@ public class CoreSplitArchitectureTests
         }
     }
 
-    [Fact]   // mutations: <InternalsVisibleTo Include="Packmoat.Hosted.Host" /> or "Packmoat.Hosted.Host.Tests" in Packmoat.Host (#197 C3 removed the latter)
+    [Fact]   // mutations: <InternalsVisibleTo Include="Packmoat.Hosted.Host" /> or "Packmoat.Hosted.Host.Tests" in Packmoat.Host
     public void The_core_grants_its_internals_only_to_test_assemblies()
     {
         var friends = CoreAssemblies.SelectMany(a => a.GetCustomAttributes<System.Runtime.CompilerServices.InternalsVisibleToAttribute>()

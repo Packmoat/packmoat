@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Http;
 namespace Packmoat.Host.Web;
 
 /// <summary>
-/// Microsoft's answer on a sign-in callback, read only for its OAuth <c>error</c> code (#143). Only the code is ever looked at: never
+/// Microsoft's answer on a sign-in callback, read only for its OAuth <c>error</c> code. Only the code is ever looked at: never
 /// error_description, error_subcode or an AADSTS number, which Microsoft says not to build on. Nothing read here is shown on a page,
 /// and only a code from <see cref="Known"/> is logged.
 /// </summary>

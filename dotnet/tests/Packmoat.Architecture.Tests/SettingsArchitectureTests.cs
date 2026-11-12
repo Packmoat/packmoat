@@ -1,7 +1,7 @@
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// #233: the core reads its settings through one reader (Packmoat.Infrastructure/Settings.cs), so every setting can also come from a file and
+/// The core reads its settings through one reader (Packmoat.Infrastructure/Settings.cs), so every setting can also come from a file and
 /// fails the same way. No other source file in dotnet/src reads the environment. The module API is marked unstable before 1.0.
 /// </summary>
 public class SettingsArchitectureTests
@@ -33,11 +33,11 @@ public class SettingsArchitectureTests
     [InlineData("Packmoat.Host/Modules/ICustomerSiteModule.cs", "public interface ICustomerSiteModule")]
     [InlineData("Packmoat.Host/Modules/IAdminSiteModule.cs", "public interface IAdminSiteModule")]
     [InlineData("Packmoat.Admin/IAdminCliModule.cs", "public interface IAdminCliModule")]
-    // #278 step 0: the engine-neutral seam types and the lifecycle's ports a module implements
+    // The engine-neutral seam types and the lifecycle's ports a module implements
     [InlineData("Packmoat.Admin/IAdminCliModule.cs", "public sealed record AdminCliContext")]
     [InlineData("Packmoat.Infrastructure/IRelationalDatabase.cs", "public interface IRelationalDatabase")]
     [InlineData("Packmoat.Infrastructure/DbCommandParameters.cs", "public static class DbCommandParameters")]
-    // #278 step 0, PR 3: the schema and key-check ports, and the track a module hands over
+    // The schema and key-check ports, and the track a module hands over
     [InlineData("Packmoat.Infrastructure/ISchemaMigrator.cs", "public interface ISchemaMigrator")]
     [InlineData("Packmoat.Application/MasterKeyCheck.cs", "public interface IMasterKeyCheck")]
     [InlineData("Packmoat.Infrastructure/MigrationTrack.cs", "public sealed partial class MigrationTrack")]

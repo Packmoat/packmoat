@@ -108,7 +108,7 @@ public interface ISharedAppCredentialStore
     /// Records a passing onboarding check for a shared tenant, replacing any earlier one, but only if, read again inside the same
     /// transaction, the tenant is still bound to the shared app in <c>verification.AzureTenantId</c>, its feed URL is still
     /// <c>verification.FeedIndexUrl</c> and the active shared client id is still <c>verification.ClientId</c>. False (nothing written) otherwise.
-    /// The operator's onboard check takes the feed over: in the same transaction the tenant's feed_setup becomes 'operator' (#207).
+    /// The operator's onboard check takes the feed over: in the same transaction the tenant's feed_setup becomes 'operator'.
     /// </summary>
     Task<bool> RecordVerificationAsync(SharedAppVerification verification, CancellationToken cancellationToken);
     /// <summary>Deletes the tenant's record only if it is exactly <paramref name="verification"/> (same values and time). False otherwise.</summary>
@@ -187,7 +187,7 @@ public static class TenantUrlRules
 /// <summary>
 /// A tenant to create. <c>Origin</c> has no default: every caller says who is making it, and the store writes it with the tenant
 /// (a module's creation participant may act on it in the same transaction). <c>CreatedByOid</c> is the creator's object id (self-made only).
-/// <c>FeedSetup</c> is who sets up its feed (#207): <see cref="Application.FeedSetup.Customer"/> only for an operator-made tenant with no
+/// <c>FeedSetup</c> is who sets up its feed: <see cref="Application.FeedSetup.Customer"/> only for an operator-made tenant with no
 /// upstream URLs at all, which its customer connects with the Azure setup wizard.
 /// </summary>
 public sealed record NewTenant(string Id, string Name, string UpstreamBase, string AllowedPathPrefix, string FeedIndexUrl, int CooldownDays, TenantOrigin Origin)
@@ -229,16 +229,16 @@ public interface ITenantStore
     /// </summary>
     Task<IReadOnlyList<WaiverRecord>> ListWaiversAsync(string tenantId, int limit, CancellationToken cancellationToken);
     /// <summary>Sets an "own app" identity (replacing a shared binding if there was one). The operator now sets up the feed: in the same
-    /// transaction the tenant's feed_setup becomes 'operator' (#207).</summary>
+    /// transaction the tenant's feed_setup becomes 'operator'.</summary>
     Task SetUpstreamIdentityAsync(string tenantId, UpstreamIdentity identity, CancellationToken cancellationToken);
     /// <summary>The "own app" identity with its private key, or null when none is set OR the tenant is in shared mode.</summary>
     Task<UpstreamIdentity?> GetUpstreamIdentityAsync(string tenantId, CancellationToken cancellationToken);
     /// <summary>Binds the tenant to the shared app in directory <paramref name="azureTenantId"/>; any own-app client id and key are removed.
-    /// The operator now sets up the feed: in the same transaction the tenant's feed_setup becomes 'operator' (#207).</summary>
+    /// The operator now sets up the feed: in the same transaction the tenant's feed_setup becomes 'operator'.</summary>
     Task BindSharedIdentityAsync(string tenantId, string azureTenantId, CancellationToken cancellationToken);
     /// <summary>Which app the tenant uses. Reads no key material and decrypts nothing. Null when no identity is set.</summary>
     Task<UpstreamBinding?> GetUpstreamBindingAsync(string tenantId, CancellationToken cancellationToken);
-    /// <summary>Who made the tenant and who sets up its feed (#207), from the tenant row itself. Null when there is no such tenant.</summary>
+    /// <summary>Who made the tenant and who sets up its feed, from the tenant row itself. Null when there is no such tenant.</summary>
     Task<TenantSetup?> GetSetupAsync(string tenantId, CancellationToken cancellationToken);
 }
 
@@ -272,7 +272,7 @@ public interface IAdminActionLog
     public const string PruneAction = "admin_actions.prune";
 
     /// <summary>
-    /// The retention prune (#117), in one transaction: deletes the rows written before <paramref name="before"/> and, when it deleted
+    /// The retention prune, in one transaction: deletes the rows written before <paramref name="before"/> and, when it deleted
     /// any, appends one <see cref="PruneAction"/> row (time <paramref name="now"/>, actor "retention", site "server") saying how many and
     /// the cutoff. Returns how many were deleted. The database itself refuses to delete a row less than 12 months old (migration 18), so
     /// a cutoff that is too late (a clock running ahead) throws and deletes nothing.

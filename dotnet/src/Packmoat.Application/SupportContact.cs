@@ -1,7 +1,7 @@
 namespace Packmoat.Application;
 
 /// <summary>
-/// Who runs this Packmoat server and how a person reaches them for help (#186): the operator's name (PACKMOAT_OPERATOR_NAME) and support
+/// Who runs this Packmoat server and how a person reaches them for help: the operator's name (PACKMOAT_OPERATOR_NAME) and support
 /// address (PACKMOAT_SUPPORT_EMAIL). The host reads and checks both at start and passes this down; nothing here reads the environment.
 /// Either may be unset (a self-hosted server): the sentences then use neutral words, never another operator's name or address.
 /// </summary>

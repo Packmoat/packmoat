@@ -17,7 +17,7 @@ public sealed record VectorCase(string Group, string Name, DateTimeOffset Now, J
 public sealed class MalformedVectorException(string message) : Exception(message);
 
 /// <summary>
-/// Reads and checks the shared conformance vectors in spec/vectors (#209). The files are found from the core folder (the one holding
+/// Reads and checks the shared conformance vectors in spec/vectors. The files are found from the core folder (the one holding
 /// dotnet/Packmoat.sln), never from the repository root, so the core alone runs them. A file is checked against its group's JSON Schema
 /// in spec/schema (every object closed, every code and time in its one form), then for what a schema cannot say: unique names and
 /// real calendar times. A file breaking any rule is refused whole.

@@ -28,7 +28,7 @@ internal sealed class FakeAutoJoinStore : IAutoJoinSettingStore
     }
 }
 
-/// <summary>Auto-join (#80): who joins as Developer without a role, and who may switch it off.</summary>
+/// <summary>Auto-join: who joins as Developer without a role, and who may switch it off.</summary>
 public class AutoJoinDecisionTests
 {
     private const string Audience = "55555555-5555-4555-8555-555555555555";
@@ -196,7 +196,7 @@ public class AutoJoinCommandTests
             _tenants.Tenants.Add(new Tenant(id, id.ToUpperInvariant(), "https://pkgs.dev.azure.com/", id + "/", $"https://pkgs.dev.azure.com/{id}/_packaging/f/nuget/v3/index.json", new TenantPolicy(14)));
         _directories.Rows[AcmeDir] = new DirectoryBinding(AcmeDir, "acme", _clock.UtcNow, "op");
         _directories.Rows[GlobexDir] = new DirectoryBinding(GlobexDir, "globex", _clock.UtcNow, "op");
-        _commands = new AutoJoinCommands(_tenants, _directories, _store, _log, _clock);
+        _commands = new AutoJoinCommands(_tenants, _directories, _store, _log, _clock, new InProcessRateCounter(_clock));
     }
 
     private static async Task<CustomerTokenRefusal> Refused(Func<Task> act) => (await Assert.ThrowsAsync<CustomerTokenRefusedException>(act)).Reason;

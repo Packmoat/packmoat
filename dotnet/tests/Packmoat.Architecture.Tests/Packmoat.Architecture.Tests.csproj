@@ -8,11 +8,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="coverlet.collector" Version="6.0.4" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="coverlet.collector" Version="10.1.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
     <PackageReference Include="xunit" Version="2.9.3" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
-    <!-- Reads workflows in WorkflowExpressions (#236). MIT, no dependencies on net10.0. Keep the same version in both architecture test projects. -->
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <!-- Reads workflows in WorkflowExpressions. MIT, no dependencies on net10.0. Keep the same version in both architecture test projects. -->
     <PackageReference Include="YamlDotNet" Version="18.1.0" />
   </ItemGroup>
 

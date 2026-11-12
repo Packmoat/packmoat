@@ -1,9 +1,21 @@
 using Microsoft.Data.Sqlite;
 using Packmoat.Application;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
-/// <summary><see cref="AdminActionLogContract"/> on SQLite, and the tests only SQLite has (#232 S1).</summary>
+/// <summary>
+/// <see cref="AdminActionLogContract"/> on PostgreSQL, each test on a database of its own. Its prune tests are the
+/// one-transaction prune's: a refusal by the 365-day floor reaches the caller and deletes nothing.
+/// </summary>
+[Collection(PostgresCollection.Name)]
+[Trait("Category", PostgresTestServer.Category)]
+public class PostgresAdminActionLogTests : AdminActionLogContract
+{
+    protected override IStoreEngine Engine => PostgresStoreEngine.Instance;
+}
+
+/// <summary><see cref="AdminActionLogContract"/> on SQLite, and the tests only SQLite has.</summary>
 [Collection("sqlite-pools")]
 public class AdminActionLogTests : AdminActionLogContract
 {

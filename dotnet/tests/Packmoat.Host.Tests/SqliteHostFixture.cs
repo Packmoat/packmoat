@@ -11,7 +11,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The real host wired to the real SQLite stack (tenants, tokens, audit) against the fake upstream. Shared with the hosted tests (#197),
+/// The real host wired to the real SQLite stack (tenants, tokens, audit) against the fake upstream. Shared with the hosted tests,
 /// which compile it in: it runs <see cref="TestModules.Server"/> with the tracks, participants and gate of the TestModules.cs it is built with.
 /// </summary>
 public sealed class SqliteHostFixture : IAsyncDisposable
@@ -50,7 +50,7 @@ public sealed class SqliteHostFixture : IAsyncDisposable
         }
         catch
         {
-            await f.DisposeAsync();   // the folder, and whatever started before the failure (#292)
+            await f.DisposeAsync();   // the folder, and whatever started before the failure
             throw;
         }
     }

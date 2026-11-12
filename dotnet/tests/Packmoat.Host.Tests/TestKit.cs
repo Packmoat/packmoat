@@ -158,7 +158,7 @@ public static class Restore
             // NuGet also caches the service index per source URL across runs (--no-cache does not cover it). Two tenants share the URL
             // https://<proxy>/v3/index.json, so one run could reuse the other tenant's index. Keep every restore's HTTP cache private.
             psi.Environment["NUGET_HTTP_CACHE_PATH"] = Path.Combine(dir, "http-cache");
-            // dotnet restore keeps NuGet's scratch folder (NuGetScratch) in the temporary folder: give it one inside this folder (#292).
+            // dotnet restore keeps NuGet's scratch folder (NuGetScratch) in the temporary folder: give it one inside this folder.
             var temp = Directory.CreateDirectory(Path.Combine(dir, "tmp")).FullName;
             foreach (var name in new[] { "TMPDIR", "TMP", "TEMP" }) psi.Environment[name] = temp;
             psi.Environment["DOTNET_NOLOGO"] = "1";

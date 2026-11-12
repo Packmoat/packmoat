@@ -4,7 +4,7 @@ using Packmoat.Infrastructure.Postgres;
 namespace Packmoat.Infrastructure.Tests.Postgres;
 
 /// <summary>
-/// <see cref="PostgresRetry"/> (#303 decision "Retry"), with no server: each attempt is a function that throws what the server would, and
+/// <see cref="PostgresRetry"/>, with no server: each attempt is a function that throws what the server would, and
 /// the waits are recorded, not slept.
 /// </summary>
 public class PostgresRetryTests
@@ -61,7 +61,7 @@ public class PostgresRetryTests
         Assert.Equal(3, PostgresRetry.MaxAttempts);
     }
 
-    // mutation (#303): the retry also retries 23505 (a unique violation is a refusal: running it again cannot help and hides it)
+    // mutation: the retry also retries 23505 (a unique violation is a refusal: running it again cannot help and hides it)
     [Theory]
     [InlineData(PostgresErrorCodes.UniqueViolation)]        // 23505
     [InlineData(PostgresErrorCodes.CheckViolation)]         // 23514

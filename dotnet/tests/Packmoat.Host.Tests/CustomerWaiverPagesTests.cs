@@ -12,7 +12,7 @@ using Packmoat.Host.Web;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// #157 PR 2: the customer site's Waivers page end to end through the fake Microsoft sign-in. Everyone reads /waivers; only a freshly
+/// The customer site's Waivers page end to end through the fake Microsoft sign-in. Everyone reads /waivers; only a freshly
 /// signed-in Admin adds or revokes. The tenant comes only from the session; everything shown is HTML-encoded.
 /// </summary>
 [Collection("sqlite-pools")]
@@ -458,7 +458,7 @@ public class CustomerWaiverPagesTests
 
     // ---------------------------------------------------------------- names: never the operator's own
 
-    [Fact]   // review of #163: an operator revoke or an operator waiver shows "Packmoat", never the operator's name
+    [Fact]   // an operator revoke or an operator waiver shows "Packmoat", never the operator's name
     public async Task The_operator_is_shown_as_Packmoat_as_maker_and_as_revoker()
     {
         await using var f = await StartAsync();
@@ -479,7 +479,7 @@ public class CustomerWaiverPagesTests
 
     // ---------------------------------------------------------------- lifetime
 
-    [Fact]   // review of #163: the rate limits and the cap-alert throttle live in these instances, so they must be singletons
+    [Fact]   // the rate limits and the cap-alert throttle live in these instances, so they must be singletons
     public async Task The_waiver_commands_and_queries_are_singletons()
     {
         await using var f = await StartAsync();

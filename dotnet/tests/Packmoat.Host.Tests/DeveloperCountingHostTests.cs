@@ -26,7 +26,7 @@ public class DeveloperCountingHostTests
     public async Task Use_is_counted_even_when_nothing_is_audited()
     {
         await using var f = await SqliteHostFixture.StartAsync();
-        f.Publish("Acme.Lib", "2.0.0", 3);   // too young: both restores stop at the listing, which is not audited (#136)
+        f.Publish("Acme.Lib", "2.0.0", 3);   // too young: both restores stop at the listing, which is not audited
         var ann = await f.Tokens.IssueAsync("acme", "ann", default);
         var bob = await f.Tokens.IssueAsync("acme", "bob", default);
 
@@ -91,7 +91,7 @@ public class DeveloperCountingHostTests
         {
             await using var app = PackmoatApp.Build(new[] { "--urls", "http://127.0.0.1:0" }, TestModules.Server, null, o =>
             {
-                o.DatabasePath = Path.Combine(dir, "packmoat.db");
+                o.Database = Path.Combine(dir, "packmoat.db");
                 o.MasterKeyBase64 = Packmoat.Infrastructure.AesGcmSecretProtector.GenerateKeyBase64();
                 o.AllowedHosts = "feeds.example.test";
             });

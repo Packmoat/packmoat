@@ -2,11 +2,12 @@ using System.Data.Common;
 using Packmoat.Application;
 using Packmoat.Domain;
 using Packmoat.Infrastructure.Lifecycle;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// The core's organisation creation as a contract (#288 P2, from #195): the tenant, its directory link, the first member and the record
+/// The core's organisation creation as a contract (from an earlier version): the tenant, its directory link, the first member and the record
 /// in one transaction, the core's lifecycle only. A directory already linked writes nothing; a participant's veto, or a record that cannot
 /// be written, leaves nothing; the first member's older row is moved to the new tenant; and of two creations racing for one directory,
 /// exactly one wins. The hosted module's participants and the command line stay in the hosted OrganisationCreationTests. Each test that
@@ -47,7 +48,7 @@ public abstract class OrganisationStoreContract : StoreContract
         await cmd.ExecuteNonQueryAsync();
     }
 
-    [Fact]
+    [EngineFact]
     public async Task The_tenant_link_member_and_record_are_written_together_with_the_ids_lower_case()
     {
         await using var t = await CreateDbAsync();
@@ -62,7 +63,7 @@ public abstract class OrganisationStoreContract : StoreContract
         Assert.Equal(("tenant.create", "acme", "directory=" + Directory1, "cli"), (record.Action, record.TenantId, record.Detail, record.Site));
     }
 
-    [Fact]
+    [EngineFact]
     public async Task With_no_member_and_no_record_only_the_tenant_and_its_link_are_written()
     {
         await using var t = await CreateDbAsync();
@@ -71,7 +72,7 @@ public abstract class OrganisationStoreContract : StoreContract
         Assert.Equal(before.Replace("sign_in_directories=0", "sign_in_directories=1").Replace("tenants=0", "tenants=1"), await AllCountsAsync(t));
     }
 
-    [Fact]   // mutation: remove the already-linked check
+    [EngineFact]   // mutation: remove the already-linked check
     public async Task A_directory_already_linked_is_taken_writes_nothing_and_leaves_the_link_alone()
     {
         await using var t = await CreateDbAsync();
@@ -89,7 +90,7 @@ public abstract class OrganisationStoreContract : StoreContract
         Assert.Equal(new[] { "first" }, await ColumnAsync(t, "SELECT id FROM tenants"));
     }
 
-    [Fact]
+    [EngineFact]
     public async Task A_participants_veto_rolls_everything_back_and_keeps_its_code()
     {
         await using var t = await CreateDbAsync();
@@ -106,7 +107,7 @@ public abstract class OrganisationStoreContract : StoreContract
         Assert.Equal(before, await AllCountsAsync(t));
     }
 
-    [Fact]
+    [EngineFact]
     public async Task The_first_members_older_row_in_another_tenant_is_moved_to_the_new_one()
     {
         await using var t = await CreateDbAsync();
@@ -123,7 +124,8 @@ public abstract class OrganisationStoreContract : StoreContract
         Assert.Equal(1L, await ScalarAsync(t, "SELECT COUNT(*) FROM members"));
     }
 
-    [Fact]   // mutation: commit before the record
+    [EngineFact(NotAsAppRole = "its rule is an index it makes inside the creation's own transaction, and the app role may not make one " +
+        "(by design). The owner's PostgreSQL fixture and SQLite's run it.")]   // mutation: commit before the record
     public async Task No_record_means_no_organisation()
     {
         await using var t = await CreateDbAsync();
@@ -147,7 +149,7 @@ public abstract class OrganisationStoreContract : StoreContract
     /// The loser must get <see cref="OrganisationCreateResult.DirectoryTaken"/>, never an engine's error: self sign-up and the command line
     /// turn that answer into "this directory is already linked", and neither catches a database exception.
     /// </summary>
-    [Fact]   // mutation: remove the already-linked check (the loser's link then collides on the primary key)
+    [EngineFact]   // mutation: remove the already-linked check (the loser's link then collides on the primary key)
     public async Task Of_two_creations_racing_for_one_directory_exactly_one_wins()
     {
         await using var t = await CreateDbAsync();

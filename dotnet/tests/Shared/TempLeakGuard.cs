@@ -6,7 +6,7 @@ using Xunit.Sdk;
 namespace Packmoat.TestSupport;
 
 /// <summary>
-/// Fails a test run that leaves anything in the temporary folder (#292). Every test project names it as its xunit test framework (an
+/// Fails a test run that leaves anything in the temporary folder. Every test project names it as its xunit test framework (an
 /// assembly-level <c>Xunit.TestFrameworkAttribute</c>, set by TempLeakGuard.props, which dotnet/tests/Directory.Build.props imports, as
 /// does every tests folder built on the core: a project there cannot leave it out). When the framework is made, before any test runs, it
 /// points the process's temporary folder (TMPDIR; TMP and TEMP on Windows) at a new, empty folder of its own,
@@ -93,7 +93,7 @@ public sealed class TempLeakGuard : XunitTestFramework
             var summary = await base.RunTestCollectionsAsync(messageBus, cancellationTokenSource);
             IReadOnlyList<string> problems;
             try { problems = Check(folder, endOfRun: true); }
-            catch (Exception e) { problems = [$"The temporary-folder check of {folder} failed (#292): {e}"]; }
+            catch (Exception e) { problems = [$"The temporary-folder check of {folder} failed: {e}"]; }
             foreach (var problem in problems)
                 messageBus.QueueMessage(new ErrorMessage(TestCases, ["Packmoat.TestSupport.TempLeak"], [problem], [null], [-1]));
             return summary;
@@ -119,11 +119,11 @@ public sealed class TempLeakGuard : XunitTestFramework
                 .Where(entry => !(entry is FileInfo && Allowed(entry.Name)))
                 .Select(entry => entry.FullName)
                 .Order(StringComparer.Ordinal)
-                .Select(entry => $"A test left this in the temporary folder (#292): {entry}. Delete it in a using or a finally (Packmoat.TestSupport.TempDir)."));
+                .Select(entry => $"A test left this in the temporary folder: {entry}. Delete it in a using or a finally (Packmoat.TestSupport.TempDir)."));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            problems.Add($"The run's temporary folder {folder} could not be listed, so what the tests left in it is unknown (#292): {e.GetType().Name}: {e.Message}");
+            problems.Add($"The run's temporary folder {folder} could not be listed, so what the tests left in it is unknown: {e.GetType().Name}: {e.Message}");
         }
         try { TempDir.Delete(folder); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)

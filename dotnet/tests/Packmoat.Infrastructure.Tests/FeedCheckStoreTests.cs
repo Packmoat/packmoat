@@ -1,14 +1,134 @@
 using Microsoft.Data.Sqlite;
 using Packmoat.Application;
 using Packmoat.Domain;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
-/// <summary><see cref="FeedCheckStoreContract"/> on SQLite, and the tests only SQLite has (#232 S1).</summary>
+/// <summary>
+/// <see cref="FeedCheckStoreContract"/> on PostgreSQL, each test on a database of its own. The migrations are SQLite's own
+/// and stay in <see cref="FeedCheckStoreTests"/>.
+/// </summary>
+[Collection(PostgresCollection.Name)]
+[Trait("Category", PostgresTestServer.Category)]
+public class PostgresFeedCheckStoreTests : FeedCheckStoreContract
+{
+    protected override IStoreEngine Engine => PostgresStoreEngine.Instance;
+}
+
+/// <summary><see cref="FeedCheckStoreContract"/> on SQLite, and the tests only SQLite has.</summary>
 [Collection("sqlite-pools")]
 public class FeedCheckStoreTests : FeedCheckStoreContract
 {
     protected override IStoreEngine Engine => SqliteStoreEngine.Instance;
+
+    /// <summary>
+    /// The stored results of old rows, odd and ordinary, that the parity test below runs through both redactions: what an older build or a
+    /// hand edit could leave, and every rule of SQLite's pre-filter met and broken once.
+    /// </summary>
+    private static readonly string[] ResultShapes = Shapes();
+
+    private static string[] Shapes()
+    {
+        var removed = FeedCheckRedaction.RemovedDetail;
+        string Obj(string body) => "[{" + body + "}]";
+        var clean = $"\"id\":\"feed\",\"title\":\"F\",\"status\":\"pass\",\"detail\":\"{removed}\"";
+        return
+        [
+            "[]", "", " []", "[ ]", "null", "5", "\"Grace Hopper\"", "not json, Grace Hopper", "{\"detail\":\"Grace Hopper\"}", "[null]", "[1,2]",
+            "[[\"Grace Hopper\"]]", "[\"Grace Hopper\"]", "[{}]", "[{\"id\":\"a\",}]", "[{id:'a'}]",
+            Obj(clean), Obj(clean) + " ", "[" + "{" + clean + "}," + "{" + clean + "}]", Obj(clean) + ",null",
+            Obj($"\"title\":\"F\",\"id\":\"feed\",\"status\":\"pass\",\"detail\":\"{removed}\""),
+            $"[ {{ \"id\": \"feed\", \"title\": \"F\", \"status\": \"pass\", \"detail\": \"{removed}\" }} ]",
+            Obj($"\"id\":\"feed\",\"title\":\"F\",\"status\":\"glorious\",\"detail\":\"{removed}\""),
+            Obj($"\"id\":null,\"title\":\"F\",\"status\":\"pass\",\"detail\":\"{removed}\""),
+            Obj($"\"id\":\"feed\",\"title\":\"\\u00e9\",\"status\":\"pass\",\"detail\":\"{removed}\""),
+            Obj($"\"id\":\"feed\",\"title\":\"\u00e9\",\"status\":\"pass\",\"detail\":\"{removed}\""),
+            Obj($"\"id\":\"feed\",\"title\":\"F\",\"status\":\"pass\",\"detail\":\"{removed[..^1]}\\u002e\""),
+            Obj("\"id\":\"feed\",\"title\":\"F\",\"status\":\"pass\",\"detail\":\"Grace Hopper\""),
+            Obj("\"id\":\"feed\",\"title\":\"F\",\"status\":\"pass\""),
+            Obj("\"id\":\"feed\",\"title\":\"F\",\"status\":\"pass\",\"detail\":null"),
+            Obj("\"id\":\"feed\",\"title\":\"F\",\"status\":\"pass\",\"detail\":30"),
+            Obj($"\"id\":\"feed\",\"title\":\"F\",\"status\":\"pass\",\"detail\":\"{removed}\",\"detail\":\"Grace Hopper\""),
+            Obj($"\"id\":\"feed\",\"title\":\"F\",\"status\":\"pass\",\"detail\":\"Grace Hopper\",\"detail\":\"{removed}\""),
+            Obj($"\"id\":\"feed\",\"title\":\"F\",\"status\":\"pass\",\"detail\":\"{removed}\",\"names\":[\"private\"]"),
+            Obj($"\"id\":\"feed\",\"title\":\"F\",\"detail\":\"{removed}\",\"who\":\"Grace\""),
+            Obj($"\"id\":\"feed\",\"title\":\"F\",\"status\":\"pass\",\"detail\":\"{removed}\",\"id\":\"again\""),
+            Obj($"\"id\":{new string('[', 70)}{new string(']', 70)},\"title\":\"F\",\"status\":\"pass\",\"detail\":\"{removed}\""),
+            Obj($"\"id\":\"\\ud800\",\"title\":\"F\",\"status\":\"pass\",\"detail\":\"{removed}\""),
+            Obj($"\"id\":\"feed\",\"title\":\"F\",\"status\":\"pass\",\"detail\":\"{removed}\"") + "x",
+            // A lone surrogate in a detail or a key, which System.Text.Json will not read as text; and an upper-case key.
+            Obj("\"id\":\"feed\",\"title\":\"F\",\"status\":\"pass\",\"detail\":\"\\ud800\""),
+            Obj("\"id\":\"feed\",\"title\":\"F\",\"status\":\"pass\",\"detail\":\"Grace \\udc00 Hopper\""),
+            Obj($"\"id\":\"feed\",\"title\":\"F\",\"status\":\"pass\",\"detail\":\"{removed}\",\"\\ud800\":\"x\""),
+            Obj("\"id\":\"feed\",\"title\":\"F\",\"status\":\"pass\",\"\\ud800\":\"Grace\""),
+            Obj($"\"ID\":\"Grace Hopper\",\"title\":\"F\",\"status\":\"pass\",\"detail\":\"{removed}\""),
+        ];
+    }
+
+    /// <summary>
+    /// PostgreSQL's redaction selects old rows by date alone and decides each in C#
+    /// (<see cref="Infrastructure.Postgres.PostgresFeedCheckStore.RedactionOf"/>), where SQLite selects with its JSON pre-filter, then decides
+    /// in C#. Every shape above, with and without a checker's name and confirmed admins, goes through SQLite's redaction here, and each row
+    /// must come out as the PostgreSQL decision says: left exactly as it was, or written with those results, no name and no admins. And the
+    /// count SQLite returns is the number of rows PostgreSQL would change.
+    /// </summary>
+    [Fact]   // mutations: a rule of the C# pre-filter dropped or changed (the key count, the first "detail", the "[]" text, the depth)
+    public async Task The_postgres_redaction_decides_every_row_as_sqlites_does()
+    {
+        await using var t = await TestDb.CreateAsync();
+        await t.AddTenantAsync("acme");
+        var store = new SqliteFeedCheckStore(t.Db);
+        var rows = new List<(long Id, string Results, string Admins, string Name)>();
+        foreach (var shape in ResultShapes)
+            foreach (var (admins, name) in new[] { ("[]", ""), ("[]", "Grace Hopper"), ("[\"Ada\"]", "") })
+            {
+                var id = await store.RecordAsync(Check(t, after: TimeSpan.FromDays(-31)), default);
+                await using var c = await t.Db.OpenAsync();
+                await using var cmd = c.CreateCommand();
+                cmd.CommandText = "UPDATE feed_checks SET results=@r, confirmed_admins=@a, checked_by_name=@n WHERE id=@id";
+                cmd.Parameters.AddWithValue("@r", shape);
+                cmd.Parameters.AddWithValue("@a", admins);
+                cmd.Parameters.AddWithValue("@n", name);
+                cmd.Parameters.AddWithValue("@id", id);
+                await cmd.ExecuteNonQueryAsync();
+                rows.Add((id, shape, admins, name));
+            }
+
+        var changed = await store.BlankPersonalDataAsync(t.Clock.UtcNow - TimeSpan.FromDays(30), default);
+
+        var expectedCount = 0;
+        var mismatches = new List<string>();   // every row that differs, so a failure names each shape at once
+        foreach (var (id, results, admins, name) in rows)
+        {
+            var after = Assert.Single(await ColumnAsync(t, $"SELECT results || char(10) || confirmed_admins || char(10) || checked_by_name FROM feed_checks WHERE id={id}"));
+            string? postgres;
+            try { postgres = Infrastructure.Postgres.PostgresFeedCheckStore.RedactionOf(results, admins, name); }
+            catch (Exception e) { mismatches.Add($"results {results}, admins {admins}, name '{name}': PostgreSQL threw {e.GetType().Name}"); continue; }
+            if (postgres is not null) expectedCount++;
+            if ((postgres is null ? $"{results}\n{admins}\n{name}" : $"{postgres}\n[]\n") != after)
+                mismatches.Add($"results {results}, admins {admins}, name '{name}': SQLite wrote {after}, PostgreSQL would write {postgres ?? "nothing"}");
+        }
+        Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
+        Assert.Equal(expectedCount, changed);
+        Assert.True(expectedCount > 0 && expectedCount < rows.Count);
+    }
+
+    [Fact]
+    public void The_postgres_store_writes_outcomes_kinds_and_slots_as_sqlites_does()
+    {
+        foreach (var outcome in Enum.GetValues<FeedCheckOutcome>())
+            Assert.Equal(SqliteFeedCheckStore.OutcomeText(outcome), Infrastructure.Postgres.PostgresFeedCheckStore.OutcomeText(outcome));
+        foreach (var kind in Enum.GetValues<FeedCheckKind>())
+            Assert.Equal(SqliteFeedCheckStore.KindText(kind), Infrastructure.Postgres.PostgresFeedCheckStore.KindText(kind));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Infrastructure.Postgres.PostgresFeedCheckStore.OutcomeText((FeedCheckOutcome)42));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Infrastructure.Postgres.PostgresFeedCheckStore.KindText((FeedCheckKind)7));
+        foreach (var slot in Enum.GetValues<SharedAppSlot>())
+        {
+            Assert.Equal(SqliteSharedAppCredentialStore.SlotName(slot), Infrastructure.Postgres.PostgresSharedAppCredentialStore.SlotName(slot));
+            Assert.Equal(SqliteSharedAppCredentialStore.Context(slot), Infrastructure.Postgres.PostgresSharedAppCredentialStore.Context(slot));
+        }
+    }
 
     [Fact]
     public async Task Migration_13_on_a_v12_database_adds_feed_checks_and_keeps_existing_verifications_as_operator_made()
@@ -81,55 +201,5 @@ public class FeedCheckStoreTests : FeedCheckStoreContract
             cmd.CommandText = "SELECT MAX(version) FROM schema_migrations";
             Assert.Equal(16L, await cmd.ExecuteScalarAsync());
         }
-    }
-
-    /// <summary>
-    /// The 30-day retention (#63 H1 review F3, #107): a check older than the cutoff loses its confirmed admins, the checker's display name
-    /// and every result's detail; the outcome, kind, feed names, the checker's tid and oid, each result's id, title and status, and the row
-    /// itself stay (a verification may refer to it). A check at the cutoff or newer keeps everything.
-    /// </summary>
-    [Fact]
-    public async Task Personal_data_of_checks_older_than_the_cutoff_is_blanked_and_the_rows_stay()
-    {
-        await using var t = await TestDb.CreateAsync();
-        await t.AddTenantAsync("acme");
-        var store = new SqliteFeedCheckStore(t.Db);
-        var cutoff = t.Clock.UtcNow - TimeSpan.FromDays(30);
-        var names = new FeedNames("contoso", "p", "f");
-        var oldCheck = Check(t, outcome: FeedCheckOutcome.Failed, after: TimeSpan.FromDays(-31)) with { Names = names };
-        var old = await store.RecordAsync(oldCheck, default);
-        await ExecAsync(t, $"INSERT INTO shared_app_verifications(tenant_id, azure_tenant_id, feed_index_url, client_id, verified_at, verified_by, verified_via, feed_check_id) VALUES('acme','{Dir}','{Feed}','{Client}','2026-09-01T00:00:00.0000000+00:00','wizard','wizard',{old})");
-        var atCutoff = await store.RecordAsync(Check(t, after: TimeSpan.FromDays(-30)), default);   // exactly 30 days: not yet
-        var recent = await store.RecordAsync(Check(t, after: TimeSpan.FromDays(-29)), default);
-        var before = await ScalarAsync(t, $"SELECT group_concat(id || '|' || checked_by_name || '|' || results || '|' || confirmed_admins, ';') FROM feed_checks WHERE id IN ({atCutoff},{recent})");
-
-        Assert.Equal(1, await store.BlankPersonalDataAsync(cutoff, default));
-
-        Assert.Equal(3L, await ScalarAsync(t, "SELECT COUNT(*) FROM feed_checks"));
-        Assert.Equal("[]", await ScalarAsync(t, $"SELECT confirmed_admins FROM feed_checks WHERE id={old}"));
-        Assert.Equal("", await ScalarAsync(t, $"SELECT checked_by_name FROM feed_checks WHERE id={old}"));
-        var oldResults = (string)(await ScalarAsync(t, $"SELECT results FROM feed_checks WHERE id={old}"))!;
-        Assert.DoesNotContain("Ada", oldResults);
-        Assert.DoesNotContain("evil.example", oldResults);
-        var read = (await store.LatestAsync("acme", FeedCheckKind.Settings, default))!;
-        Assert.Equal(recent, read.Id);
-        Assert.Equal("Grace Hopper", read.CheckedByName);
-        Assert.Contains("Ada Lovelace", read.ConfirmedAdmins);
-        Assert.Equal(before, await ScalarAsync(t, $"SELECT group_concat(id || '|' || checked_by_name || '|' || results || '|' || confirmed_admins, ';') FROM feed_checks WHERE id IN ({atCutoff},{recent})"));
-
-        // the old row as it now reads: everything but the personal data is as recorded
-        await ExecAsync(t, $"DELETE FROM feed_checks WHERE id IN ({atCutoff},{recent})");
-        var redacted = (await store.LatestAsync("acme", FeedCheckKind.Settings, default))!;
-        Assert.Equal(old, redacted.Id);
-        Assert.Equal((oldCheck.TenantId, oldCheck.CheckedAt, oldCheck.CheckedByTid, oldCheck.CheckedByOid, oldCheck.AzureTenantId, oldCheck.FeedIndexUrl, oldCheck.ClientId),
-            (redacted.TenantId, redacted.CheckedAt, redacted.CheckedByTid, redacted.CheckedByOid, redacted.AzureTenantId, redacted.FeedIndexUrl, redacted.ClientId));
-        Assert.Equal((FeedCheckOutcome.Failed, FeedCheckKind.Settings, names), (redacted.Outcome, redacted.Kind, redacted.Names));
-        Assert.Equal("", redacted.CheckedByName);
-        Assert.Empty(redacted.ConfirmedAdmins);
-        Assert.Equal(FeedCheckRedaction.Redact(oldCheck.Results), redacted.Results);
-        Assert.Equal(oldCheck.Results.Select(r => (r.Id, r.Title, r.Status)), redacted.Results.Select(r => (r.Id, r.Title, r.Status)));
-        Assert.Equal(old, await ScalarAsync(t, "SELECT feed_check_id FROM shared_app_verifications WHERE tenant_id='acme'"));
-
-        Assert.Equal(0, await store.BlankPersonalDataAsync(cutoff, default));   // nothing left to blank
     }
 }

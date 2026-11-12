@@ -17,8 +17,8 @@ public enum ConnectResult
     FreshSignInRequired,
     /// <summary>The person's directory is no longer linked to their tenant.</summary>
     NotLinked,
-    /// <summary>The tenant's feed is not its customer's to set up (operator-set, #207), or it is suspended or gone: only an active tenant
-    /// that is self-made or made for its customer to connect connects itself. (The name is kept from before #207.)</summary>
+    /// <summary>The tenant's feed is not its customer's to set up (operator-set), or it is suspended or gone: only an active tenant
+    /// that is self-made or made for its customer to connect connects itself. (The name is kept from an earlier version.)</summary>
     NotSelfMade,
     /// <summary>The tenant uses its own app registration: Connect never overwrites one.</summary>
     OwnApp,
@@ -45,7 +45,7 @@ public enum ConnectResult
 }
 
 /// <summary>
-/// Pure: whether a settings check and a developer check together allow a self-made tenant to connect its feed (#64). The windows are
+/// Pure: whether a settings check and a developer check together allow a self-made tenant to connect its feed. The windows are
 /// named constants that may change.
 /// </summary>
 public static class ConnectRules
@@ -141,7 +141,7 @@ public static class ConnectRules
     }
 
     /// <summary>
-    /// The withdraw rule (the plan's proposed default, #64): a re-check withdraws the connected feed's verification only when its outcome
+    /// The withdraw rule (the proposed default): a re-check withdraws the connected feed's verification only when its outcome
     /// is Failed, it was about exactly the connected feed URL, and at least one result is a definite FAIL. A result that "could not
     /// complete" (a call that errored) is not verified, never a definite FAIL; Incomplete and Passed change nothing.
     /// </summary>
@@ -165,7 +165,7 @@ public static class ConnectRules
 public sealed record ConnectFeedRequest(string TenantId, string DirectoryId, long SettingsCheckId, long DeveloperCheckId, string SeenFeedUrl,
     string SeenClientId, DateTimeOffset At, string VerifiedBy, AdminActionRecord Action);
 
-/// <summary>The self-service feed writes (#64): connect a checked feed, and withdraw it after a failed re-check.</summary>
+/// <summary>The self-service feed writes: connect a checked feed, and withdraw it after a failed re-check.</summary>
 public interface ISelfServiceFeedStore
 {
     /// <summary>
@@ -181,14 +181,14 @@ public interface ISelfServiceFeedStore
 
     /// <summary>
     /// In one transaction: deletes the tenant's verification only if it is exactly <paramref name="verification"/> (same values and time)
-    /// and was made by the wizard (<c>verified_via='wizard'</c>: an operator's record is never withdrawn, #251), and, only then, writes
+    /// and was made by the wizard (<c>verified_via='wizard'</c>: an operator's record is never withdrawn), and, only then, writes
     /// <paramref name="action"/>. False (nothing written) when the record is not that one any more.
     /// </summary>
     Task<bool> WithdrawAsync(SharedAppVerification verification, AdminActionRecord action, CancellationToken cancellationToken);
 }
 
 /// <summary>
-/// Connect (#64 I1): a self-made tenant's Admin makes Packmoat serve the feed both checks were about. The checks here are the person's
+/// Connect: a self-made tenant's Admin makes Packmoat serve the feed both checks were about. The checks here are the person's
 /// (switch, Admin, a fresh sign-in); everything about the tenant and the rows is re-checked by the store in one transaction.
 /// Connecting needs nothing from the serving gate: tokens still need it to serve the tenant (<see cref="CustomerTokenGuard"/>).
 /// </summary>

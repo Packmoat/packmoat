@@ -3,16 +3,18 @@ using Npgsql;
 namespace Packmoat.Infrastructure.Postgres;
 
 /// <summary>
-/// The core's database on PostgreSQL (#288): one <see cref="NpgsqlDataSource"/> (Npgsql's pool) over a checked
-/// <see cref="PostgresConnectionString"/>. Nothing selects it yet: PACKMOAT_DB_ENGINE=postgres is refused, and no project in src/ references
-/// this one. No logger factory and no parameter logging are ever configured, so neither a password nor a value reaches a log through Npgsql.
+/// The core's database on PostgreSQL: one <see cref="NpgsqlDataSource"/> (Npgsql's pool) over a checked
+/// <see cref="PostgresConnectionString"/>. PACKMOAT_DB_ENGINE=postgres selects it: the composition roots (PackmoatApp and
+/// AdminCli) make it from PACKMOAT_DB. Its own <see cref="MigrateAsync(IReadOnlyList{MigrationTrack}, CancellationToken)"/> migrates with no
+/// grants, so neither root ever calls it: the server and the command line check the schema through <see cref="PostgresStores.Migrator"/>,
+/// and only <c>db migrate</c> (<see cref="PostgresDbCommands"/>) changes it. No logger factory and no parameter logging are ever configured, so neither a password nor a value reaches a log through Npgsql.
 /// But a <c>PostgresException</c>'s message (a constraint's text, say) and Npgsql's Activity events can still carry a parameter's value, even
 /// with Include Error Detail off: code whose queries carry a secret or a token must not log a raw exception message.
 /// <para>Unstable: may change in any release before 1.0.</para>
 /// </summary>
 public sealed class PostgresDatabase : IRelationalDatabase, ISchemaMigrator, IAsyncDisposable
 {
-    /// <summary>The one major version this build supports (#288). An older server is refused when a connection opens.</summary>
+    /// <summary>The one major version this build supports. An older server is refused when a connection opens.</summary>
     public const int SupportedMajorVersion = 17;
 
     private readonly NpgsqlDataSource source;
@@ -39,10 +41,35 @@ public sealed class PostgresDatabase : IRelationalDatabase, ISchemaMigrator, IAs
     /// <summary>An open connection from the pool, once the server is known to be <see cref="SupportedMajorVersion"/> or newer.</summary>
     public async Task<NpgsqlConnection> OpenAsync(CancellationToken cancellationToken = default)
     {
-        var connection = await source.OpenConnectionAsync(cancellationToken);
+        var connection = await OpenAnyVersionAsync(cancellationToken);
         try
         {
             RequireSupported(connection.PostgreSqlVersion, Describe());
+            return connection;
+        }
+        catch
+        {
+            await connection.DisposeAsync();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// An open connection from the pool, whatever the server's version: for the start's checks only (<see cref="PostgresStartupChecks"/>),
+    /// which report an old server among their refusals. Everything else opens with <see cref="OpenAsync"/>.
+    /// </summary>
+    internal ValueTask<NpgsqlConnection> OpenAnyVersionAsync(CancellationToken cancellationToken) => source.OpenConnectionAsync(cancellationToken);
+
+    /// <summary>
+    /// A new physical connection outside the pool, with the same settings otherwise: for the start's pooler probe only
+    /// (<see cref="PostgresStartupChecks"/>), which holds it open alongside a pooled one, so a pool of one still lets it open.
+    /// </summary>
+    internal async Task<NpgsqlConnection> OpenUnpooledAsync(CancellationToken cancellationToken)
+    {
+        var connection = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(ConnectionString.ForNpgsql) { Pooling = false }.ConnectionString);
+        try
+        {
+            await connection.OpenAsync(cancellationToken);
             return connection;
         }
         catch
@@ -57,6 +84,23 @@ public sealed class PostgresDatabase : IRelationalDatabase, ISchemaMigrator, IAs
     {
         if (server.Major < SupportedMajorVersion)
             throw new NotSupportedException($"The PostgreSQL server at {where} is version {server}; Packmoat needs PostgreSQL {SupportedMajorVersion} or newer.");
+    }
+
+    /// <summary>
+    /// How far the database's clock is ahead of <paramref name="clock"/>: the server's
+    /// <c>statement_timestamp()</c> minus the app's time halfway through the round trip, so positive when the database runs ahead and
+    /// negative when the app does. The retention cutoffs are on the app's clock and the schema's floors on the database's, so a large skew
+    /// either way means a prune the database refuses, or rows kept longer than they need be. Read only. Not yet wired into readiness (P5).
+    /// </summary>
+    public async Task<TimeSpan> ClockSkewAsync(Domain.IClock clock, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(clock);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand("SELECT pg_catalog.statement_timestamp()", connection);
+        var before = clock.UtcNow;
+        var database = PostgresTime.FromDatabase((DateTime)(await cmd.ExecuteScalarAsync(cancellationToken))!);
+        var after = clock.UtcNow;
+        return database - (before + (after - before) / 2);
     }
 
     /// <summary>
@@ -80,8 +124,8 @@ public sealed class PostgresDatabase : IRelationalDatabase, ISchemaMigrator, IAs
 
     /// <summary>
     /// Applies the core's migrations (<see cref="CoreSchema.Track"/>), then each of <paramref name="modules"/>' tracks in order, in one
-    /// transaction (see <see cref="MigrateAsync(MigrationTrack, IReadOnlyList{MigrationTrack}, CancellationToken)"/>). Nothing calls it yet
-    /// outside the tests: PACKMOAT_DB_ENGINE=postgres is refused.
+    /// transaction (see <see cref="MigrateAsync(MigrationTrack, IReadOnlyList{MigrationTrack}, CancellationToken)"/>). The server never calls it;
+    /// the command line's db migrate does, and the tests.
     /// </summary>
     public Task<IReadOnlyList<TrackOutcome>> MigrateAsync(IReadOnlyList<MigrationTrack> modules, CancellationToken cancellationToken = default) =>
         MigrateAsync(CoreSchema.Track, modules, cancellationToken);
@@ -99,28 +143,79 @@ public sealed class PostgresDatabase : IRelationalDatabase, ISchemaMigrator, IAs
     /// <see cref="TrackBaseline"/> structure is already there with no version table: on PostgreSQL a baseline is never adopted (no older
     /// build ran a module's statements in the core's track), so such a track runs from version 1 only when none of it exists.
     /// </summary>
-    internal async Task<IReadOnlyList<TrackOutcome>> MigrateAsync(MigrationTrack core, IReadOnlyList<MigrationTrack> modules, CancellationToken cancellationToken = default)
+    internal async Task<IReadOnlyList<TrackOutcome>> MigrateAsync(MigrationTrack core, IReadOnlyList<MigrationTrack> modules, CancellationToken cancellationToken = default) =>
+        (await MigrateAndGrantAsync(core, modules, grantTo: null, cancellationToken)).Tracks;
+
+    /// <summary>
+    /// The owner's migration (<c>packmoat-admin db migrate --grant-to</c>): the core's migrations (<see cref="CoreSchema.Track"/>),
+    /// then each of <paramref name="modules"/>' tracks, then the app role's grants (<see cref="PostgresRoleGrants"/>), all in ONE
+    /// transaction. The grants are applied on every run, whether or not a version ran, so a table a later migration adds gets them in the
+    /// run that adds it, and a grant taken away by hand comes back. An app role the grants cannot make safe is refused
+    /// (<see cref="PostgresRoleException"/>), and nothing is written. Run it as the role that owns the schema; the server and the
+    /// day-to-day command line sign in as <paramref name="grantTo"/>.
+    /// </summary>
+    public Task<PostgresMigration> MigrateAndGrantAsync(IReadOnlyList<MigrationTrack> modules, string grantTo, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(grantTo);
+        return MigrateAndGrantAsync(CoreSchema.Track, modules, grantTo, cancellationToken);
+    }
+
+    /// <summary>
+    /// <paramref name="core"/>'s track and <paramref name="modules"/>' (see above), then, unless <paramref name="grantTo"/> is null, the
+    /// app role's grants, in one transaction it commits.
+    /// </summary>
+    internal async Task<PostgresMigration> MigrateAndGrantAsync(MigrationTrack core, IReadOnlyList<MigrationTrack> modules, string? grantTo, CancellationToken cancellationToken = default,
+        bool singleRole = false)
+    {
+        ArgumentNullException.ThrowIfNull(core);
+        ArgumentNullException.ThrowIfNull(modules);
+        TrackRules.RequireDistinct(modules);
+        // Every track has PostgreSQL statements, checked before anything connects: a refusal writes nothing.
+        foreach (var track in modules.Prepend(core)) track.StatementsFor(DatabaseEngine.Postgres);
+
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var tx = await connection.BeginTransactionAsync(cancellationToken);
+        var (schema, outcomes) = await MigrateInAsync(connection, tx, core, modules, cancellationToken);
+        if (singleRole) await PostgresRoleGrants.RequireSingleRoleAsync(connection, tx, schema, cancellationToken);
+        var grants = grantTo is null ? null : await PostgresRoleGrants.ApplyAsync(connection, tx, schema, grantTo, cancellationToken);
+        await tx.CommitAsync(cancellationToken);
+        return new PostgresMigration(outcomes, grants);
+    }
+
+    /// <summary>
+    /// The owner's migration for an install that runs everything as one role (<c>db migrate --single-role</c>, PACKMOAT_DB_SINGLE_ROLE=on):
+    /// the core's and <paramref name="modules"/>' tracks with no grants, in one transaction. Refused (<see cref="PostgresRoleException"/>),
+    /// with nothing written, when any role but a table's owner holds a privilege on the schema's tables: that install
+    /// has an app role, which this migration would leave without the tables it adds.
+    /// </summary>
+    public async Task<IReadOnlyList<TrackOutcome>> MigrateSingleRoleAsync(IReadOnlyList<MigrationTrack> modules, CancellationToken cancellationToken = default) =>
+        (await MigrateAndGrantAsync(CoreSchema.Track, modules, grantTo: null, cancellationToken, singleRole: true)).Tracks;
+
+    /// <summary>
+    /// The migration's work in <paramref name="tx"/>, which the caller commits or rolls back: lock_timeout (<paramref name="lockTimeout"/>,
+    /// or <see cref="LockTimeout"/>), the migration lock, the checks, then each track. Returns the schema it ran in and each track's
+    /// outcome. Leaves search_path set (SET LOCAL) to that schema, then pg_catalog, then pg_temp, for the rest of the transaction.
+    /// </summary>
+    internal async Task<(string Schema, IReadOnlyList<TrackOutcome> Outcomes)> MigrateInAsync(NpgsqlConnection connection, NpgsqlTransaction tx, MigrationTrack core,
+        IReadOnlyList<MigrationTrack> modules, CancellationToken cancellationToken, TimeSpan? lockTimeout = null)
     {
         ArgumentNullException.ThrowIfNull(core);
         ArgumentNullException.ThrowIfNull(modules);
         TrackRules.RequireDistinct(modules);
         var tracks = modules.Prepend(core).ToList();
-        // Every track has PostgreSQL statements, checked before anything connects: a refusal writes nothing.
         var statements = tracks.Select(t => t.StatementsFor(DatabaseEngine.Postgres)).ToList();
-
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var tx = await connection.BeginTransactionAsync(cancellationToken);
+        var timeout = lockTimeout ?? LockTimeout;
         // SET LOCAL ends with the transaction. A plain SET would also be undone today, since Npgsql resets a pooled connection's session
         // (DISCARD ALL) when it goes back to the pool, but it would leak into the pool's next user with No Reset On Close, which
         // PostgresConnectionString.Parse refuses for that reason.
-        await ExecuteAsync(connection, tx, $"SET LOCAL lock_timeout = '{(long)Math.Ceiling(LockTimeout.TotalMilliseconds)}ms'", cancellationToken);
+        await ExecuteAsync(connection, tx, $"SET LOCAL lock_timeout = '{(long)Math.Ceiling(timeout.TotalMilliseconds)}ms'", cancellationToken);
         try
         {
             await ExecuteAsync(connection, tx, $"SELECT pg_advisory_xact_lock({MigrationLockKey})", cancellationToken);
         }
         catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.LockNotAvailable)
         {
-            throw new TimeoutException($"Another process holds the migration lock on {Describe()}: waited {(long)LockTimeout.TotalSeconds} second(s). " +
+            throw new TimeoutException($"Another process holds the migration lock on {Describe()}: waited {(long)timeout.TotalSeconds} second(s). " +
                 "Refusing to run. Nothing was written.", e);
         }
 
@@ -141,7 +236,7 @@ public sealed class PostgresDatabase : IRelationalDatabase, ISchemaMigrator, IAs
 
         // The migrations run with exactly this schema, then pg_catalog, then pg_temp on the path, for this transaction only: an unqualified
         // name in them (a table, a function, a trigger function) means this schema's, never a temporary table's, and never a "$user"
-        // schema's. A function made with SET search_path FROM CURRENT keeps this path for good (#298 review M1: with the session's path,
+        // schema's. A function made with SET search_path FROM CURRENT keeps this path for good (with the session's path,
         // pg_temp came first and a caller's temporary tenant_purges stood in for the real one).
         await ExecuteAsync(connection, tx, $"SET LOCAL search_path = {QuotedSchema(schema)}, pg_catalog, pg_temp", cancellationToken);
 
@@ -151,8 +246,7 @@ public sealed class PostgresDatabase : IRelationalDatabase, ISchemaMigrator, IAs
             await RunTrackAsync(connection, tx, schema, tracks[i], statements[i], cancellationToken);
             outcomes.Add(new TrackOutcome(tracks[i].Name, before[i], tracks[i].LatestVersion, false));
         }
-        await tx.CommitAsync(cancellationToken);
-        return outcomes;
+        return (schema, outcomes);
     }
 
     /// <summary>
@@ -248,7 +342,7 @@ public sealed class PostgresDatabase : IRelationalDatabase, ISchemaMigrator, IAs
     private static string Names(List<string> names) => names.Count == 0 ? "(none)" : string.Join(", ", names);
 
     /// <summary>Every table in <paramref name="schema"/> named like a module track's (<c>*_schema_migrations</c>), in byte order.</summary>
-    private static async Task<List<string>> TrackTablesAsync(NpgsqlConnection connection, NpgsqlTransaction tx, string schema, CancellationToken ct)
+    internal static async Task<List<string>> TrackTablesAsync(NpgsqlConnection connection, NpgsqlTransaction tx, string schema, CancellationToken ct)
     {
         // LIKE's _ is a wildcard: escaped, so only a literal "_schema_migrations" ending counts (as SQLite's GLOB '*_schema_migrations').
         await using var cmd = new NpgsqlCommand(
@@ -262,7 +356,7 @@ public sealed class PostgresDatabase : IRelationalDatabase, ISchemaMigrator, IAs
     }
 
     /// <summary>A track's newest recorded version: null when it has no table, 0 when its table is empty.</summary>
-    private static async Task<int?> VersionAsync(NpgsqlConnection connection, NpgsqlTransaction tx, string schema, string table, CancellationToken ct)
+    internal static async Task<int?> VersionAsync(NpgsqlConnection connection, NpgsqlTransaction tx, string schema, string table, CancellationToken ct)
     {
         if (!await TableExistsAsync(connection, tx, schema, table, ct)) return null;
         await using var newest = new NpgsqlCommand($"SELECT COALESCE(MAX(version), 0) FROM {Qualified(schema, table)}", connection, tx);
@@ -289,7 +383,7 @@ public sealed class PostgresDatabase : IRelationalDatabase, ISchemaMigrator, IAs
     /// The schema the migration's unqualified statements make their tables in: current_schema(), the first schema on search_path that
     /// exists. Refused when there is none.
     /// </summary>
-    private static async Task<string> SchemaAsync(NpgsqlConnection connection, NpgsqlTransaction tx, CancellationToken ct)
+    internal static async Task<string> SchemaAsync(NpgsqlConnection connection, NpgsqlTransaction tx, CancellationToken ct)
     {
         await using var cmd = new NpgsqlCommand("SELECT current_schema()", connection, tx);
         return await cmd.ExecuteScalarAsync(ct) as string ?? throw new InvalidOperationException(
@@ -300,7 +394,7 @@ public sealed class PostgresDatabase : IRelationalDatabase, ISchemaMigrator, IAs
     private static string Qualified(string schema, string table) => $"{QuotedSchema(schema)}.{table}";
 
     /// <summary><paramref name="schema"/> as a quoted identifier.</summary>
-    private static string QuotedSchema(string schema) => $"\"{schema.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
+    internal static string QuotedSchema(string schema) => $"\"{schema.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
 
     private static async Task ExecuteAsync(NpgsqlConnection connection, NpgsqlTransaction tx, string sql, CancellationToken ct)
     {
@@ -311,3 +405,6 @@ public sealed class PostgresDatabase : IRelationalDatabase, ISchemaMigrator, IAs
     /// <inheritdoc/>
     public ValueTask DisposeAsync() => source.DisposeAsync();
 }
+
+/// <summary>What the owner's migration did: each track's outcome, and the app role's grants (null: none were asked for).</summary>
+public sealed record PostgresMigration(IReadOnlyList<TrackOutcome> Tracks, PostgresGrants? Grants);

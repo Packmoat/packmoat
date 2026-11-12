@@ -13,7 +13,7 @@ public class AdminCommandsTests
 
     public AdminCommandsTests()
     {
-        _commands = new AdminCommands(_store, _store, new FixedClock());
+        _commands = new AdminCommands(_store, _store, new FixedClock(), new InProcessRateCounter(new FixedClock()));
         _queries = new AdminQueries(_store, _store, _store, _store);
         _store.TokenRows.Add(new TokenInfo("t-acme", "acme", "pmt_a", "ci", DateTimeOffset.UnixEpoch, null, null));
         _store.TokenRows.Add(new TokenInfo("t-other", "other", "pmt_o", "ci", DateTimeOffset.UnixEpoch, null, null));
@@ -164,7 +164,7 @@ public class AdminCommandsTests
         Assert.Empty(_store.Calls);
     }
 
-    // ---- Issue #22: the commands that used to bypass the scope layer. Each refusal asserts the store saw nothing.
+    // ---- The commands that used to bypass the scope layer. Each refusal asserts the store saw nothing.
 
     private void AssertUntouched() { Assert.Empty(_store.Calls); Assert.Empty(_store.Reads); }
 

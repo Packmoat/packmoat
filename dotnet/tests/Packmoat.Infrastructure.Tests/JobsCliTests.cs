@@ -8,7 +8,7 @@ using Packmoat.Infrastructure.Lifecycle;
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// `packmoat-admin jobs run retention` (#233): the server's daily retention pass by hand, for a server whose background jobs are off. Every
+/// `packmoat-admin jobs run retention`: the server's daily retention pass by hand, for a server whose background jobs are off. Every
 /// step runs and prints its count; a failed step is named by kind only, the others still run, and the exit code is 1. It counts the
 /// tenants due for purge but never claims the day's nudge, so the server's own nudge still goes out.
 /// </summary>
@@ -67,7 +67,7 @@ public class JobsCliTests : IDisposable
         return await cmd.ExecuteScalarAsync();
     }
 
-    // xunit 2 disposes a test class through IDisposable only (an IAsyncDisposable one is never called): #292.
+    // xunit 2 disposes a test class through IDisposable only (an IAsyncDisposable one is never called).
     public void Dispose() => _temp.Dispose();
 
     [Fact]
@@ -83,7 +83,7 @@ public class JobsCliTests : IDisposable
         Assert.Equal(0, code);
         Assert.Equal("", error);
         var lines = output.TrimEnd('\n').Split('\n');
-        Assert.Matches(@"^retention pass took \d+ ms$", lines[0]);   // #232 M2: every pass that runs prints its duration
+        Assert.Matches(@"^retention pass took \d+ ms$", lines[0]);   // Every pass that runs prints its duration
         Assert.Equal(new[]
         {
             "feed checks blanked\t0",
@@ -92,11 +92,68 @@ public class JobsCliTests : IDisposable
             "admin action records deleted\t0",
             "audit events deleted\t0",
             "per-day activity rows deleted\t0",
+            "ended rate-limit windows deleted\t0",
+            "expired form nonces deleted\t0",
+            "expired feed setup results and drafts deleted\t0",
             "retention pass done",
         }, lines[1..]);
         Assert.Equal(1L, await Scalar("SELECT COUNT(*) FROM job_leases WHERE job='retention'"));   // one row per pass, ended by it
         Assert.Equal((T0 + DecisionRecordPolicy.Retention + TimeSpan.FromDays(1)).ToString("O"), await Scalar("SELECT expires_at FROM job_leases"));
         Assert.Equal(0L, await Scalar("SELECT COUNT(*) FROM decision_records"));
+    }
+
+    /// <summary>the command's pass deletes the database's ended rate-limit windows, as the server's does.</summary>
+    [Fact]   // mutation: the command not handing the pass the database's counter (it would print 0 and leave the row)
+    public async Task It_deletes_the_ended_rate_limit_windows_and_keeps_running_ones()
+    {
+        Assert.Equal(0, (await Run("tenant", "list")).Code);   // makes the database
+        var rates = new SqliteRateCounter(new SqliteDatabase(DbPath), _clock);
+        await rates.HitAsync(RateScopes.AdminWrite, "10.0.0.7", 30, TimeSpan.FromMinutes(1));
+        await rates.HitAsync(RateScopes.TokenIssue, "dir/oid", 10, TimeSpan.FromHours(1));
+        _clock.UtcNow = T0 + TimeSpan.FromMinutes(5);
+
+        var (code, output, error) = await Run("jobs", "run", "retention");
+
+        Assert.Equal(0, code);
+        Assert.Equal("", error);
+        Assert.Contains("ended rate-limit windows deleted\t1\n", output);
+        Assert.Equal(RateScopes.TokenIssue, await Scalar("SELECT group_concat(scope) FROM rate_counters"));
+    }
+
+    /// <summary>the command's pass deletes the database's expired form nonces, as the server's does.</summary>
+    [Fact]   // mutation: the command not handing the pass the database's form nonces (it would print 0 and leave the row)
+    public async Task It_deletes_the_expired_form_nonces_and_keeps_live_ones()
+    {
+        Assert.Equal(0, (await Run("tenant", "list")).Code);   // makes the database
+        var nonces = new SqliteFormNonceStore(new SqliteDatabase(DbPath), _clock);
+        await nonces.IssueAsync(FormNonceScopes.Admin, "expired", "acme", TimeSpan.FromMinutes(1), 20);
+        await nonces.IssueAsync(FormNonceScopes.App, "live", "dir/oid", TimeSpan.FromMinutes(30), 20);
+        _clock.UtcNow = T0 + TimeSpan.FromMinutes(5);
+
+        var (code, output, error) = await Run("jobs", "run", "retention");
+
+        Assert.Equal(0, code);
+        Assert.Equal("", error);
+        Assert.Contains("expired form nonces deleted\t1\n", output);
+        Assert.Equal(FormNonceScopes.App, await Scalar("SELECT group_concat(scope) FROM form_nonces"));
+    }
+
+    /// <summary>the command's pass deletes the feed setup wizard's expired results and drafts (they may hold admin names), as the server's does.</summary>
+    [Fact]   // mutation: the command not handing the pass the database's feed setup scratch (it would print 0 and leave the row)
+    public async Task It_deletes_the_expired_feed_setup_scratch_and_keeps_live_rows()
+    {
+        Assert.Equal(0, (await Run("tenant", "list")).Code);   // makes the database
+        var scratch = new SqliteFeedSetupScratch(new SqliteDatabase(DbPath), _clock);
+        await scratch.PutAsync("acme", Guid.Parse("0b1c2d3e-0000-4000-8000-000000000001"), FeedSetupScratchKinds.Settings, "{}", TimeSpan.FromMinutes(1));
+        await scratch.PutAsync("acme", Guid.Parse("0b1c2d3e-0000-4000-8000-000000000002"), FeedSetupScratchKinds.Draft, "{}", TimeSpan.FromMinutes(30));
+        _clock.UtcNow = T0 + TimeSpan.FromMinutes(5);
+
+        var (code, output, error) = await Run("jobs", "run", "retention");
+
+        Assert.Equal(0, code);
+        Assert.Equal("", error);
+        Assert.Contains("expired feed setup results and drafts deleted\t1\n", output);
+        Assert.Equal(FeedSetupScratchKinds.Draft, await Scalar("SELECT group_concat(kind) FROM feed_setup_scratch"));
     }
 
     [Fact]   // mutation: the command stops at the first failed step, or exits 0 with a failed step

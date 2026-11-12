@@ -1,11 +1,12 @@
 using System.Globalization;
 using Packmoat.Application;
 using Packmoat.Domain;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// #157 PR 1 as a contract (#232 S1): the cap-checked customer insert in one transaction, the duplicate refusal, revoked_by and the waiver
+/// as a contract: the cap-checked customer insert in one transaction, the duplicate refusal, revoked_by and the waiver
 /// list. Each test that kills one of the planned mutations says which. Migration 20 stays in <see cref="WaiverStoreTests"/>.
 /// </summary>
 public abstract class WaiverStoreContract : StoreContract
@@ -22,7 +23,7 @@ public abstract class WaiverStoreContract : StoreContract
 
     // ---------------------------------------------------------------- the cap
 
-    [Fact]   // mutations: drop the cap check; count with <= instead of <; a deferred transaction (the count and insert see different rows)
+    [EngineFact]   // mutations: drop the cap check; count with <= instead of <; a deferred transaction (the count and insert see different rows)
     public async Task Twenty_six_concurrent_customer_inserts_leave_exactly_twenty_five()
     {
         await using var t = await CreateDbAsync();
@@ -38,7 +39,7 @@ public abstract class WaiverStoreContract : StoreContract
         Assert.Equal(Enumerable.Range(1, Cap), results.Where(r => r.Outcome == WaiverInsertOutcome.Added).Select(r => r.ActiveCustomerWaivers).Order());
     }
 
-    [Fact]   // mutations: count operator rows; count revoked rows; count expired rows; count another tenant's rows
+    [EngineFact]   // mutations: count operator rows; count revoked rows; count expired rows; count another tenant's rows
     public async Task Expired_revoked_operator_and_other_tenants_waivers_do_not_count()
     {
         await using var t = await CreateDbAsync();
@@ -64,7 +65,7 @@ public abstract class WaiverStoreContract : StoreContract
         Assert.Equal(0L, await CountAsync(t, "package_id='one-more'"));
     }
 
-    [Fact]
+    [EngineFact]
     public async Task The_operator_insert_is_never_capped_and_is_stored_as_operator()
     {
         await using var t = await CreateDbAsync();
@@ -76,7 +77,7 @@ public abstract class WaiverStoreContract : StoreContract
         Assert.Equal((long)Cap, await CountAsync(t, "source='customer'"));
     }
 
-    [Fact]
+    [EngineFact]
     public async Task A_customer_insert_reports_the_tenants_origin_for_the_alert()
     {
         await using var t = await CreateDbAsync();
@@ -87,7 +88,7 @@ public abstract class WaiverStoreContract : StoreContract
         await Assert.ThrowsAsync<KeyNotFoundException>(() => Customer(t, "a", tenant: "nobody"));
     }
 
-    [Fact]
+    [EngineFact]
     public async Task A_customer_waiver_is_stored_as_customer_and_reads_back_with_its_source()
     {
         await using var t = await CreateDbAsync();
@@ -100,7 +101,7 @@ public abstract class WaiverStoreContract : StoreContract
         Assert.Equal("customer", await ScalarAsync(t, $"SELECT source FROM waivers WHERE id='{w.Id}'"));
     }
 
-    [Fact]
+    [EngineFact]
     public async Task A_customer_insert_bumps_the_policy_revision_and_a_refused_one_does_not()
     {
         await using var t = await CreateDbAsync();
@@ -116,7 +117,7 @@ public abstract class WaiverStoreContract : StoreContract
 
     // ---------------------------------------------------------------- duplicates
 
-    [Fact]   // mutation: remove the duplicate check
+    [EngineFact]   // mutation: remove the duplicate check
     public async Task A_duplicate_active_waiver_is_refused_for_the_same_package_and_version_however_written()
     {
         await using var t = await CreateDbAsync();
@@ -137,7 +138,7 @@ public abstract class WaiverStoreContract : StoreContract
         Assert.Equal(WaiverInsertOutcome.Added, (await Customer(t, "Moq", "4.21.0", tenant: "other")).Outcome); // another tenant
     }
 
-    [Fact]
+    [EngineFact]
     public async Task A_revoked_or_expired_waiver_is_no_duplicate()
     {
         await using var t = await CreateDbAsync();
@@ -150,7 +151,7 @@ public abstract class WaiverStoreContract : StoreContract
         Assert.Equal(WaiverInsertOutcome.Added, (await Customer(t, "Moq", "4.21.0")).Outcome);
     }
 
-    [Fact]
+    [EngineFact]
     public async Task A_wildcard_duplicates_only_a_wildcard()
     {
         await using var t = await CreateDbAsync();
@@ -162,7 +163,7 @@ public abstract class WaiverStoreContract : StoreContract
 
     // ---------------------------------------------------------------- revoked_by
 
-    [Fact]   // mutation: revoked_by not written
+    [EngineFact]   // mutation: revoked_by not written
     public async Task Revoke_records_who_and_a_cross_tenant_revoke_changes_nothing()
     {
         await using var t = await CreateDbAsync();
@@ -187,7 +188,7 @@ public abstract class WaiverStoreContract : StoreContract
 
     // ---------------------------------------------------------------- the list
 
-    [Fact]
+    [EngineFact]
     public async Task The_list_is_active_first_then_newest_first_holds_history_and_only_the_tenants_own_rows()
     {
         await using var t = await CreateDbAsync();
@@ -224,7 +225,7 @@ public abstract class WaiverStoreContract : StoreContract
         Assert.Empty(await Engine.Tenants(t).ListWaiversAsync("nobody", 100, Ct));
     }
 
-    [Fact]   // #161 review: mutation: order the list by created_at alone (the old active waiver falls off the end)
+    [EngineFact]   // mutation: order the list by created_at alone (the old active waiver falls off the end)
     public async Task An_old_active_waiver_is_listed_even_behind_more_than_the_limit_of_newer_ended_ones()
     {
         await using var t = await CreateDbAsync();
@@ -248,7 +249,7 @@ public abstract class WaiverStoreContract : StoreContract
         Assert.Equal(list.Skip(1).Select(w => w.CreatedAt).OrderDescending(), list.Skip(1).Select(w => w.CreatedAt));   // the history newest first
     }
 
-    [Fact]   // #161 review: mutation: count the cap before the duplicate check
+    [EngineFact]   // mutation: count the cap before the duplicate check
     public async Task A_duplicate_at_the_cap_is_reported_as_a_duplicate_not_as_the_cap()
     {
         await using var t = await CreateDbAsync();
@@ -262,13 +263,13 @@ public abstract class WaiverStoreContract : StoreContract
 
     // ---------------------------------------------------------------- through the commands, end to end
 
-    [Fact]   // mutation: alert at >= 24, or never
+    [EngineFact]   // mutation: alert at >= 24, or never
     public async Task Through_the_commands_the_25th_customer_waiver_alerts_once_and_the_26th_is_refused()
     {
         await using var t = await CreateDbAsync();
         await AddTenantAsync(t);
         var alerts = new ListAlerts();
-        var commands = new AdminCommands(Engine.Tenants(t), Engine.Tokens(t), t.Clock, alerts: alerts);
+        var commands = new AdminCommands(Engine.Tenants(t), Engine.Tokens(t), t.Clock, Engine.RateCounter(t), alerts: alerts);
         var actor = ActorScope.ForTenant("acme", "Alice (oid)");
 
         for (var i = 1; i < Cap; i++) await commands.AddWaiverAsync(actor, "acme", "pkg" + i, "1.0.0", 7, Reason, Ct);

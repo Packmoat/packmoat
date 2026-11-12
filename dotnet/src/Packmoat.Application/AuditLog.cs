@@ -4,7 +4,7 @@ using Packmoat.Domain;
 namespace Packmoat.Application;
 
 /// <summary>
-/// What the audit trail (#136) keeps, and for how long. The figures are product decisions: change them here and nowhere else (the
+/// What the audit trail keeps, and for how long. The figures are product decisions: change them here and nowhere else (the
 /// database's own floor for audit_events, migration 19, must never be longer than <see cref="RetentionDays"/>; a test checks it).
 /// Only package downloads are recorded (allowed and hidden); listings and metadata are not (the decision record covers those).
 /// Recording is off the request path and fails open: a full queue or a storage failure loses audit rows, never a download.

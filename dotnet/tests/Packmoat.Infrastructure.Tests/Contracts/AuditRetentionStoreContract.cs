@@ -2,11 +2,12 @@ using System.Globalization;
 using System.Text.RegularExpressions;
 using Packmoat.Application;
 using Packmoat.Domain;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// #136 as a contract (#232 S1): batched audit writes, the 90-day floor in the database (migration 19), the audit prune and the
+/// as a contract: batched audit writes, the 90-day floor in the database (migration 19), the audit prune and the
 /// token_activity prune. The floor compares with the database's own clock, so rows here are dated from the real time and written by the
 /// real writer, in the "O" format every build writes (7 fractional digits and an offset). Each test that kills one of the plan's mutations
 /// says which. Tests that depend on SQLite's own time parsing, its query plans or the prune's chunk size stay in
@@ -33,7 +34,11 @@ public abstract class AuditRetentionStoreContract : StoreContract
 
     // ---------------------------------------------------------------- batched writes
 
-    [Fact]
+    /// <summary>
+    /// The batch keeps the order it was given, across tenants too: events for acme, globex, then acme again, so a
+    /// batch written sorted by tenant (acme, acme, globex) fails here on both engines, not only in a PostgreSQL test.
+    /// </summary>
+    [EngineFact]   // mutation: the batch's rows inserted sorted by tenant
     [Trait(Needs, Triggers)]
     public async Task A_batch_is_stored_in_order_and_a_purged_tenants_events_are_dropped()
     {
@@ -41,7 +46,7 @@ public abstract class AuditRetentionStoreContract : StoreContract
         await ExecAsync(t, "INSERT INTO tenant_purges(tenant_id, purged_at, reason, actor) VALUES('gone', '2026-01-01T00:00:00.0000000+00:00', 'r', 'a')");
         var now = DateTimeOffset.UtcNow;
 
-        await Engine.AuditBatch(t).AppendBatchAsync(new[] { Event(now, "a"), Event(now, "late", "gone"), Event(now, "b"), Event(now, "c") }, Ct);
+        await Engine.AuditBatch(t).AppendBatchAsync(new[] { Event(now, "a"), Event(now, "late", "gone"), Event(now, "b", "globex"), Event(now, "c") }, Ct);
 
         Assert.Equal(new[] { "a", "b", "c" }, await RequestsAsync(t));
         Assert.All(await ColumnAsync(t, "SELECT time FROM audit_events"), time => Assert.Matches(OFormat, time));
@@ -49,7 +54,7 @@ public abstract class AuditRetentionStoreContract : StoreContract
 
     // ---------------------------------------------------------------- the trigger (migration 19)
 
-    [Fact]   // mutations: the floor shortened or lengthened past 91 days (e.g. 900)
+    [EngineFact]   // mutations: the floor shortened or lengthened past 91 days (e.g. 900)
     [Trait(Needs, Triggers)]
     public async Task A_row_89_days_old_cannot_be_deleted_and_one_91_days_old_can()
     {
@@ -64,7 +69,7 @@ public abstract class AuditRetentionStoreContract : StoreContract
         Assert.Equal(new[] { "young" }, await RequestsAsync(t));
     }
 
-    [Fact]   // mutations: '-89 days'; 'start of day'; 'localtime'; ">" for ">=" moved the wrong way by a day
+    [EngineFact]   // mutations: '-89 days'; 'start of day'; 'localtime'; ">" for ">=" moved the wrong way by a day
     [Trait(Needs, Triggers)]
     public async Task The_floor_is_90_days_to_the_minute_by_the_databases_utc_clock()
     {
@@ -78,7 +83,7 @@ public abstract class AuditRetentionStoreContract : StoreContract
         Assert.Equal(new[] { "a minute young" }, await RequestsAsync(t));
     }
 
-    [Fact]   // mutation: the purge branch of the trigger dropped (a purge could no longer delete a young row)
+    [EngineFact]   // mutation: the purge branch of the trigger dropped (a purge could no longer delete a young row)
     [Trait(Needs, Triggers)]
     public async Task A_running_purge_still_deletes_the_tenants_young_rows_and_only_those()
     {
@@ -90,7 +95,7 @@ public abstract class AuditRetentionStoreContract : StoreContract
 
         await ExecAsync(t, """
             BEGIN;
-            INSERT INTO tenant_purges(tenant_id, purged_at, reason, actor, purging) VALUES('gone', 't', 'r', 'a', 1);
+            INSERT INTO tenant_purges(tenant_id, purged_at, reason, actor, purging) VALUES('gone', '2026-01-01T00:00:00.0000000+00:00', 'r', 'a', 1);
             DELETE FROM audit_events WHERE tenant_id='gone';
             UPDATE tenant_purges SET purging=0 WHERE tenant_id='gone';
             COMMIT;
@@ -100,7 +105,7 @@ public abstract class AuditRetentionStoreContract : StoreContract
         await RefusedAsync(() => ExecAsync(t, "DELETE FROM audit_events"));
     }
 
-    [Fact]
+    [EngineFact]
     [Trait(Needs, Triggers)]
     public async Task No_row_can_be_changed_however_old()
     {
@@ -112,7 +117,7 @@ public abstract class AuditRetentionStoreContract : StoreContract
 
     // ---------------------------------------------------------------- the audit prune
 
-    [Fact]   // mutation: "<=" for "<" at the cutoff
+    [EngineFact]   // mutation: "<=" for "<" at the cutoff
     public async Task The_prune_deletes_only_rows_before_the_cutoff()
     {
         await using var t = await CreateDbAsync();
@@ -129,7 +134,7 @@ public abstract class AuditRetentionStoreContract : StoreContract
         Assert.Equal(new[] { "at the cutoff", "after the cutoff", "recent" }, await RequestsAsync(t));
     }
 
-    [Fact]
+    [EngineFact]
     [Trait(Needs, Triggers)]
     public async Task With_the_clock_ahead_the_database_refuses_and_keeps_the_young_rows()
     {
@@ -143,7 +148,7 @@ public abstract class AuditRetentionStoreContract : StoreContract
         Assert.Equal(new[] { "recent" }, await RequestsAsync(t));
     }
 
-    [Fact]
+    [EngineFact]
     public async Task A_prune_with_nothing_old_deletes_nothing()
     {
         await using var t = await CreateDbAsync();
@@ -155,7 +160,7 @@ public abstract class AuditRetentionStoreContract : StoreContract
 
     // ---------------------------------------------------------------- token_activity
 
-    [Fact]   // mutations: "<=" for "<" (the first kept day deleted); the prune deleting every day
+    [EngineFact]   // mutations: "<=" for "<" (the first kept day deleted); the prune deleting every day
     public async Task The_token_activity_prune_deletes_only_days_before_the_first_kept_day()
     {
         await using var t = await CreateDbAsync();

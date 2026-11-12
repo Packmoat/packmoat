@@ -4,7 +4,7 @@ using Packmoat.Domain;
 namespace Packmoat.Application.Tests;
 
 /// <summary>
-/// #157 PR 2: the customer site's waiver commands and queries. The role and the fresh sign-in are enforced HERE (the core's
+/// The customer site's waiver commands and queries. The role and the fresh sign-in are enforced HERE (the core's
 /// <see cref="ActorScope"/> carries neither), the tenant comes only from the actor, and every write leaves its admin_actions intent row
 /// before anything changes. The core limits themselves are in CustomerWaiverTests.
 /// </summary>
@@ -37,7 +37,7 @@ public class CustomerWaiverCommandsTests
             _store.Tenants.Add(new Tenant(id, id.ToUpperInvariant(), "https://pkgs.dev.azure.com/", id + "/", "https://x/index.json", new TenantPolicy(14, new[] { "Contoso.*" })));
         _directories.Rows[AcmeDir] = new DirectoryBinding(AcmeDir, "acme", Start, "op");
         _directories.Rows[GlobexDir] = new DirectoryBinding(GlobexDir, "globex", Start, "op");
-        _commands = new CustomerWaiverCommands(_store, _store, _directories, _log, _clock, _alerts);
+        _commands = new CustomerWaiverCommands(_store, _store, _directories, _log, _clock, new InProcessRateCounter(_clock), _alerts);
         _queries = new CustomerWaiverQueries(_store, _directories, _members, _clock);
     }
 
@@ -160,7 +160,7 @@ public class CustomerWaiverCommandsTests
         Assert.StartsWith("reason=duplicate; package=moq;", _log.Rows[1].Detail);
     }
 
-    [Fact]   // #161 review: a duplicate while the tenant is AT the cap says "already waived", not "too many"
+    [Fact]   // A duplicate while the tenant is AT the cap says "already waived", not "too many"
     public async Task A_duplicate_at_the_cap_says_already_waived()
     {
         _store.NextCustomerOutcome = WaiverInsertOutcome.Duplicate;
@@ -278,7 +278,7 @@ public class CustomerWaiverCommandsTests
         Assert.All(_store.Reads.Where(r => r.StartsWith("waivers", StringComparison.Ordinal)), r => Assert.Equal($"waivers acme {AdminQueries.WaiverListLimit}", r));
     }
 
-    [Fact]   // review of #163: the operator's own name never reaches a customer page
+    [Fact]   // the operator's own name never reaches a customer page
     public async Task Names_are_shown_only_for_members_of_the_tenant_and_the_operator_is_always_Packmoat()
     {
         const string member = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";

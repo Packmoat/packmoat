@@ -1,7 +1,7 @@
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// The core's root (#188): the folder that holds dotnet/Packmoat.sln, docs/ and deploy/. In this repository that is core/; once core/ is
+/// The core's root: the folder that holds dotnet/Packmoat.sln, docs/ and deploy/. In this repository that is core/; once core/ is
 /// published on its own, it is the repository's root. Every path here is relative to it, as the public repository will see it.
 /// </summary>
 internal static class CoreRoot

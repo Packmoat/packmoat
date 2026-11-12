@@ -8,7 +8,7 @@ services:
     # To run another tag, set PACKMOAT_IMAGE when you call docker compose.
     image: ${PACKMOAT_IMAGE:-packmoat:local}
     container_name: packmoat
-    # An init as the first process: the server is not PID 1, so signals and an abort end it as they would anywhere else (#240).
+    # An init as the first process: the server is not PID 1, so signals and an abort end it as they would anywhere else.
     init: true
     network_mode: host
     restart: unless-stopped

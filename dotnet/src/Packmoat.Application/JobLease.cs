@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 namespace Packmoat.Application;
 
 /// <summary>
-/// The job lease (#232 M2): a row saying "holder H runs job J until time T", so two copies of the server, or a copy and the operator's
+/// The job lease: a row saying "holder H runs job J until time T", so two copies of the server, or a copy and the operator's
 /// command, never run the same scheduled job at the same time. A copy that does not get the lease skips its pass.
 /// </summary>
 public interface IJobLease
@@ -31,7 +31,7 @@ public static class JobLeases
 
     /// <summary>
     /// How long a lease runs before another copy may take it over. Conservative, because a pass longer than this could overlap with a
-    /// copy that takes over: production did not log a pass's duration before #232 M2, and every pass now logs it. One hour is far above
+    /// copy that takes over: production did not log a pass's duration before the pass logged it, and every pass now logs it. One hour is far above
     /// any plausible pass (the retention pass is a handful of indexed deletes and counts; a module's job may call an outside service once
     /// per tenant) and no longer than the shortest job interval today (an hour). A pass ends its lease when it finishes, so the length
     /// matters only when a copy stops mid-pass without ending it (a crash or a kill): the job then waits at most this long.

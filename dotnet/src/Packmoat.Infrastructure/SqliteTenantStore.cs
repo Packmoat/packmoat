@@ -15,7 +15,7 @@ public sealed class SqliteTenantStore : ITenantStore
     private readonly IReadOnlyList<ITenantCreationParticipant> _participants;
 
     /// <param name="participants">
-    /// What takes part in making a tenant, in its transaction (#194; a module's own row). Required: pass
+    /// What takes part in making a tenant, in its transaction (a module's own row). Required: pass
     /// <see cref="TenantLifecycle.Participants"/>, empty for none, so no caller can forget it.
     /// </param>
     public SqliteTenantStore(SqliteDatabase db, IClock clock, AesGcmSecretProtector protector, IReadOnlyList<ITenantCreationParticipant> participants)
@@ -113,7 +113,7 @@ public sealed class SqliteTenantStore : ITenantStore
 
     /// <summary>
     /// The one way a tenant row is written: the tenant with its origin and creator, on the caller's command (inside the caller's
-    /// transaction), then each creation participant in order on the same transaction (#194). A participant's veto
+    /// transaction), then each creation participant in order on the same transaction. A participant's veto
     /// (<see cref="TenantCreationRefusedException"/>) or failure throws, and the caller's transaction rolls back.
     /// </summary>
     internal static async Task InsertAsync(SqliteCommand cmd, IReadOnlyList<ITenantCreationParticipant> participants, NewTenant t, DateTimeOffset createdAt, CancellationToken ct)
@@ -122,7 +122,7 @@ public sealed class SqliteTenantStore : ITenantStore
         var feedSetup = FeedSetupText(t.FeedSetup);
         var tx = cmd.Transaction ?? throw new InvalidOperationException("A tenant is written only inside a transaction.");
         cmd.Parameters.Clear();
-        // feed_setup is written only when it is not the column's default ('operator'), so an operator-set tenant reads the default (#207).
+        // feed_setup is written only when it is not the column's default ('operator'), so an operator-set tenant reads the default.
         cmd.CommandText = t.FeedSetup == FeedSetup.Operator
             ? """
               INSERT INTO tenants(id, name, upstream_base, allowed_path_prefix, feed_index_url, cooldown_days, created_at, origin, created_by_oid)
@@ -319,7 +319,7 @@ public sealed class SqliteTenantStore : ITenantStore
     }
 
     /// <summary>
-    /// An operator write of the upstream or identity takes the feed over (#207): feed_setup becomes 'operator' on the caller's command, in
+    /// An operator write of the upstream or identity takes the feed over: feed_setup becomes 'operator' on the caller's command, in
     /// its transaction, so the wizard never replaces what the operator set. Clears the command's parameters.
     /// </summary>
     internal static async Task TakeOverFeedSetupAsync(SqliteCommand cmd, string tenantId, CancellationToken ct)

@@ -8,7 +8,7 @@ using Packmoat.Host.Customer;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// #119 PR A through the running host: the results banner once connected or ready to connect (item 10), the bypass sentence shown once
+/// through the running host: the results banner once connected or ready to connect (item 10), the bypass sentence shown once
 /// on the developer's page (item 8) and addressed to the Admin on the Connect card (item 9), no operator words on the customer's pages
 /// (item 5), and step 3's default-feed sentence (item 4).
 /// </summary>

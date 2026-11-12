@@ -34,7 +34,7 @@ Packmoat only serves restores. It does not search or publish packages.
 | One server with Docker | Supported |
 | Behind your own HTTPS proxy or load balancer | Supported |
 | Kubernetes, with the Helm chart | Supported. The chart is not published to a chart repository yet. |
-| Azure Container Apps | Not yet. It needs a Postgres database, which Packmoat does not support yet. |
+| Azure Container Apps | Supported (pre-production), more than one copy on PostgreSQL (SQLite runs one); tested in CI against PostgreSQL 17. It needs a PostgreSQL database: see [docs/deploy/azure-container-apps.md](docs/deploy/azure-container-apps.md). |
 
 [docs/deploy/README.md](docs/deploy/README.md) lists what every deployment needs, and links to a guide for each way.
 
@@ -68,7 +68,3 @@ Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first: every 
 ## Security
 
 Do not report a vulnerability in a public issue. [SECURITY.md](SECURITY.md) says how to report one privately.
-
-## A note on references
-
-Numbers like #123 in code comments, tests and docs refer to issues and pull requests in an earlier private tracker, not to this repository's issues or pull requests.

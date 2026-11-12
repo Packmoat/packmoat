@@ -33,13 +33,13 @@ public sealed class OnboardingOptions
     /// </summary>
     public bool CheckProject { get; set; }
     /// <summary>
-    /// The customer site's wording (#119): a failed read is one fixed sentence (never the error), and the permissions check speaks of
+    /// The customer site's wording: a failed read is one fixed sentence (never the error), and the permissions check speaks of
     /// "you" confirming, not the operator's --confirm-admin. Off by default, so the CLI's `onboard check` prints exactly what it did; the
     /// setup wizard's delegated check turns it on.
     /// </summary>
     public bool CustomerWording { get; set; }
     /// <summary>
-    /// Who the customer site's wording tells a person to ask (#186): the operator's name and address, or neutral words when unset. Never
+    /// Who the customer site's wording tells a person to ask: the operator's name and address, or neutral words when unset. Never
     /// read by the CLI's wording.
     /// </summary>
     public SupportContact Support { get; set; } = SupportContact.None;
@@ -61,7 +61,7 @@ public sealed class OnboardingOptions
     /// <summary>A throttled (429/503) answer is retried this many times, waiting as long as Retry-After asks, but never longer than the cap.</summary>
     public int MaxRetries { get; set; } = 3;
     public TimeSpan RetryWaitCap { get; set; } = TimeSpan.FromSeconds(30);
-    /// <summary>Shared-app phase 2: how long the 'proxy' check is retried until it passes (running servers re-read the stored identity every 5 s; builds before #170 every 2 minutes).</summary>
+    /// <summary>Shared-app phase 2: how long the 'proxy' check is retried until it passes (running servers re-read the stored identity every 5 s; older builds every 2 minutes).</summary>
     public TimeSpan ProxyRetryFor { get; set; } = TimeSpan.Zero;
     public TimeSpan ProxyRetryInterval { get; set; } = TimeSpan.FromSeconds(10);
 }
@@ -89,7 +89,7 @@ public sealed class OnboardingChecks : IFeedSetupCheck
     public const string FeedTitle = "The feed checked is the feed Packmoat serves";
     public const string ProjectTitle = "The feed's project is private";
 
-    // The customer site's wording (#119), used only with OnboardingOptions.CustomerWording.
+    // The customer site's wording, used only with OnboardingOptions.CustomerWording.
     /// <summary>A read the person's sign-in could not make: never the error itself.</summary>
     public static string CustomerReadFailed(SupportContact support) => "Packmoat couldn't read this from Azure DevOps. Check again; if it keeps happening, " + support.Phrase + ".";
     public const string CustomerConfirmed = " Confirmed by you: {0}.";
@@ -105,7 +105,7 @@ public sealed class OnboardingChecks : IFeedSetupCheck
     /// <summary>The CLI's text, or the site's <see cref="CustomerReadFailed"/>.</summary>
     private string Or(string cli) => _o.CustomerWording ? CustomerReadFailed(_o.Support) : cli;
 
-    /// <summary>The CLI's text, or the site's own (#119).</summary>
+    /// <summary>The CLI's text, or the site's own.</summary>
     private string Site(string cli, string site) => _o.CustomerWording ? site : cli;
 
     private string PermissionsTitle => Site("Only Packmoat (and chosen admins) hold a role on the public-only feed", CustomerPermissionsTitle);
@@ -278,10 +278,10 @@ public sealed class OnboardingChecks : IFeedSetupCheck
             : (CheckStatus.Fail, $"remove {extras.Length} extra upstream source(s): {string.Join(", ", extras)}");
     }
 
-    /// <summary>A feed role as Azure DevOps shows it (#119): "reader" is Reader.</summary>
+    /// <summary>A feed role as Azure DevOps shows it: "reader" is Reader.</summary>
     public static string RoleName(string role) => role.Length == 0 ? role : char.ToUpperInvariant(role[0]) + role[1..];
 
-    /// <summary>A view's visibility in plain words (#119), never the API's value.</summary>
+    /// <summary>A view's visibility in plain words, never the API's value.</summary>
     public static string VisibilityName(string? visibility) => visibility?.ToLowerInvariant() switch
     {
         "organization" or "collection" => "your organisation",

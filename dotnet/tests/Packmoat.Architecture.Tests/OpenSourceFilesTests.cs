@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// The files a public repository needs (#265), at the core's root: the licence and its notice, a README, the security policy, how to
+/// The files a public repository needs, at the core's root: the licence and its notice, a README, the security policy, how to
 /// contribute and the code of conduct. The licence is Apache-2.0 everywhere one is declared, and the code says nothing of who approves its
 /// wording: an issue number is the reference.
 /// </summary>
@@ -131,7 +131,7 @@ public class OpenSourceFilesTests
         var files = PublicFixtureTests.TextFiles(CoreRoot.Path());
         Assert.True(files.Length > 100, "the scan found too few files in core/ to mean anything");
         var found = FounderMentions(CoreRoot.Path(), files);
-        Assert.True(found.Length == 0, "core/ says who approves or decides. Name the issue instead (#63, #117):\n" +
+        Assert.True(found.Length == 0, "core/ says who approves or decides. Name the issue instead:\n" +
             string.Join("\n", found.Select(x => "  " + x)));
     }
 
@@ -232,7 +232,7 @@ public class OpenSourceFilesTests
     /// <summary>
     /// Each relative link in a Markdown file at <paramref name="root"/> ([text](target) and [label]: target), as "file -> target", that
     /// does not resolve to a file or folder inside <paramref name="root"/>, or whose #anchor names no heading in the Markdown file it points
-    /// to (#275). A link with a scheme (https:, mailto:) is not relative; an anchor alone points into its own file.
+    /// to. A link with a scheme (https:, mailto:) is not relative; an anchor alone points into its own file.
     /// </summary>
     internal static string[] BrokenLinks(string root, IEnumerable<string> docs)
     {

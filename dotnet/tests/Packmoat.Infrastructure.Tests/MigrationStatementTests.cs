@@ -3,9 +3,9 @@ using Microsoft.Data.Sqlite;
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// #162: each migration statement runs as its own command, so an error from any statement is thrown and rolls the migration back.
+/// Each migration statement runs as its own command, so an error from any statement is thrown and rolls the migration back.
 /// Microsoft.Data.Sqlite does not report an error from a statement that follows an ADD COLUMN with a CHECK in the same command text,
-/// so migrations 8, 9, 13 and 14 (one command each before #162) could have lost an error. Mutations each test kills are named on it.
+/// so migrations 8, 9, 13 and 14 (one command each before the per-statement rule) could have lost an error. Mutations each test kills are named on it.
 /// </summary>
 [Collection("sqlite-pools")]
 public class MigrationStatementTests
@@ -45,7 +45,7 @@ public class MigrationStatementTests
     [Fact]
     public async Task Canary_the_library_does_not_report_an_error_after_a_checked_add_column_in_one_command()
     {
-        // Pins the library behaviour #162 works around. If this starts throwing, the library changed: the per-statement rule still holds,
+        // Pins the library behaviour the per-statement rule works around. If this starts throwing, the library changed: the per-statement rule still holds,
         // but this canary and the comments that cite it can go.
         await using var t = new TestDb();
         await ExecAsync(t.Db, "CREATE TABLE t(a TEXT);");
@@ -99,7 +99,7 @@ public class MigrationStatementTests
         Assert.Equal(1L, await ScalarAsync(t.Db, "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='ix_t_b'"));
     }
 
-    // The core slots #196 emptied (their statements are hosted H1). No other migration may be empty.
+    // The core slots that were emptied (their statements are hosted H1). No other migration may be empty.
     private static readonly int[] EmptiedBySplit = [10, 12, 21];
 
     [Fact]
@@ -142,7 +142,7 @@ public class MigrationStatementTests
     [Fact]
     public async Task Snapshot_of_the_objects_migrations_8_9_13_and_14_add_after_a_checked_add_column()
     {
-        // The objects at risk in #162: each follows an ADD COLUMN with a CHECK in the same migration. Kills: skipping the last element.
+        // The objects at risk: each follows an ADD COLUMN with a CHECK in the same migration. Kills: skipping the last element.
         await using var t = await TestDb.CreateAsync();
 
         // 8
@@ -156,7 +156,7 @@ public class MigrationStatementTests
         Assert.Equal(
             ["origin|TEXT|1|'operator'", "created_by_oid|TEXT|0|NULL"],
             await RowsAsync(t.Db, "SELECT name, type, \"notnull\", dflt_value FROM pragma_table_info('tenants') WHERE name IN ('origin','created_by_oid') ORDER BY cid"));
-        // (The tables old 9 also made are the hosted track's H1 since #196: HostedMigrationStatementTests checks them, #197.)
+        // (The tables old 9 also made are the hosted track's H1: HostedMigrationStatementTests checks them.)
 
         // 13 and 14
         Assert.Equal(

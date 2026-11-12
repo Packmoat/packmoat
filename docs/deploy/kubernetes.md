@@ -4,7 +4,7 @@
 
 What the chart makes:
 
-- a **Deployment** with one pod. The database is one SQLite file, and only one copy of the server may write it, so the chart refuses `replicas` other than 0 or 1. Upgrades use the `Recreate` strategy: the old pod stops before the new one starts. Set `replicas: 0` to stop the server, for a restore.
+- a **Deployment** with one pod. The database is one SQLite file, and only one copy of the server may write it, so the chart refuses `replicas` other than 0 or 1. Upgrades use the `Recreate` strategy: the old pod stops before the new one starts. Set `replicas: 0` to stop the server, for a restore. The chart runs SQLite only. More than one copy needs PostgreSQL, which this chart does not set up (see [PostgreSQL](../self-hosting.md#postgresql)).
 - a **PersistentVolumeClaim** (a request for a disk) for `/data`, with the access mode **ReadWriteOncePod**: the cluster lets only one pod at a time mount it. This, not `Recreate`, is what keeps a second pod off the database when a pod is deleted, a node is drained or a pod is evicted: the replacement waits until the old pod is gone. (ReadWriteOnce would not: it allows any number of pods on the same node.) It needs Kubernetes 1.29 or later and a storage class whose driver supports ReadWriteOncePod, as CSI drivers do. `helm uninstall` leaves the claim, so the database is not lost with the release.
 - a **Service** on port 80, and, if you set `ingress.enabled`, an **Ingress** for the feed host names and the admin and customer site host names.
 - if you set `networkPolicy.enabled`, a **NetworkPolicy** that lets only the ingress controller reach the server (see `trustedProxies` below).
@@ -99,4 +99,4 @@ To restore a backup (decrypt it first, if you encrypted it):
    kubectl -n packmoat exec deployment/packmoat -- packmoat-admin tenant list
    ```
 
-The chart runs one copy only. Running more needs a database other than SQLite, which Packmoat does not support yet.
+The chart runs one copy only and is SQLite-only. More than one copy needs PostgreSQL, which the chart does not set up.

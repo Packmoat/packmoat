@@ -3,7 +3,7 @@ using Packmoat.Protocols.NuGet;
 namespace Packmoat.Protocols.NuGet.Tests;
 
 // The version filters and the service index rewrite are conformance vectors, run by the host's tests:
-// spec/vectors/nuget (#209).
+// spec/vectors/nuget.
 
 public class RouteParserTests
 {
@@ -35,4 +35,15 @@ public class RouteParserTests
         Assert.Equal("newtonsoft.json", r.PackageId);
         Assert.Equal("13.0.3-beta+1", r.Version);
     }
+
+    /// <summary>A control character once unescaped (a NUL, a tab, a newline) is never a package id or version: Unknown.</summary>
+    [Theory]   // mutation: the control-character refusal removed
+    [InlineData("flat2/moq%00x/index.json")]
+    [InlineData("flat2/moq%00x/1.0.0/moq%00x.1.0.0.nupkg")]
+    [InlineData("flat2/moq/1.0.0%09/moq.1.0.0%09.nupkg")]
+    [InlineData("registrations2/moq%0ax/index.json")]
+    [InlineData("registrations2-semver2/moq/1.0.0%00.json")]
+    [InlineData("registrations2/moq%7fx/page/1.0.0/2.0.0.json")]
+    public void A_control_character_once_unescaped_is_an_unknown_route(string tail) =>
+        Assert.Equal(new NuGetRoute(NuGetResourceKind.Unknown), NuGetRouteParser.Parse(Feed + tail));
 }

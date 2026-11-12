@@ -1,18 +1,19 @@
 namespace Packmoat.Infrastructure;
 
 /// <summary>
-/// The core's migrations on PostgreSQL (#288 P2): plain SQL text, with no driver type, beside the SQLite migrations in
-/// <see cref="SqliteDatabase"/> (<see cref="CoreSchema"/> pairs them). The track has SQLite's 23 versions, so a version means the same on
+/// The core's migrations on PostgreSQL: plain SQL text, with no driver type, beside the SQLite migrations in
+/// <see cref="SqliteDatabase"/> (<see cref="CoreSchema"/> pairs them). The track has SQLite's versions, so a version means the same on
 /// either engine, but no database ever ran the early ones on PostgreSQL: versions 1 to 22 are empty, and version 23 makes every core table
-/// in its final shape at once (the baseline). A PostgreSQL database recorded at 1 to 22 was made by no Packmoat build, and is refused.
-/// <para>Types (#288 design 3): text for text, every text column COLLATE "C" (#303): byte order, as SQLite's BINARY compares and sorts, and
+/// in its shape at SQLite's 23 at once (the baseline). Each version after it is SQLite's, one for one (24: rate_counters; 25: form_nonces; 26: feed_setup_scratch). A PostgreSQL
+/// database recorded at 1 to 22 was made by no Packmoat build, and is refused.
+/// <para>Types: text for text, every text column COLLATE "C": byte order, as SQLite's BINARY compares and sorts, and
 /// a lower() that changes only ASCII letters, as SQLite's does; timestamptz for the times (<c>PostgresSchemaComparisonTests.TimeColumns</c> pins the
 /// list); date for token_activity.day; bigint for every integer, the 0/1 flags too, with SQLite's CHECK; bytea for blobs; and
 /// <c>bigint GENERATED ALWAYS AS IDENTITY</c> for AUTOINCREMENT. Columns are in SQLite's final order. WITHOUT ROWID has no PostgreSQL
 /// meaning and is left out. Every key column is NOT NULL, as PostgreSQL makes a primary key's columns anyway.</para>
-/// <para>The schema's rules (SchemaTriggerTests.Current, #288 P2 PR 6) are plpgsql triggers, plus three TRUNCATE guards: see
-/// <c>Rules</c>. PostgreSQL stays refused (<see cref="DatabaseEngines.RequireAvailable"/>) until P5, and while refused this text is
-/// not frozen by hash: no database depends on it yet.</para>
+/// <para>The schema's rules (SchemaTriggerTests.Current) are plpgsql triggers, plus three TRUNCATE guards: see
+/// <c>Rules</c>. PostgreSQL is selectable (<see cref="DatabaseEngines.RequireAvailable"/>), so this text is frozen by
+/// hash as SQLite's is (MigrationHashTests, PostgresFrozen): never edit an applied version; add a new one.</para>
 /// <para>Unstable: may change in any release before 1.0.</para>
 /// </summary>
 public static class PostgresCoreMigrations
@@ -25,7 +26,7 @@ public static class PostgresCoreMigrations
         var migrations = new string[BaselineVersion][];
         for (var i = 0; i < BaselineVersion - 1; i++) migrations[i] = [];
         migrations[BaselineVersion - 1] = Baseline;
-        return migrations;
+        return [.. migrations, .. AfterBaseline];
     }
 
     /// <summary>
@@ -34,7 +35,7 @@ public static class PostgresCoreMigrations
     /// </summary>
     public const int TenantIdLockKey = 0x706D7469;
 
-    // The schema's rules (#288 P2, PR 6): SQLite's 11 triggers (SchemaTriggerTests.Current) as plpgsql BEFORE row triggers, with SQLite's
+    // The schema's rules: SQLite's 11 triggers (SchemaTriggerTests.Current) as plpgsql BEFORE row triggers, with SQLite's
     // messages exactly, and three BEFORE TRUNCATE guards SQLite has no need of (it has no TRUNCATE). RAISE EXCEPTION is SQLSTATE P0001;
     // RAISE(IGNORE) is RETURN NULL (the row is dropped, the statement goes on); SQLite's IS is IS NOT DISTINCT FROM. The floors are in
     // hours from statement_timestamp() (SQLite's 'now' is fixed for a statement too): days would follow the session's time zone across a
@@ -308,7 +309,29 @@ public static class PostgresCoreMigrations
         .. Rules,
     ];
 
-    // After Rules and Baseline: static fields are initialised in the order they are written.
+    // The versions after the baseline, SQLite's 24 onwards, one element per migration (version = BaselineVersion + 1 + index). Never edit
+    // one; add a new one.
+    private static readonly string[][] AfterBaseline =
+    [
+        // 24: the shared rate counter (PostgresRateCounter), as SQLite's 24: one new, empty table and its index.
+        [
+            "CREATE TABLE rate_counters(scope text COLLATE \"C\" NOT NULL, subject text COLLATE \"C\" NOT NULL, started_at timestamptz NOT NULL, ends_at timestamptz NOT NULL, hits bigint NOT NULL CHECK(hits >= 1), PRIMARY KEY(scope, subject))",
+            "CREATE INDEX ix_rate_counters_ends_at ON rate_counters(ends_at)",
+        ],
+        // 25: the form nonces (PostgresFormNonceStore), as SQLite's 25: one new, empty table and its two indexes.
+        [
+            "CREATE TABLE form_nonces(scope text COLLATE \"C\" NOT NULL, nonce_hash text COLLATE \"C\" NOT NULL, subject text COLLATE \"C\" NOT NULL, expires_at timestamptz NOT NULL, PRIMARY KEY(scope, nonce_hash))",
+            "CREATE INDEX ix_form_nonces_subject ON form_nonces(scope, subject, expires_at)",
+            "CREATE INDEX ix_form_nonces_expires_at ON form_nonces(expires_at)",
+        ],
+        // 26: the feed setup scratch (PostgresFeedSetupScratch), as SQLite's 26: one new, empty table and its index.
+        [
+            "CREATE TABLE feed_setup_scratch(tenant_id text COLLATE \"C\" NOT NULL, person_oid text COLLATE \"C\" NOT NULL, kind text COLLATE \"C\" NOT NULL, payload text COLLATE \"C\" NOT NULL, expires_at timestamptz NOT NULL, PRIMARY KEY(tenant_id, person_oid, kind))",
+            "CREATE INDEX ix_feed_setup_scratch_expires_at ON feed_setup_scratch(expires_at)",
+        ],
+    ];
+
+    // After Rules, Baseline and AfterBaseline: static fields are initialised in the order they are written.
     /// <summary>One element per migration (version = index + 1), one statement per inner element.</summary>
     public static string[][] Statements { get; } = Build();
 }

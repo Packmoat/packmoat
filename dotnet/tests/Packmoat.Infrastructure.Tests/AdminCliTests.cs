@@ -173,7 +173,7 @@ public class AdminCliTests
         Assert.Equal(1, (await cli.Run("token", "active", "--tenant", "acme", "--days", "0")).Code);
         Assert.Equal(1, (await cli.Run("token", "active", "--tenant", "acme", "--days", "x")).Code);
         Assert.Equal(0, (await cli.Run("token", "active", "--tenant", "acme", "--days", "365")).Code);
-        var tooLong = await cli.Run("token", "active", "--tenant", "acme", "--days", "366");   // token_activity is kept 365 days (#136)
+        var tooLong = await cli.Run("token", "active", "--tenant", "acme", "--days", "366");   // token_activity is kept 365 days
         Assert.Equal(1, tooLong.Code);
         Assert.Contains("from 1 to 365", tooLong.Err);
     }

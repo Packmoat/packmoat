@@ -5,7 +5,7 @@ public enum FeedCheckOutcome { Passed, Failed, Incomplete }
 
 /// <summary>
 /// What a check row is about (migration 14). <see cref="Settings"/>: an Admin's check of the feed's settings (the wizard's step-up check).
-/// <see cref="Developer"/>: a developer's proof that they cannot read the feed directly (#64 part I2). Every row written before
+/// <see cref="Developer"/>: a developer's proof that they cannot read the feed directly. Every row written before
 /// migration 14 is a settings check.
 /// </summary>
 public enum FeedCheckKind { Settings, Developer }
@@ -32,7 +32,7 @@ public sealed record FeedCheck(
     public long Id { get; init; }
     /// <summary>Settings (the default) or developer.</summary>
     public FeedCheckKind Kind { get; init; } = FeedCheckKind.Settings;
-    /// <summary>The names the Admin typed for a wizard settings check (migration 16, #119); null for every other row and every older one.</summary>
+    /// <summary>The names the Admin typed for a wizard settings check (migration 16); null for every other row and every older one.</summary>
     public FeedNames? Names { get; init; }
 }
 
@@ -47,7 +47,7 @@ public interface IFeedCheckStore
     /// <summary>The tenant's newest check of this kind (by time, then by the order written), or null when it has none.</summary>
     Task<FeedCheck?> LatestAsync(string tenantId, FeedCheckKind kind, CancellationToken cancellationToken);
     /// <summary>
-    /// The 30-day retention of personal data (#63 H2, #107). For every check made before <paramref name="checkedBefore"/>: empties
+    /// The 30-day retention of personal data. For every check made before <paramref name="checkedBefore"/>: empties
     /// <c>confirmed_admins</c>, blanks <c>checked_by_name</c> and redacts the results (<see cref="FeedCheckRedaction.Redact"/>), in one
     /// transaction. The checker's tid and oid are kept until the tenant purge (pseudonymous; they link to admin_actions), as are the
     /// outcome, kind and feed names. The rows themselves stay (a verification record may refer to one). Idempotent: returns how many
@@ -57,7 +57,7 @@ public interface IFeedCheckStore
 }
 
 /// <summary>
-/// The 30-day redaction of a check's results (#107), pure. A detail can name a person (an admin, a member who holds a role), so every
+/// The 30-day redaction of a check's results, pure. A detail can name a person (an admin, a member who holds a role), so every
 /// detail is replaced, whatever the check: a future check that adds names is covered without a change here (fail closed). Each result's
 /// id, title and status are kept, in order, so the history still says what was checked and how it went. A result's feed names are dropped.
 /// </summary>

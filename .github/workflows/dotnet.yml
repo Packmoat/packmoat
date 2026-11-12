@@ -20,7 +20,7 @@ jobs:
     name: dotnet
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # #288: the PostgreSQL the Postgres-backed tests run against. The official image pinned by its index digest (Dependabot does not
+    # The PostgreSQL the Postgres-backed tests run against. The official image pinned by its index digest (Dependabot does not
     # update a service's digest: refresh it by hand, in every workflow and dotnet/tools/postgres-tests.sh at once; a test keeps them equal).
     # The password is a throwaway for this job's own container, which nothing outside the job can reach.
     services:
@@ -32,6 +32,24 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -h 127.0.0.1 -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+      # A PgBouncer in transaction mode in front of postgres, for the pooler test (PACKMOAT_TEST_PGBOUNCER): an idle pool
+      # hands two connections one session, which the start must refuse. Pinned by digest, the same as dotnet/tools/pgbouncer-tests.sh
+      # (refresh it by hand, every copy at once; a test keeps them equal).
+      pgbouncer:
+        image: edoburu/pgbouncer@sha256:8638aa563607256d3c7440437534195f1066a92b68015d89ae9d6b935b444a6d
+        env:
+          DB_HOST: postgres
+          DB_USER: postgres
+          DB_PASSWORD: pm-ci-throwaway   # gitleaks:allow
+          AUTH_TYPE: scram-sha-256
+          POOL_MODE: transaction
+        ports:
+          - 6432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -p 5432 -U postgres"
           --health-interval 2s
           --health-timeout 5s
           --health-retries 30
@@ -56,6 +74,7 @@ jobs:
       - name: Test (live tests skip without their environment)
         env:
           PACKMOAT_TEST_POSTGRES: Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=pm-ci-throwaway   # gitleaks:allow
+          PACKMOAT_TEST_PGBOUNCER: Host=localhost;Port=6432;Database=postgres;Username=postgres;Password=pm-ci-throwaway   # gitleaks:allow
         working-directory: dotnet
         run: dotnet test Packmoat.sln -c Release --no-build --nologo --logger "trx;LogFileName=results.trx" --results-directory "$RUNNER_TEMP/results"
       # A doc comment's cref must resolve. Only the cref checks are errors here (CS1574, CS1580, CS1581, CS1584); the other doc-comment
@@ -70,3 +89,5 @@ jobs:
         run: .github/scripts/image-smoke.sh packmoat-core:ci /app/host/Packmoat.Server.dll
       - name: Image PORT smoke (PORT=9090 moves the server and its health check; PORT=0 stops it)
         run: .github/scripts/port-smoke.sh packmoat-core:ci 9090
+      - name: Image PostgreSQL smoke (db migrate --grant-to, the server as the app role, a superuser refused)
+        run: .github/scripts/image-postgres-smoke.sh packmoat-core:ci

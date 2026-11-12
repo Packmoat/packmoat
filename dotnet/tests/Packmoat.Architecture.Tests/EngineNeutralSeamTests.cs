@@ -7,7 +7,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// The module seams are engine-neutral (#278 step 0, architecture test 2): starting from <see cref="IPackmoatModule"/> and
+/// The module seams are engine-neutral: starting from <see cref="IPackmoatModule"/> and
 /// <see cref="IAdminCliModule"/>, every public signature a module sees (parameters, returns, properties, fields, constructor parameters,
 /// base types, generic and Func arguments), followed through every Packmoat type it reaches, names no database engine's type: nothing
 /// from Microsoft.Data.Sqlite or Npgsql, and nothing named Sqlite* or Npgsql*. A module gets the database as

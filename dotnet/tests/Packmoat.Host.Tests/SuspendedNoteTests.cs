@@ -6,7 +6,7 @@ using Packmoat.Host.Web;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The suspended page's "what to do next" (#197 C3): the core's sentence, then the customer-site module's note when it has one. The hosted
+/// The suspended page's "what to do next": the core's sentence, then the customer-site module's note when it has one. The hosted
 /// module's note is pinned on a rendered page in the hosted tests.
 /// </summary>
 public class SuspendedNoteTests

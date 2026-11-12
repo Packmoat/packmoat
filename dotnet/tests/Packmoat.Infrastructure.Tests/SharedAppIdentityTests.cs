@@ -3,10 +3,115 @@ using Microsoft.Data.Sqlite;
 using Packmoat.Admin;
 using Packmoat.Application;
 using Packmoat.Domain;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
-/// <summary><see cref="SharedAppIdentityContract"/> on SQLite, and the tests only SQLite has (#232 S1).</summary>
+/// <summary>
+/// <see cref="SharedAppIdentityContract"/> on PostgreSQL, each test on a database of its own, and what only PostgreSQL has:
+/// the slots' named lock (<see cref="Infrastructure.Postgres.PostgresLock.SharedAppSlots"/>), which the promote takes before it reads
+/// "next".
+/// </summary>
+[Collection(PostgresCollection.Name)]
+[Trait("Category", PostgresTestServer.Category)]
+public class PostgresSharedAppIdentityTests : SharedAppIdentityContract
+{
+    protected override IStoreEngine Engine => PostgresStoreEngine.Instance;
+
+    private static Infrastructure.Postgres.PostgresDatabase Db(IEngineDb t) => ((PostgresTestDb)t).Db;
+
+    /// <summary>A named lock not granted to another session of this test's database.</summary>
+    private static readonly string WaitsForSlots =
+        "SELECT COUNT(DISTINCT l.pid) FROM pg_catalog.pg_locks l WHERE NOT l.granted AND l.locktype = 'advisory' AND l.objsubid = 2 " +
+        $"AND l.classid::bigint = {Infrastructure.Postgres.PostgresLocks.NamedLockKey} AND l.objid::bigint = {(int)Infrastructure.Postgres.PostgresLock.SharedAppSlots} AND " +
+        PostgresLockProbe.Others;
+
+    /// <summary>
+    /// A set takes the slots' lock before it writes its slot: another session holds the lock. The set waits for it, and has
+    /// not touched the "next" row meanwhile (a FOR UPDATE SKIP LOCKED probe still finds it free). Once the holder commits, the set
+    /// finishes. A set with no lock would finish at once; one that took the lock after its upsert would already hold the row.
+    /// </summary>
+    [PostgresFact]   // mutations: the SharedAppSlots lock dropped from the set, or taken after the upsert
+    public async Task A_set_waits_for_whoever_holds_the_slots_lock_before_it_writes_its_slot()
+    {
+        await using var t = await CreateDbAsync();
+        var store = Engine.SharedApp(t);
+        await store.SetAsync(SharedAppSlot.Next, new SharedAppCredential(AppId, "OLD"), default);
+        await using var holder = await Db(t).OpenAsync();
+        await using var holding = await holder.BeginTransactionAsync();
+        await using (var take = new Npgsql.NpgsqlCommand(Infrastructure.Postgres.PostgresLocks.TakeSql(Infrastructure.Postgres.PostgresLock.SharedAppSlots), holder, holding))
+            await take.ExecuteNonQueryAsync();
+
+        var set = Task.Run(() => store.SetAsync(SharedAppSlot.Next, new SharedAppCredential(AppId2, "NEW"), default));
+
+        await PostgresLockProbe.WaitUntilAsync(holder, holding, WaitsForSlots, 1, set);
+        Assert.False(set.IsCompleted, "the set finished while another session held the slots' lock");
+        Assert.Equal(1L, await PostgresLockProbe.CountAsync(holder, holding,
+            "SELECT COUNT(*) FROM (SELECT 1 FROM shared_app_credentials WHERE slot='next' FOR UPDATE SKIP LOCKED) AS free"));   // not written yet
+        await holding.CommitAsync();
+        await set.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(new SharedAppCredential(AppId2, "NEW"), await store.GetAsync(SharedAppSlot.Next, default));
+    }
+
+    /// <summary>
+    /// The promote takes the slots' lock before it reads "next": another session holds the lock and, in its transaction, has
+    /// deleted "next". The promote waits for the lock; once the holder commits, it finds no "next" and returns false, and "active" is as
+    /// it was. A promote that read "next" before taking the lock (or never took it) would move the deleted credential into "active".
+    /// </summary>
+    [PostgresFact]   // mutation: the SharedAppSlots lock dropped from the promote, or taken after the read
+    public async Task A_promote_waits_for_whoever_holds_the_slots_lock_and_then_reads_next_afresh()
+    {
+        await using var t = await CreateDbAsync();
+        var store = Engine.SharedApp(t);
+        await store.SetAsync(SharedAppSlot.Active, new SharedAppCredential(AppId, "ACTIVE"), default);
+        await store.SetAsync(SharedAppSlot.Next, new SharedAppCredential(AppId2, "NEXT"), default);
+        await using var holder = await Db(t).OpenAsync();
+        await using var holding = await holder.BeginTransactionAsync();
+        await using (var take = new Npgsql.NpgsqlCommand(Infrastructure.Postgres.PostgresLocks.TakeSql(Infrastructure.Postgres.PostgresLock.SharedAppSlots) +
+            "; DELETE FROM shared_app_credentials WHERE slot='next'", holder, holding)) await take.ExecuteNonQueryAsync();
+
+        var promote = Task.Run(() => store.PromoteAsync(_ => { }, default));
+
+        await PostgresLockProbe.WaitUntilAsync(holder, holding, WaitsForSlots, 1, promote);
+        Assert.False(promote.IsCompleted, "the promote finished while another session held the slots' lock");
+        await holding.CommitAsync();
+        Assert.False(await promote.WaitAsync(TimeSpan.FromSeconds(30)));
+        Assert.Equal(new SharedAppCredential(AppId, "ACTIVE"), await store.GetAsync(SharedAppSlot.Active, default));
+    }
+
+    /// <summary>
+    /// Two promotes at once: the first is held inside the caller's check, holding the slots' lock; the second waits for it.
+    /// Once the first commits, the second finds no "next" and returns false: exactly one promote moves the credential. Without the lock both
+    /// would read the same "next" and both return true.
+    /// </summary>
+    [PostgresFact]   // mutation: the SharedAppSlots lock dropped from the promote
+    public async Task Of_two_promotes_at_once_exactly_one_moves_next_to_active()
+    {
+        await using var t = await CreateDbAsync();
+        var store = Engine.SharedApp(t);
+        await store.SetAsync(SharedAppSlot.Active, new SharedAppCredential(AppId, "ACTIVE"), default);
+        await store.SetAsync(SharedAppSlot.Next, new SharedAppCredential(AppId2, "NEXT"), default);
+        var inCheck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new ManualResetEventSlim();
+
+        var first = Task.Run(() => store.PromoteAsync(_ => { inCheck.TrySetResult(); Assert.True(release.Wait(TimeSpan.FromSeconds(30))); }, default));
+        await inCheck.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        var second = Task.Run(() => store.PromoteAsync(_ => { }, default));
+
+        await using (var probe = await Db(t).OpenAsync())
+        await using (var reading = await probe.BeginTransactionAsync())
+            await PostgresLockProbe.WaitUntilAsync(probe, reading, WaitsForSlots, 1, second);
+        Assert.False(second.IsCompleted, "the second promote finished while the first held the slots' lock");
+        release.Set();
+
+        Assert.True(await first.WaitAsync(TimeSpan.FromSeconds(30)));
+        Assert.False(await second.WaitAsync(TimeSpan.FromSeconds(30)));
+        Assert.Equal(new SharedAppCredential(AppId2, "NEXT"), await store.GetAsync(SharedAppSlot.Active, default));
+        Assert.Null(await store.GetAsync(SharedAppSlot.Next, default));
+    }
+}
+
+/// <summary><see cref="SharedAppIdentityContract"/> on SQLite, and the tests only SQLite has.</summary>
 [Collection("sqlite-pools")]
 public class SharedAppIdentityTests : SharedAppIdentityContract
 {
@@ -31,7 +136,7 @@ public class SharedAppIdentityTests : SharedAppIdentityContract
         }
         catch
         {
-            await t.DisposeAsync();   // #292: a failed set-up leaves no folder behind
+            await t.DisposeAsync();   // A failed set-up leaves no folder behind
             throw;
         }
     }
@@ -122,23 +227,6 @@ public class SharedAppIdentityTests : SharedAppIdentityContract
         Assert.Equal(IdentityKind.Own, (await t.Tenants.GetUpstreamBindingAsync("acme", default))!.Kind);
     }
 
-    [Fact]
-    public async Task Shared_credentials_round_trip_encrypted_and_promote_moves_next_to_active()
-    {
-        await using var t = await TestDb.CreateAsync();
-        var store = new SqliteSharedAppCredentialStore(t.Db, t.Clock, t.Protector);
-        await store.SetAsync(SharedAppSlot.Active, new SharedAppCredential(AppId, "SHARED-KEY-ONE"), default);
-        await store.SetAsync(SharedAppSlot.Next, new SharedAppCredential(AppId, "SHARED-KEY-TWO"), default);
-
-        Assert.Equal("SHARED-KEY-ONE", (await store.GetAsync(SharedAppSlot.Active, default))!.CertificatePem);
-        Assert.DoesNotContain("SHARED-KEY", System.Text.Encoding.UTF8.GetString(await t.RawBytesAsync()));
-
-        Assert.True(await store.PromoteAsync(_ => { }, default));
-        Assert.Equal("SHARED-KEY-TWO", (await store.GetAsync(SharedAppSlot.Active, default))!.CertificatePem);
-        Assert.Null(await store.GetAsync(SharedAppSlot.Next, default));
-        Assert.False(await store.PromoteAsync(_ => { }, default));
-    }
-
     private static async Task<byte[]> BlobAsync(TestDb t, string sql)
     {
         await using var c = await t.Db.OpenAsync();
@@ -154,20 +242,6 @@ public class SharedAppIdentityTests : SharedAppIdentityContract
         cmd.CommandText = sql;
         cmd.Parameters.AddWithValue("@b", blob);
         await cmd.ExecuteNonQueryAsync();
-    }
-
-    [Fact]
-    public async Task A_blob_copied_between_slots_does_not_decrypt()
-    {
-        await using var t = await TestDb.CreateAsync();
-        var store = new SqliteSharedAppCredentialStore(t.Db, t.Clock, t.Protector);
-        await store.SetAsync(SharedAppSlot.Active, new SharedAppCredential(AppId, "ACTIVE"), default);
-        await store.SetAsync(SharedAppSlot.Next, new SharedAppCredential(AppId, "NEXT"), default);
-
-        var next = await BlobAsync(t, "SELECT cert_encrypted FROM shared_app_credentials WHERE slot='next'");
-        await ExecAsync(t, "UPDATE shared_app_credentials SET cert_encrypted=@b WHERE slot='active'", next);
-
-        await Assert.ThrowsAnyAsync<CryptographicException>(() => store.GetAsync(SharedAppSlot.Active, default));
     }
 
     [Fact]
@@ -227,7 +301,7 @@ public class SharedAppIdentityTests : SharedAppIdentityContract
             }
             catch
             {
-                await db.DisposeAsync();   // #292: a failed set-up leaves no folder behind
+                await db.DisposeAsync();   // A failed set-up leaves no folder behind
                 throw;
             }
         }
@@ -499,18 +573,6 @@ public class SharedAppIdentityTests : SharedAppIdentityContract
         await w.Db.Tenants.BindSharedIdentityAsync("acme", Dir, default);
         w.Db.Clock.Advance(TimeSpan.FromMinutes(3));
         await Assert.ThrowsAsync<InvalidOperationException>(() => w.TokenAsync());
-    }
-
-    [Fact]
-    public async Task Two_shared_rows_can_never_hold_the_same_directory_in_the_database()
-    {
-        await using var t = await TestDb.CreateAsync();
-        await t.AddTenantAsync("acme");
-        await t.AddTenantAsync("globex");
-        await t.Tenants.BindSharedIdentityAsync("acme", Dir, default);
-        var ex = await Assert.ThrowsAsync<SqliteException>(() => t.Tenants.BindSharedIdentityAsync("globex", Dir.ToUpperInvariant(), default));
-        Assert.Contains("UNIQUE", ex.Message);
-        await t.Tenants.SetUpstreamIdentityAsync("globex", new UpstreamIdentity(Dir, AppId, "pem"), default);   // an own row may
     }
 
     [Fact]

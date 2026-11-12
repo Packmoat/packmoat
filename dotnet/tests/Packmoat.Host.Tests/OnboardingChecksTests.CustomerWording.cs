@@ -5,8 +5,8 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// #119 PR A, item 5: the customer site's own wording for the engine's operator text (<see cref="OnboardingOptions.CustomerWording"/>,
-/// set only by the setup wizard's delegated check). The CLI's text is pinned here byte for byte as it was before #119.
+/// The customer site's own wording for the engine's operator text (<see cref="OnboardingOptions.CustomerWording"/>,
+/// set only by the setup wizard's delegated check). The CLI's text is pinned here byte for byte as it was in an earlier version.
 /// </summary>
 public partial class OnboardingChecksTests
 {
@@ -204,7 +204,7 @@ public partial class OnboardingChecksTests
     }
 }
 
-/// <summary>#119 PR A, item 5: a failed read on the site is one fixed sentence, never the exception's message; the CLI's text is unchanged.</summary>
+/// <summary>A failed read on the site is one fixed sentence, never the exception's message; the CLI's text is unchanged.</summary>
 public partial class OnboardingBadResponseTests
 {
     private const string ReadFailed = "Packmoat couldn't read this from Azure DevOps. Check again; if it keeps happening, email support@contoso.example.";

@@ -35,7 +35,7 @@ internal sealed class FakeTokenEndpoint : HttpMessageHandler
 }
 
 /// <summary>
-/// #145: the failed sign-in limiter counts guesses, not page loads. The state is data-protected, and PKCE, the nonce and the correlation
+/// The failed sign-in limiter counts guesses, not page loads. The state is data-protected, and PKCE, the nonce and the correlation
 /// cookie bind the code to this browser, so a callback cannot be brute-forced; counting bare callbacks, declines or a cross-site POST
 /// would only hand a hostile page a free lockout. What counts is a failure after Microsoft issued a code: a redemption that fails, a
 /// refused person (<see cref="Packmoat.Host.Web.SignInDeniedException"/>), a different person at a step-up. Everything here runs through

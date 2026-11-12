@@ -5,7 +5,7 @@ using Packmoat.Infrastructure.Postgres;
 namespace Packmoat.Infrastructure.Tests.Postgres;
 
 /// <summary>
-/// The P3 plumbing with no server (#303 P3, PR 0): times (<see cref="PostgresTime"/>), the named locks (<see cref="PostgresLocks"/>), and
+/// The P3 plumbing with no server: times (<see cref="PostgresTime"/>), the named locks (<see cref="PostgresLocks"/>), and
 /// how the test engine reads values back and tells a refusal (<see cref="PostgresSqlEngine"/>).
 /// </summary>
 public class PostgresPlumbingTests
@@ -24,6 +24,49 @@ public class PostgresPlumbingTests
         Assert.Null(PostgresTime.ToDatabase((DateTimeOffset?)null));
         Assert.Equal(stored, PostgresTime.ToDatabase((DateTimeOffset?)local));
     }
+
+    // The two edges, decided (PostgresTime.ToDatabase). mutation: MinValue let through (Npgsql writes it as -infinity)
+    [Fact]
+    public void The_earliest_time_is_refused_and_the_latest_is_stored_as_a_finite_time()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => PostgresTime.ToDatabase(DateTimeOffset.MinValue));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PostgresTime.ToDatabase(DateTimeOffset.MinValue.AddTicks(9)));   // cut to MinValue
+        Assert.Throws<ArgumentOutOfRangeException>(() => PostgresTime.ToDatabase((DateTimeOffset?)DateTimeOffset.MinValue));
+        Assert.Equal(new DateTimeOffset(10, TimeSpan.Zero), PostgresTime.ToDatabase(DateTimeOffset.MinValue.AddTicks(10)));   // 0001-01-01T00:00:00.000001Z
+
+        var latest = PostgresTime.ToDatabase(DateTimeOffset.MaxValue);
+        Assert.Equal(DateTimeOffset.MaxValue.AddTicks(-9), latest);   // 9999-12-31T23:59:59.999999Z
+        Assert.NotEqual(DateTime.MaxValue, latest.UtcDateTime);       // so not the value Npgsql writes as infinity
+        Assert.Equal(latest, PostgresTime.ToDatabase(latest));
+    }
+
+    // The upstream identity's key is encrypted with its tenant's context: the two engines' stores must give the same one,
+    // or a database copied from one engine to the other would hold keys that no longer decrypt.
+    [Theory]
+    [InlineData("acme")]
+    [InlineData("org-k3j7x2m6q4w7z4ab")]
+    [InlineData("shared-app:active")]
+    [InlineData("a:b")]
+    public void A_tenants_key_context_is_the_same_on_both_engines(string tenantId)
+    {
+        if (tenantId.Contains(':'))
+        {
+            Assert.Throws<System.Security.Cryptography.CryptographicException>(() => PostgresTenantStore.TenantContext(tenantId));
+            Assert.Throws<System.Security.Cryptography.CryptographicException>(() => SqliteTenantStore.TenantContext(tenantId));
+        }
+        else
+        {
+            Assert.Equal(SqliteTenantStore.TenantContext(tenantId), PostgresTenantStore.TenantContext(tenantId));
+        }
+    }
+
+    // A cookie key is encrypted under its row's context: the two engines' stores must give the same one, as for the
+    // tenant's key above. mutation: a different prefix, or the friendly name in place of the id, in PostgresCookieKeyStore.Context
+    [Theory]
+    [InlineData("11111111-2222-4333-8444-555555555555")]
+    [InlineData("")]
+    public void A_cookie_keys_context_is_the_same_on_both_engines(string id) =>
+        Assert.Equal(SqliteCookieKeyStore.Context(id), PostgresCookieKeyStore.Context(id));
 
     [Fact]
     public void A_time_comes_back_with_offset_0_and_only_from_utc()
@@ -44,12 +87,12 @@ public class PostgresPlumbingTests
         Assert.NotEqual(PostgresCoreMigrations.TenantIdLockKey, PostgresLocks.NamedLockKey);
         var numbers = Enum.GetValues<PostgresLock>().Select(l => (int)l).ToList();
         Assert.Equal(numbers.Distinct(), numbers);
-        Assert.Equal([1, 2, 3], numbers);   // pinned: a number is never reused for another lock
+        Assert.Equal([1, 2, 3, 4], numbers);   // pinned: a number is never reused for another lock (4: the form nonces)
         Assert.Equal($"SELECT pg_catalog.pg_advisory_xact_lock({0x706D6C6B}, 2)", PostgresLocks.TakeSql(PostgresLock.CookieKeys));
         Assert.Throws<ArgumentOutOfRangeException>(() => PostgresLocks.TakeSql((PostgresLock)99));
     }
 
-    // mutation (#303): any PostgresException accepted as a refusal
+    // mutation: any PostgresException accepted as a refusal
     [Theory]
     [InlineData("23505", true)]    // unique_violation
     [InlineData("23503", true)]    // foreign_key_violation
@@ -90,14 +133,14 @@ public class PostgresPlumbingTests
     }
 }
 
-/// <summary>The P3 plumbing against the test server (#303 P3, PR 0).</summary>
+/// <summary>The P3 plumbing against the test server.</summary>
 [Collection(PostgresCollection.Name)]
 [Trait("Category", PostgresTestServer.Category)]
 public class PostgresPlumbingServerTests
 {
     private static PostgresSqlEngine Engine => PostgresSqlEngine.Instance;
 
-    // mutation (#303): any PostgresException accepted as a refusal
+    // mutation: any PostgresException accepted as a refusal
     [PostgresFact]
     public async Task Only_a_constraints_or_a_rules_failure_is_a_refusal()
     {
@@ -123,7 +166,10 @@ public class PostgresPlumbingServerTests
 
     private static Task ExecAsync(IEngineDb t, string sql) => Engine.ExecAsync(t, sql);
 
-    // The time zone the server's session runs in changes nothing read back (#303 decision "Time").
+    // The time zone the server's session runs in changes nothing read back. Every test session runs in
+    // Pacific/Chatham (PostgresTestServer.SessionTimeZone): the reads in the zone's own terms below differ from UTC's, so
+    // they prove the zone is really in force, on the engine's connections and the stores' pool alike.
+    // mutation (F1): the TimeZone option removed from PostgresTestServer.ConnectionString (the session runs in UTC)
     [PostgresFact]
     public async Task A_time_reads_back_as_the_same_O_text_whatever_the_sessions_time_zone()
     {
@@ -132,13 +178,20 @@ public class PostgresPlumbingServerTests
         var given = new DateTimeOffset(2026, 4, 5, 3, 30, 0, TimeSpan.FromHours(13.75)).AddTicks(19);   // Chatham, daylight time ending
         await using (var c = await pg.Db.OpenAsync())
         {
-            await using (var tz = new NpgsqlCommand("SET TIME ZONE 'Pacific/Chatham'", c)) await tz.ExecuteNonQueryAsync();
+            await using (var zone = new NpgsqlCommand("SELECT current_setting('TimeZone')", c)) Assert.Equal(PostgresTestServer.SessionTimeZone, await zone.ExecuteScalarAsync());
             await using var insert = new NpgsqlCommand("INSERT INTO job_leases(job, holder, expires_at) VALUES('j', 'h', @at)", c);
             insert.Parameters.AddWithValue("at", PostgresTime.ToDatabase(given));
             await insert.ExecuteNonQueryAsync();
             await using var read = new NpgsqlCommand("SELECT expires_at FROM job_leases", c);
             Assert.Equal(PostgresTime.ToDatabase(given), PostgresTime.FromDatabase((DateTime)(await read.ExecuteScalarAsync())!));
         }
+
+        // In the zone's terms: the text form, the day, and a time written with no offset all follow the session's zone (in UTC they would
+        // read 2026-04-04 13:45:00.000001+00, 2026-04-04 00:00:00+00 and 2026-01-01T00:00:00Z).
+        Assert.Equal(PostgresTestServer.SessionTimeZone, await Engine.ScalarAsync(t, "SELECT current_setting('TimeZone')"));
+        Assert.Equal("2026-04-05 03:30:00.000001+13:45", await Engine.ScalarAsync(t, "SELECT expires_at::text FROM job_leases"));
+        Assert.Equal("2026-04-05 00:00:00+13:45", await Engine.ScalarAsync(t, "SELECT date_trunc('day', expires_at)::text FROM job_leases"));
+        Assert.Equal("2025-12-31T10:15:00.0000000+00:00", await Engine.ScalarAsync(t, "SELECT '2026-01-01 00:00:00'::timestamptz"));
 
         var expected = PostgresTime.ToDatabase(given).ToString("O", CultureInfo.InvariantCulture);
         Assert.Equal("2026-04-04T13:45:00.0000010+00:00", expected);
@@ -150,6 +203,31 @@ public class PostgresPlumbingServerTests
         await Engine.ExecAsync(t, "INSERT INTO token_activity(token_id, day) VALUES('t1', '1900-01-01')");
         Assert.Equal("1900-01-01", await Engine.ScalarAsync(t, "SELECT day FROM token_activity"));
         Assert.Equal(["1900-01-01"], await Engine.ColumnAsync(t, "SELECT day FROM token_activity"));
+    }
+
+    // The earliest time PostgresTime takes and the latest are stored as finite times and read back as the same instants.
+    [PostgresFact]
+    public async Task The_earliest_and_the_latest_time_round_trip_through_the_server()
+    {
+        await using var t = await Engine.CreateAsync();
+        await using var c = await ((PostgresTestDb)t).Db.OpenAsync();
+        foreach (var (job, time) in new[] { ("earliest", DateTimeOffset.MinValue.AddTicks(10)), ("latest", DateTimeOffset.MaxValue) })
+        {
+            await using (var insert = new NpgsqlCommand("INSERT INTO job_leases(job, holder, expires_at) VALUES(@j, 'h', @at)", c))
+            {
+                insert.Parameters.AddWithValue("j", job);
+                insert.Parameters.AddWithValue("at", PostgresTime.ToDatabase(time));
+                await insert.ExecuteNonQueryAsync();
+            }
+            await using var read = new NpgsqlCommand("SELECT expires_at, isfinite(expires_at) FROM job_leases WHERE job = @j", c);
+            read.Parameters.AddWithValue("j", job);
+            await using var r = await read.ExecuteReaderAsync();
+            Assert.True(await r.ReadAsync());
+            Assert.Equal(PostgresTime.ToDatabase(time), PostgresTime.FromDatabase(r.GetFieldValue<DateTime>(0)));
+            Assert.True(r.GetBoolean(1), $"{job} was stored as an infinity");
+        }
+        Assert.Equal(["0001-01-01T00:00:00.0000010+00:00", "9999-12-31T23:59:59.9999990+00:00"],
+            await Engine.ColumnAsync(t, "SELECT expires_at FROM job_leases ORDER BY expires_at"));
     }
 
     // A named lock taken in one transaction is held against every other until that transaction ends.
@@ -184,7 +262,7 @@ public class PostgresPlumbingServerTests
     {
         await using var a = await Engine.CreateAsync();
         await using var b = await Engine.CreateAsync();
-        Assert.Equal(23L, await Engine.ScalarAsync(a, "SELECT MAX(version) FROM schema_migrations"));
+        Assert.Equal(26L, await Engine.ScalarAsync(a, "SELECT MAX(version) FROM schema_migrations"));
         await Engine.ExecAsync(a, "INSERT INTO meta(key, value) VALUES('only_a', '\\x00'::bytea)");
         Assert.Equal(0L, await Engine.ScalarAsync(b, "SELECT COUNT(*) FROM meta"));
         Assert.NotEqual(await Engine.ScalarAsync(a, "SELECT current_database()"), await Engine.ScalarAsync(b, "SELECT current_database()"));

@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// Architecture test 1's scanner (#278 step 0): which source files name a database engine's type (<c>Microsoft.Data.Sqlite</c>, a
+/// Architecture test 1's scanner: which source files name a database engine's type (<c>Microsoft.Data.Sqlite</c>, a
 /// <c>Sqlite*</c> type or <c>Npgsql</c>) outside the adapters and the composition allowlist. Comments are stripped first by the C# comment
 /// reader (<see cref="CSharpSource"/>: string and char literals kept whole), so a <c>&lt;see cref="SqliteDatabase"/&gt;</c> in a doc comment does not count. Shared with the hosted twin
 /// (linked into Packmoat.Hosted.Architecture.Tests with CSharpSource.cs), which passes its own allowlist.
@@ -13,7 +13,7 @@ internal static class EngineTypeScan
     private static readonly Regex EngineType = new(@"Microsoft\.Data\.Sqlite|\bSqlite[A-Z]\w*|Npgsql", RegexOptions.CultureInvariant);
 
     /// <summary>
-    /// The code with its comments taken out by the C# comment reader (<see cref="CSharpSource"/>, #270): char literals, verbatim strings
+    /// The code with its comments taken out by the C# comment reader (<see cref="CSharpSource"/>): char literals, verbatim strings
     /// and raw strings are stepped over as the compiler reads them, so a quote or a // inside one cannot hide the code after it.
     /// </summary>
     internal static string WithoutComments(string source) => CSharpSource.WithoutComments(source);

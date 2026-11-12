@@ -3,7 +3,7 @@ using System.Reflection;
 namespace Packmoat.Host;
 
 /// <summary>
-/// The commit this build came from (#166), so anyone can tell from /healthz whether a merge has reached the server. The image build
+/// The commit this build came from, so anyone can tell from /healthz whether a merge has reached the server. The image build
 /// passes the commit as -p:SourceRevisionId, which the SDK appends to the informational version: "1.0.0+&lt;40-hex sha&gt;".
 /// </summary>
 public static class BuildInfo

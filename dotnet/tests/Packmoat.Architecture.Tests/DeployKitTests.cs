@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// The self-hosting deploy kit in deploy/ (#188): rules that are cheap to check and costly to get wrong. Ported from the hosted
+/// The self-hosting deploy kit in deploy/: rules that are cheap to check and costly to get wrong. Ported from the hosted
 /// deploy files' tests, and run on the core's own copies.
 /// </summary>
 public class DeployKitTests
@@ -60,7 +60,7 @@ public class DeployKitTests
     [Fact]   // mutation: drop init: true
     public void The_app_runs_under_an_init_so_signals_reach_it_as_they_would_any_other_process()
     {
-        // #240: a container's first process gets no default signal handling. The server exits 1 on its own at start (StartupFailure);
+        // A container's first process gets no default signal handling. The server exits 1 on its own at start (StartupFailure);
         // the init is the second layer, for anything that would still end in an abort.
         Assert.Contains("    init: true\n", Services(Deploy("docker-compose.yml"))["packmoat"]);
     }

@@ -9,7 +9,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// #233, probed through the whole production server (a database, PACKMOAT_HOSTS): with PACKMOAT_TRUSTED_PROXIES set, a trusted proxy that
+/// Probed through the whole production server (a database, PACKMOAT_HOSTS): with PACKMOAT_TRUSTED_PROXIES set, a trusted proxy that
 /// passes a client's X-Forwarded-Host through cannot make the server answer as a host name it does not serve. A probe module's site sees
 /// the Host every later branch sees.
 /// </summary>
@@ -40,7 +40,7 @@ public class TrustedProxiesHostTests
         {
             await using var app = PackmoatApp.Build(["--urls", "http://127.0.0.1:0"], [new HostProbeModule()], null, o =>
             {
-                o.DatabasePath = Path.Combine(dir, "packmoat.db");
+                o.Database = Path.Combine(dir, "packmoat.db");
                 o.MasterKeyBase64 = AesGcmSecretProtector.GenerateKeyBase64();
                 o.AllowedHosts = "feeds.example.test acme.example.test";
                 o.TrustedProxies = trustedProxies;
@@ -68,7 +68,7 @@ public class TrustedProxiesHostTests
         Assert.Equal("probe.example.test", await SeenHost("10.0.0.0/8", "probe.example.test"));   // a module's site host is one of them
     }
 
-    [Fact]   // unset: as before #233, loopback's X-Forwarded-Host is applied
+    [Fact]   // unset: as before, loopback's X-Forwarded-Host is applied
     public async Task Unset_the_forwarded_host_from_loopback_is_applied_as_before() =>
         Assert.Equal("evil.example", await SeenHost(null, "evil.example"));
 }

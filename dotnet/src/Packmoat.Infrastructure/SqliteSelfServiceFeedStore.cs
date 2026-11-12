@@ -6,7 +6,7 @@ using Packmoat.Application;
 namespace Packmoat.Infrastructure;
 
 /// <summary>
-/// The self-service feed writes (#64 I1). Connect is one IMMEDIATE transaction (the write lock is taken before the first read), so
+/// The self-service feed writes. Connect is one IMMEDIATE transaction (the write lock is taken before the first read), so
 /// every refusal is decided on the rows as they are when the write happens, and two Connects, or a Connect and the operator's bind, are
 /// serialised. The ux_shared_directory index is the backstop for the directory check.
 /// </summary>
@@ -29,7 +29,7 @@ public sealed class SqliteSelfServiceFeedStore : ISelfServiceFeedStore
         cmd.Transaction = tx;
         // Every early return below disposes the transaction, which rolls it back: nothing is written on a refusal.
 
-        // 1. An active tenant whose customer sets up the feed: FeedSetupRules.CustomerSetsUpFeed, in SQL (#207).
+        // 1. An active tenant whose customer sets up the feed: FeedSetupRules.CustomerSetsUpFeed, in SQL.
         cmd.CommandText = "SELECT COUNT(*) FROM tenants WHERE id=@t AND active=1 AND (origin='self' OR feed_setup='customer')";
         cmd.Parameters.AddWithValue("@t", r.TenantId);
         if ((long)(await cmd.ExecuteScalarAsync(ct))! == 0) return ConnectResult.NotSelfMade;

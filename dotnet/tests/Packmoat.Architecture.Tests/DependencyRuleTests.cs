@@ -105,7 +105,7 @@ public class DependencyRuleTests
 
     private const string PostgresAdapter = "Packmoat.Infrastructure.Postgres";
 
-    [Fact]   // #288. mutation: a ProjectReference from the adapter to Packmoat.Host
+    [Fact]   // mutation: a ProjectReference from the adapter to Packmoat.Host
     public void The_Postgres_adapter_references_only_Domain_Application_and_Infrastructure()
     {
         Assert.Equal(new[] { "Packmoat.Application", "Packmoat.Domain", "Packmoat.Infrastructure" }, ProjectRefs(PostgresAdapter));
@@ -117,18 +117,34 @@ public class DependencyRuleTests
         Directory.GetDirectories(Path.Combine(RepoRoot(), "src")).Select(Path.GetFileName).Where(n => n != PostgresAdapter)
             .Where(n => File.Exists(Path.Combine(RepoRoot(), "src", n!, n + ".csproj"))).Select(n => n!).Order(StringComparer.Ordinal).ToArray();
 
-    // #288: PACKMOAT_DB_ENGINE=postgres is refused, so nothing that ships may carry Npgsql yet: no src project references the adapter or
-    // the package (the images publish Packmoat.Server and Packmoat.Cli, which reach only src projects). Lift this when serving opens.
-    [Fact]   // mutation: a ProjectReference from Packmoat.Server to the adapter
-    public void No_src_project_references_the_Postgres_adapter_or_Npgsql_while_postgres_is_refused()
+    /// <summary>
+    /// The composition roots: PackmoatApp (Packmoat.Host) picks the server's engine and AdminCli (Packmoat.Admin) the command
+    /// line's, so they, and only they, reference the PostgreSQL adapter. The entry points (Packmoat.Server, Packmoat.Cli) reach it through
+    /// them; the core (Domain, Policy, Application), the protocol adapter and the SQLite adapters never do.
+    /// </summary>
+    internal static readonly string[] CompositionRoots = ["Packmoat.Admin", "Packmoat.Host"];
+
+    // Declared: the adapter is selectable, so the composition roots reference it. Npgsql is
+    // only ever the adapter's package.
+    [Fact]   // mutations: a ProjectReference from Packmoat.Application (or Infrastructure, or Protocols.NuGet) to the adapter; Npgsql added to Packmoat.Host
+    public void Only_the_composition_roots_reference_the_Postgres_adapter_and_none_references_Npgsql_itself()
     {
         var projects = OtherSrcProjects();
         Assert.True(projects.Length >= 9, "too few src projects found to mean anything: " + string.Join(", ", projects));
+        var referencing = projects.Where(p => ProjectRefs(p).Contains(PostgresAdapter)).ToArray();
+        Assert.Equal(CompositionRoots, referencing);
         foreach (var project in projects)
-        {
-            Assert.DoesNotContain(PostgresAdapter, ProjectRefs(project));
             Assert.DoesNotContain(PackageRefs(project), p => p.StartsWith("Npgsql", StringComparison.OrdinalIgnoreCase));
-        }
+    }
+
+    [Theory]   // the images publish these two: each reaches the adapter through a composition root, so the image carries it (CoreImageTests)
+    [InlineData("Packmoat.Server", "Packmoat.Host")]
+    [InlineData("Packmoat.Cli", "Packmoat.Admin")]
+    public void Each_entry_point_reaches_the_adapter_through_its_composition_root(string entryPoint, string root)
+    {
+        Assert.Equal([root], ProjectRefs(entryPoint));
+        Assert.Contains(PostgresAdapter, ProjectRefs(root));
+        Assert.Contains(References(Load(root)), r => r == PostgresAdapter);   // and really uses it (a reference no code uses is dropped)
     }
 
     [Fact]

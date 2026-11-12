@@ -4,7 +4,7 @@ using Packmoat.Domain;
 namespace Packmoat.Application.Tests;
 
 /// <summary>
-/// The support view's read of the decision record (#123 PR 2): operator only, bounded, and what the operator types is normalised the way
+/// The support view's read of the decision record: operator only, bounded, and what the operator types is normalised the way
 /// the recorder stores it before the store is asked.
 /// </summary>
 public class DecisionQueriesTests

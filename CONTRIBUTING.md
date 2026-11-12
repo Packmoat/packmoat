@@ -21,6 +21,7 @@ For a small fix, open a pull request. For a large change (a new feature, a new d
   ```
 
 - Keep a pull request to one change. Say in its description what it changes and how you tested it.
+- Database changes (migrations) are expand-only: add tables, columns (with a default, or allowing empty), and indexes and rules that the previous release's writes already satisfy, and never rename, drop or change the meaning of anything the previous release reads. Several copies of the server can run on one PostgreSQL database, and during an upgrade the previous release keeps serving on the new schema. Remove or rename something only in a later release, once no released code reads it.
 
 ## Sign your commits (DCO)
 

@@ -10,7 +10,7 @@ using static Packmoat.Host.Tests.AdminSiteFixture;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The read-only "Decisions" panel on the admin site's tenant page (#123 PR 2): the operator only, one tenant, newest last seen first,
+/// The read-only "Decisions" panel on the admin site's tenant page: the operator only, one tenant, newest last seen first,
 /// bounded, a package search that is exact or a prefix, and every client-supplied id and version HTML-encoded.
 /// </summary>
 [Collection("sqlite-pools")]

@@ -8,7 +8,7 @@ using Packmoat.Infrastructure;
 
 namespace Packmoat.Host.Tests;
 
-/// <summary>#117: the daily retention pass prunes admin_actions after 12 months, by itself, and the production host wires it to the database.</summary>
+/// <summary>The daily retention pass prunes admin_actions after 12 months, by itself, and the production host wires it to the database.</summary>
 [Collection("sqlite-pools")]
 public class AdminActionPruneHostTests
 {
@@ -64,7 +64,7 @@ public class AdminActionPruneHostTests
         {
             using var app = PackmoatApp.Build(new[] { "--urls", "http://127.0.0.1:0" }, TestModules.Server, null, o =>
             {
-                o.DatabasePath = Path.Combine(dir, "packmoat.db");
+                o.Database = Path.Combine(dir, "packmoat.db");
                 o.MasterKeyBase64 = AesGcmSecretProtector.GenerateKeyBase64();
                 o.AllowedHosts = "feeds.example.test";
             });
@@ -85,7 +85,7 @@ public class AdminActionPruneHostTests
             var clock = new FakeClock { UtcNow = DateTimeOffset.UtcNow };   // the database's floor uses the real time
             await using var app = PackmoatApp.Build(new[] { "--urls", "http://127.0.0.1:0" }, TestModules.Server, s => s.AddSingleton<IClock>(clock), o =>
             {
-                o.DatabasePath = Path.Combine(dir, "packmoat.db");
+                o.Database = Path.Combine(dir, "packmoat.db");
                 o.MasterKeyBase64 = AesGcmSecretProtector.GenerateKeyBase64();
                 o.AllowedHosts = "feeds.example.test";
             });

@@ -3,7 +3,7 @@ using Npgsql;
 namespace Packmoat.Infrastructure.Postgres;
 
 /// <summary>
-/// The one retry the PostgreSQL stores have (#303 decision "Retry"): an attempt the server ended with a deadlock (40P01) or a
+/// The one retry the PostgreSQL stores have: an attempt the server ended with a deadlock (40P01) or a
 /// serialization failure (40001) is run again, at most <see cref="MaxAttempts"/> attempts in all, with a short random wait between them.
 /// The last failure is then thrown as it was. Anything else (a refusal, a timeout, a lost connection, a cancellation) is thrown at once.
 /// <para>Each attempt must be a whole transaction of its own (open, run, commit), since the server rolls the failed one back. Only the

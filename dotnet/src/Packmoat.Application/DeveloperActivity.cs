@@ -21,7 +21,7 @@ public interface ITokenActivityLog
     ValueTask RecordAsync(string tokenId, DateOnly day, CancellationToken cancellationToken);
 }
 
-/// <summary>The token_activity retention prune (#136): days are kept for <see cref="AuditPolicy.TokenActivityRetentionDays"/>.</summary>
+/// <summary>The token_activity retention prune: days are kept for <see cref="AuditPolicy.TokenActivityRetentionDays"/>.</summary>
 public interface ITokenActivityRetention
 {
     /// <summary>Deletes every day before <paramref name="keepFrom"/> (that day itself is kept). Returns how many rows.</summary>

@@ -4,7 +4,7 @@ using Packmoat.Host.Web;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The operator settings the test compositions use (#186, #187): PACKMOAT_OPERATOR_NAME, PACKMOAT_SUPPORT_EMAIL and PACKMOAT_SITE_URL, set
+/// The operator settings the test compositions use: PACKMOAT_OPERATOR_NAME, PACKMOAT_SUPPORT_EMAIL and PACKMOAT_SITE_URL, set
 /// to a made-up operator, Contoso. The test compositions that pin or read the operator's wording set these, so a test names the address a
 /// person sees without naming any real service.
 /// </summary>

@@ -95,7 +95,7 @@ public sealed class SqliteSharedAppCredentialStore : ISharedAppCredentialStore
         cmd.Parameters.AddWithValue("@t", v.VerifiedAt.ToUniversalTime().ToString("O"));
         cmd.Parameters.AddWithValue("@by", v.VerifiedBy);
         await cmd.ExecuteNonQueryAsync(ct);
-        await SqliteTenantStore.TakeOverFeedSetupAsync(cmd, v.TenantId, ct);   // the operator's onboard check takes the feed over (#207)
+        await SqliteTenantStore.TakeOverFeedSetupAsync(cmd, v.TenantId, ct);   // the operator's onboard check takes the feed over
         await tx.CommitAsync(ct);
         return true;
     }

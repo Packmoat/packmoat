@@ -1,12 +1,156 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
+using Npgsql;
 using Packmoat.Application;
 using Packmoat.Domain;
+using Packmoat.Infrastructure.Postgres;
+using Packmoat.Infrastructure.Tests.Postgres;
+using static Packmoat.Infrastructure.Tests.Postgres.PostgresLockProbe;
 
 namespace Packmoat.Infrastructure.Tests;
 
-/// <summary><see cref="AuditRetentionStoreContract"/> on SQLite, and the tests only SQLite has (#232 S1).</summary>
+/// <summary>
+/// <see cref="AuditRetentionStoreContract"/> on PostgreSQL, each test on a database of its own, and what only PostgreSQL
+/// has: the batch's tenant locks taken shared, sorted, before any row; its retry, each attempt one whole transaction; the prune's chunks,
+/// each its own transaction; and the database's clock skew.
+/// </summary>
+[Collection(PostgresCollection.Name)]
+[Trait("Category", PostgresTestServer.Category)]
+public class PostgresAuditRetentionStoreTests : AuditRetentionStoreContract
+{
+    protected override IStoreEngine Engine => PostgresStoreEngine.Instance;
+
+    private static PostgresDatabase Db(IEngineDb t) => ((PostgresTestDb)t).Db;
+
+    [PostgresFact]
+    public async Task A_batch_that_fails_stores_nothing()
+    {
+        await using var t = await CreateDbAsync();
+        await ExecAsync(t, """
+            CREATE FUNCTION test_refuse() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.request_id = 'bad' THEN RAISE EXCEPTION 'refused'; END IF;
+                RETURN NEW;
+            END
+            $$
+            """);
+        await ExecAsync(t, "CREATE TRIGGER test_refuse BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION test_refuse()");
+        var now = DateTimeOffset.UtcNow;
+
+        var refusal = await RefusedAsync(() => Engine.AuditBatch(t).AppendBatchAsync(new[] { Event(now, "a"), Event(now, "bad") }, Ct));
+
+        Assert.Equal(PostgresErrorCodes.RaiseException, ((PostgresException)refusal).SqlState);   // a refusal is not retried
+        Assert.Empty(await RequestsAsync(t));
+    }
+
+    /// <summary>
+    /// The batch's retry: a test trigger makes the second row of the first attempt fail as a deadlock (40P01). The
+    /// whole transaction is run again, and the batch is stored once, in order. Each attempt must be one whole transaction with nothing done
+    /// outside it: a row written outside the attempt's transaction would be there twice, and a transaction carried over from the failed
+    /// attempt would refuse every statement (25P02). The sequence counts the rows tried: two in the failed attempt, three in the second.
+    /// </summary>
+    [PostgresFact]   // mutations: the retry dropped; a write outside the attempt's transaction; the attempt reusing a transaction opened outside it
+    public async Task A_batch_that_deadlocks_is_retried_as_a_whole_and_stored_once()
+    {
+        await using var t = await CreateDbAsync();
+        await ExecAsync(t, "CREATE SEQUENCE test_rows_tried");
+        await ExecAsync(t, """
+            CREATE FUNCTION test_deadlock_once() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+                IF pg_catalog.nextval('test_rows_tried') = 2 THEN
+                    RAISE EXCEPTION USING ERRCODE = 'deadlock_detected', MESSAGE = 'test: the first attempt deadlocks on its second row';
+                END IF;
+                RETURN NEW;
+            END
+            $$
+            """);
+        await ExecAsync(t, "CREATE TRIGGER test_deadlock_once BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION test_deadlock_once()");
+        var now = DateTimeOffset.UtcNow;
+
+        await Engine.AuditBatch(t).AppendBatchAsync(new[] { Event(now, "a"), Event(now, "b", "globex"), Event(now, "c") }, Ct);
+
+        Assert.Equal(new[] { "a", "b", "c" }, await RequestsAsync(t));
+        Assert.Equal(5L, await PostgresSqlEngine.TestServerScalarAsync(t, "SELECT last_value FROM test_rows_tried"));   // the probe's own sequence: the app role may only use it
+    }
+
+    /// <summary>
+    /// The race the sorted pre-lock is for: a purge holds tenant "acme"'s lock exclusively (lock_tenant_id('acme', true), as the
+    /// purge takes it first). Two batches start, one with events for (acme, Zed), the other for (Zed, acme). Each takes its tenants'
+    /// locks shared, in ordinal order (<see cref="PostgresTenantLocks"/>: "Zed" before "acme", where a case-blind order puts "acme" first;
+    /// the build's invariant globalization makes a culture's order ordinal too), before it writes a row: so while the purge holds "acme", both hold "Zed" shared, both wait for "acme", and neither has
+    /// touched audit_events. Once the purge lets go, both finish; neither deadlocks. The waits are read from pg_locks, never slept for.
+    /// </summary>
+    [PostgresFact]   // mutations: the pre-lock dropped (a row is written before "acme" is waited for); taken in the batch's order, unsorted; sorted by another comparer
+    public async Task Two_batches_in_opposite_orders_wait_for_a_purges_tenant_holding_no_row_and_both_finish()
+    {
+        await using var t = await CreateDbAsync();
+        var now = DateTimeOffset.UtcNow;
+        await using var purge = await Db(t).OpenAsync();
+        await using var holding = await purge.BeginTransactionAsync();
+        await using (var take = new NpgsqlCommand("SELECT lock_tenant_id('acme', true)", purge, holding)) await take.ExecuteNonQueryAsync();
+
+        var az = Task.Run(() => Engine.AuditBatch(t).AppendBatchAsync(new[] { Event(now, "az-acme", "acme"), Event(now, "az-zed", "Zed") }, Ct));
+        var za = Task.Run(() => Engine.AuditBatch(t).AppendBatchAsync(new[] { Event(now, "za-zed", "Zed"), Event(now, "za-acme", "acme") }, Ct));
+
+        // Both batches wait for "acme" (a lock not granted), or one has ended, which the asserts below then report.
+        await WaitUntilAsync(purge, holding, "SELECT COUNT(DISTINCT l.pid) FROM pg_catalog.pg_locks l WHERE NOT l.granted AND " + Others + " AND " + TenantLock("acme"),
+            2, az, za);
+        Assert.False(az.IsCompleted || za.IsCompleted, "a batch finished while the purge held tenant acme's lock");
+        Assert.Equal(2L, await CountAsync(purge, holding, "SELECT COUNT(DISTINCT l.pid) FROM pg_catalog.pg_locks l WHERE l.granted AND l.mode = 'ShareLock' AND "
+            + Others + " AND " + TenantLock("Zed")));   // each took "Zed" first, so in ordinal order
+        Assert.Equal(0L, await CountAsync(purge, holding, "SELECT COUNT(*) FROM pg_catalog.pg_locks l WHERE l.relation = 'audit_events'::regclass AND " + Others));
+        Assert.Empty(await RequestsAsync(t));
+
+        await holding.CommitAsync();
+        await Task.WhenAll(az, za).WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(new[] { "az-acme", "az-zed", "za-acme", "za-zed" }, (await RequestsAsync(t)).Order(StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// The prune's chunks, as SQLite's: each its own statement and transaction, oldest first. With the app's clock a day ahead,
+    /// the last chunk holds a row the database still holds young: the trigger refuses it, the refusal reaches the caller, and the chunks
+    /// before it stay deleted.
+    /// </summary>
+    [PostgresFact]   // mutations: only one chunk per pass; all the chunks in one transaction; the refusal caught
+    public async Task The_prune_works_in_chunks_each_its_own_transaction_and_a_refused_chunk_keeps_only_itself()
+    {
+        await using var t = await CreateDbAsync();
+        var now = DateTimeOffset.UtcNow;
+        for (var i = 0; i < 10; i++) await WriteAsync(t, now.AddDays(-200 - i), "old-" + i);
+        await WriteAsync(t, now.AddDays(-2), "recent");
+
+        Assert.Equal(10, await new PostgresAuditLog(Db(t), pruneChunk: 3).PruneAsync(now - AuditPolicy.Retention, Ct));
+        Assert.Equal(new[] { "recent" }, await RequestsAsync(t));
+        Assert.Equal(5_000, PostgresAuditLog.DefaultPruneChunk);
+
+        for (var i = 0; i < 4; i++) await WriteAsync(t, now.AddDays(-200 - i), "older-" + i);
+        await RefusedAsync(() => new PostgresAuditLog(Db(t), pruneChunk: 2).PruneAsync(now.AddDays(1), Ct));
+        Assert.Equal(new[] { "recent" }, await RequestsAsync(t));   // two chunks of two deleted, then the young row refused
+    }
+
+    /// <summary>
+    /// The database's clock against the app's: ClockSkewAsync is statement_timestamp() minus the app's time, so with
+    /// the app's clock two hours ahead it reads about minus two hours, and with it three hours behind about plus three. The test server's
+    /// clock is this machine's, so a minute either way is plenty.
+    /// </summary>
+    [PostgresFact]   // mutation: the skew's sign reversed (app minus database)
+    public async Task The_clock_skew_is_the_databases_clock_minus_the_apps()
+    {
+        await using var t = await CreateDbAsync();
+        t.Clock.UtcNow = DateTimeOffset.UtcNow.AddHours(2);
+        var ahead = await Db(t).ClockSkewAsync(t.Clock);
+        Assert.InRange(ahead, TimeSpan.FromHours(-2) - TimeSpan.FromMinutes(1), TimeSpan.FromHours(-2) + TimeSpan.FromMinutes(1));
+
+        t.Clock.UtcNow = DateTimeOffset.UtcNow.AddHours(-3);
+        var behind = await Db(t).ClockSkewAsync(t.Clock);
+        Assert.InRange(behind, TimeSpan.FromHours(3) - TimeSpan.FromMinutes(1), TimeSpan.FromHours(3) + TimeSpan.FromMinutes(1));
+
+        Assert.InRange(await Db(t).ClockSkewAsync(new SystemClock()), TimeSpan.FromMinutes(-1), TimeSpan.FromMinutes(1));
+    }
+}
+
+/// <summary><see cref="AuditRetentionStoreContract"/> on SQLite, and the tests only SQLite has.</summary>
 [Collection("sqlite-pools")]
 public class AuditRetentionStoreTests : AuditRetentionStoreContract
 {

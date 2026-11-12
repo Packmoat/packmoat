@@ -11,16 +11,16 @@ namespace Packmoat.Host.Customer;
 /// names are untrusted. No scripts, no inline styles and no style attributes (the CSP allows neither): the page links one stylesheet from
 /// this origin, and the logo is inline SVG drawn with presentation attributes only. Nothing is loaded from another origin; the only
 /// other-origin references are plain links to the operator's website (<see cref="OperatorLinks"/>: home, privacy, and the terms on the
-/// sign-up page), the customer-site module's footer links and the support address, each only when configured (#186).
+/// sign-up page), the customer-site module's footer links and the support address, each only when configured.
 /// </summary>
 public static class AppHtml
 {
     public static string E(string? value) => HtmlEncoder.Default.Encode(value ?? "");
 
-    /// <summary>Who runs this server (#186), as the customer site was configured with it.</summary>
+    /// <summary>Who runs this server, as the customer site was configured with it.</summary>
     public static OperatorLinks Op(HttpContext ctx) => ctx.RequestServices.GetRequiredService<AppSiteSettings>().Operator;
 
-    /// <summary>Whom this server's sentences tell a person to ask (#186): "email support@example.com", or neutral words.</summary>
+    /// <summary>Whom this server's sentences tell a person to ask: "email support@example.com", or neutral words.</summary>
     public static SupportContact Support(HttpContext ctx) => Op(ctx).Support;
 
     /// <summary>The Packmoat mark (the shared chrome's).</summary>
@@ -147,7 +147,7 @@ public static class AppHtml
         FooterHtml: Footer(op, module.FooterLinks(op)));
 
     /// <summary>
-    /// The footer (#186): when a website is set, it, its privacy policy and the module's links (trusted markup); then whom to ask for help:
+    /// The footer: when a website is set, it, its privacy policy and the module's links (trusted markup); then whom to ask for help:
     /// the support address as a mailto link, else the operator's name, else neutral words. Never a fixed address. The website and address
     /// were checked at start to characters that need no escaping; the name is encoded.
     /// </summary>

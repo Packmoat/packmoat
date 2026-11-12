@@ -27,6 +27,10 @@ public static class NuGetRouteParser
             .Select(s => Uri.UnescapeDataString(s).ToLowerInvariant())
             .ToArray();
 
+        // A control character once unescaped ("%2500" reaches here as "%00", which unescapes to a NUL) is never part of a
+        // package id or a version, so the path is refused before any decision, audit row or upstream call. No NuGet id or version holds one.
+        if (segments.Any(s => s.Any(char.IsControl))) return new NuGetRoute(NuGetResourceKind.Unknown);
+
         var flat = Array.IndexOf(segments, "flat2");
         if (flat >= 0)
         {

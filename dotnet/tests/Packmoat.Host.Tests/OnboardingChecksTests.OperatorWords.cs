@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace Packmoat.Host.Tests;
 
-// Shared with the hosted tests (#197), which compile this file in: the customer pages they test must not show operator words either.
+// Shared with the hosted tests, which compile this file in: the customer pages they test must not show operator words either.
 public partial class OnboardingChecksTests
 {
     /// <summary>Operator words no customer page may show.</summary>

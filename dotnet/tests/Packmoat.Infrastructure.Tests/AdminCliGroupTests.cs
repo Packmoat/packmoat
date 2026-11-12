@@ -6,7 +6,7 @@ using Packmoat.Infrastructure.Lifecycle;
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// The command line's own commands are the core's (#251, moved from #200 item 12): every first word the core's help lists (and -h and
+/// The command line's own commands are the core's (moved from the hosted tests): every first word the core's help lists (and -h and
 /// --help) stops the tool when a module claims it, before anything runs. The list the tool checks is kept by hand next to its switch, so
 /// this reads the words from the help instead of from that list.
 /// </summary>
@@ -42,6 +42,41 @@ public class AdminCliGroupTests
         public IServingGate? Gate(IRelationalDatabase db, CliEnvironment env, Action<string> warn) => null;
         public TenantLifecycle? Lifecycle(IRelationalDatabase db, CliEnvironment env, Action<string> note) => null;
         public MigrationTrack? Migrations => null;
+    }
+
+    /// <summary>A module whose command throws <paramref name="failure"/>.</summary>
+    private sealed class Throws(Exception failure) : IAdminCliModule
+    {
+        public string Group => "boom";
+        public string Usage => "";
+        public string EnvironmentUsage => "";
+        public Task<int> RunAsync(AdminCliContext context) => Task.FromException<int>(failure);
+        public IServingGate? Gate(IRelationalDatabase db, CliEnvironment env, Action<string> warn) => null;
+        public TenantLifecycle? Lifecycle(IRelationalDatabase db, CliEnvironment env, Action<string> note) => null;
+        public MigrationTrack? Migrations => null;
+    }
+
+    // The error catch is a list of the expected failures (a bad argument, a refused setting, a database error, ...),
+    // each one "error:" line and exit 1. Anything else is a bug and is not swallowed into exit 1: it reaches the caller (in production, a crash
+    // with its stack trace). mutations: the catch widened to every Exception, or to InvalidOperationException
+    [Theory]
+    [InlineData("invalid-operation")]
+    [InlineData("null-reference")]
+    public async Task An_unexpected_exception_is_not_swallowed_as_an_error_line(string kind)
+    {
+        var dir = Directory.CreateTempSubdirectory("packmoat-cli-boom-").FullName;
+        try
+        {
+            Exception failure = kind == "invalid-operation" ? new InvalidOperationException("a bug") : new NullReferenceException("a bug");
+            var key = AesGcmSecretProtector.GenerateKeyBase64();
+            var error = new StringWriter();
+            var thrown = await Assert.ThrowsAnyAsync<Exception>(() => AdminCli.RunAsync(["boom", "now"], new StringWriter(), error,
+                new CliEnvironment(Path.Combine(dir, "packmoat.db"), () => AesGcmSecretProtector.FromBase64(key), new FakeClock(), "op"), [new Throws(failure)]));
+            Assert.Same(failure, thrown);
+            Assert.Equal("", error.ToString());
+        }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir, clearSqlitePools: true); }
     }
 
     [Theory]   // mutation: any one word left out of the core's hand-kept list (CoreGroups)

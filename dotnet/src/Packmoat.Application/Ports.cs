@@ -56,7 +56,7 @@ public interface IPublishDateSource
 /// <summary>
 /// Who a valid token belongs to. TokenId identifies the token in logs and audit; it is not the token. <c>TokenExpiresAt</c> is when the
 /// token stops working (null: never), so a cache can never keep an expired token alive. <c>ServeUntil</c> is when the serving gate stops serving
-/// the tenant at a known time (for example the end of a free period, #174; null: no such time), so a cache can never serve it past that either.
+/// the tenant at a known time (for example the end of a free period; null: no such time), so a cache can never serve it past that either.
 /// </summary>
 public sealed record AuthResult(Tenant Tenant, string TokenId, DateTimeOffset? TokenExpiresAt = null, DateTimeOffset? ServeUntil = null)
 {

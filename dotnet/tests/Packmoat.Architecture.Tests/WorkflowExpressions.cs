@@ -5,11 +5,11 @@ using YamlDotNet.RepresentationModel;
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// Where a workflow's <c>${{ … }}</c> expressions may go (#225). Actions pastes an expression's value into the text before it runs, so a
+/// Where a workflow's <c>${{ … }}</c> expressions may go. Actions pastes an expression's value into the text before it runs, so a
 /// value an outsider wrote (a pull request title, a branch name) becomes code in a run script or a <c>script:</c> input. The safe route is
 /// <c>env:</c>, which this does not check: the script then reads a quoted variable.
 /// <list type="bullet">
-/// <item>The workflow is read with a YAML parser (#236), so quoting, flow collections, explicit keys, escapes, line continuations and
+/// <item>The workflow is read with a YAML parser, so quoting, flow collections, explicit keys, escapes, line continuations and
 /// aliases all reach the check as the values Actions sees. A workflow the parser cannot read is a problem, never an empty result.</item>
 /// <item>Code may hold only the expressions in <see cref="RunAllowed"/>; anything else fails, so a new form fails by default. Code is a
 /// <c>run:</c> or <c>shell:</c> value, and the <c>script</c>, <c>args</c> and <c>entrypoint</c> inputs (actions/github-script, and a

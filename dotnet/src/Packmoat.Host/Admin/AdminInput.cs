@@ -19,7 +19,7 @@ public static class AdminInput
     private static readonly Regex Prefix = new(@"^[A-Za-z0-9][A-Za-z0-9._-]{1,98}\*?$", RegexOptions.Compiled);
     private static readonly Regex Version = new(@"^(\*|[0-9A-Za-z][0-9A-Za-z.+*-]{0,63})$", RegexOptions.Compiled);
     // Long enough for the wizard's tight prefix {org}/{projectId}/_packaging/{feedId}/ (at most 50 + 1 + 36 + 12 + 36 + 1 = 136
-    // characters), with room to spare: at most 199 characters in all (#64 I1).
+    // characters), with room to spare: at most 199 characters in all.
     private static readonly Regex PathPrefix = new(@"^[A-Za-z0-9][A-Za-z0-9._/-]{0,198}$", RegexOptions.Compiled);
     private static readonly Regex TokenIdShape = new(@"^tok_[0-9a-f]{12}$", RegexOptions.Compiled);
     private static readonly Regex WaiverIdShape = new(@"^wvr_[0-9a-f]{12}$", RegexOptions.Compiled);

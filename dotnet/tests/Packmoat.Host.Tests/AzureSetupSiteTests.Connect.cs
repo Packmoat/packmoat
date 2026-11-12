@@ -11,10 +11,10 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// Connect and withdraw through the running host (#64 I1): the button only when both checks qualify (developer rows arrive with I2, so
+/// Connect and withdraw through the running host: the button only when both checks qualify (developer rows arrive with I2, so
 /// they are written here directly), the POST's gates (switch, antiforgery, Origin, Admin, a fresh sign-in, self-made only), the writes,
 /// a failed re-check withdrawing the feed, and the regressions: the canary still pings and operator-made tenants are untouched. What
-/// the hosted module adds (its Connect card wording, and the plan a token needs) is the hosted tests' (#197).
+/// the hosted module adds (its Connect card wording, and the plan a token needs) is the hosted tests'.
 /// </summary>
 public partial class AzureSetupSiteTests
 {
@@ -26,7 +26,7 @@ public partial class AzureSetupSiteTests
         var b = await SignIn(f);
         Assert.DoesNotContain(AppAzureSetup.ConnectPath, (await b.GetTextAsync(AppAzureSetup.Path)).Body);
 
-        // what #63 H2 records today (no 'private', no developer proof): still no button
+        // what the delegated check records (no 'private', no developer proof): still no button
         Assert.Equal(HttpStatusCode.SeeOther, (await RunCheck(site, b)).StatusCode);
         Assert.DoesNotContain(AppAzureSetup.ConnectPath, (await b.GetTextAsync(AppAzureSetup.Path)).Body);
 
@@ -222,7 +222,7 @@ public partial class AzureSetupSiteTests
         Assert.Equal(TimeSpan.FromMinutes(15), props.MaxAge);
     }
 
-    // ---- serving stops soon after a withdrawal (#170)
+    // ---- serving stops soon after a withdrawal
 
     /// <summary>The proxy's upstream: the connected feed answers Packmoat's own token with a service index. Anything else: 401 or 404.</summary>
     private sealed class ConnectedFeed : HttpMessageHandler
@@ -417,7 +417,7 @@ public partial class AzureSetupSiteTests
     }
 
     /// <summary>
-    /// #107 review: the start-up blanking never stops the server starting. A row whose results are <c>[null]</c> is redacted like any
+    /// The start-up blanking never stops the server starting. A row whose results are <c>[null]</c> is redacted like any
     /// unreadable row, and a store that throws is logged by kind only.
     /// </summary>
     [Fact]

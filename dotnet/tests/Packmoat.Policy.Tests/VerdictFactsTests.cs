@@ -4,9 +4,9 @@ using static Packmoat.Policy.Tests.PolicyTestKit;
 namespace Packmoat.Policy.Tests;
 
 /// <summary>
-/// The per-version decision record (#123) keeps the publish date and cooldown a verdict used. The cooldown rule reports both; nothing
+/// The per-version decision record keeps the publish date and cooldown a verdict used. The cooldown rule reports both; nothing
 /// about the decision itself changes. The cases a request can reach (a young, an old and an undated version, an override, the 1900
-/// placeholder, waivers and internal prefixes) are conformance vectors: spec/vectors/policy/decisions.json (#209). These are the
+/// placeholder, waivers and internal prefixes) are conformance vectors: spec/vectors/policy/decisions.json. These are the
 /// rule's own cases, which the package gate never asks.
 /// </summary>
 public class VerdictFactsTests
@@ -24,7 +24,7 @@ public class VerdictFactsTests
     }
 
     /// <summary>
-    /// Kept by hand (#219 review): the gate decides waivers and internal prefixes before it fetches any date, so their vectors never give the
+    /// Kept by hand: the gate decides waivers and internal prefixes before it fetches any date, so their vectors never give the
     /// rule a date to leave out. Here the rule is given one, and still reports none.
     /// </summary>
     [Fact]

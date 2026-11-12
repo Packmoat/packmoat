@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the PostgreSQL tests (#288) on this machine, against the same image CI runs beside its test jobs:
+# Runs the PostgreSQL tests on this machine, against the same image CI runs beside its test jobs:
 #
 #   dotnet/tools/postgres-tests.sh [more dotnet test arguments]
 #

@@ -7,7 +7,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The server's store composition (#278 step 0, PR 2) shares one adapter where one is meant: the tenant store the ports read is the one
+/// The server's store composition shares one adapter where one is meant: the tenant store the ports read is the one
 /// the token service checks against, the three audit ports are one audit log, and the token port is the token service. Two copies of a
 /// store would each work alone and disagree only under load, so this pins the sharing.
 /// </summary>
@@ -21,7 +21,7 @@ public class StoreIdentityTests
         {
             await using var app = PackmoatApp.Build(["--urls", "http://127.0.0.1:0"], [], null, o =>
             {
-                o.DatabasePath = Path.Combine(dir, "packmoat.db");
+                o.Database = Path.Combine(dir, "packmoat.db");
                 o.MasterKeyBase64 = AesGcmSecretProtector.GenerateKeyBase64();
                 o.AllowedHosts = "feeds.example.test";
             });
@@ -61,6 +61,19 @@ public class StoreIdentityTests
         var activity = sp.GetRequiredService<SqliteTokenActivity>();
         Assert.Same(activity, sp.GetRequiredService<ITokenActivityRetention>());
         Assert.Same(activity, sp.GetRequiredService<IActiveDeveloperQuery>());
+    });
+
+    // mutations: the authenticator given its own token service, or its own token activity, rather than the ones the
+    // ports resolve to
+    [Fact]
+    public Task The_authenticator_checks_the_token_service_and_records_to_the_token_activity() => WithServer(sp =>
+    {
+        var outer = Assert.IsType<ActivityRecordingAuthenticator>(sp.GetRequiredService<ITenantAuthenticator>());
+        Assert.Same(sp.GetRequiredService<SqliteTokenActivity>(), Field<ITokenActivityLog>(outer));
+        Assert.Same(sp.GetRequiredService<IActiveDeveloperQuery>(), Field<ITokenActivityLog>(outer));
+        var cached = Assert.IsType<CachedTenantAuthenticator>(Field<ITenantAuthenticator>(outer));
+        Assert.Same(sp.GetRequiredService<SqliteTokenService>(), Field<ITenantAuthenticator>(cached));
+        Assert.Same(sp.GetRequiredService<ITokenService>(), Field<ITenantAuthenticator>(cached));
     });
 
     [Fact]   // and the decision record's

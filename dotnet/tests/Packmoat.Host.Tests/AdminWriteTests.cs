@@ -108,7 +108,7 @@ public class AdminWriteTests
         var b = await SignedIn(f);
 
         var page = (await b.GetTextAsync("/tenants")).Body;
-        Assert.Contains("packmoat-admin identity</code> on the server.", page);   // the page says certificates and identity stay on the command line (#226)
+        Assert.Contains("packmoat-admin identity</code> on the server.", page);   // the page says certificates and identity stay on the command line
         Assert.DoesNotContain("BEGIN", page);
 
         var r = await Post(b, "/tenant-create", NewTenantForm());
@@ -272,7 +272,7 @@ public class AdminWriteTests
         Assert.DoesNotContain("mallory", string.Join("|", rows.Select(x => x.ActorName + x.Detail)));
     }
 
-    [Fact]   // #157: one active waiver per package and version
+    [Fact]   // One active waiver per package and version
     public async Task A_duplicate_waiver_is_refused_with_its_own_message_and_recorded_as_failed()
     {
         await using var f = await StartAsync();
@@ -285,7 +285,7 @@ public class AdminWriteTests
         Assert.Contains("already has an active waiver", (await b.GetTextAsync("/tenants/acme?r=waiver-duplicate")).Body);
     }
 
-    [Fact]   // #157: revoked_by is the signed-in name
+    [Fact]   // Revoked_by is the signed-in name
     public async Task A_revoke_from_the_site_records_the_signed_in_name()
     {
         await using var f = await StartAsync();
@@ -675,7 +675,7 @@ public class AdminWriteTests
     [Fact]
     public async Task Write_posts_are_rate_limited_per_address()
     {
-        await using var f = await StartAsync(services: s => s.AddSingleton(sp => new AdminWriteLimiter(sp.GetRequiredService<IClock>(), 3)));
+        await using var f = await StartAsync(services: s => s.AddSingleton(sp => new AdminWriteLimiter(sp.GetRequiredService<IRateCounter>(), 3)));
         var b = await SignedIn(f);
         var af = await b.TokenFromAsync("/tenants");
         for (var i = 0; i < 3; i++) Assert.Equal(HttpStatusCode.SeeOther, (await PostWith(b, "/tenants/acme/cooldown", af, Origin, ("days", "5"))).StatusCode);
@@ -869,7 +869,7 @@ public class AdminWriteTests
 
         // and a tenant-scoped actor, which the page cannot create, is refused every command that is not its own
         await using var f = await StartAsync();
-        var commands = new AdminCommands(f.Tenants, f.Tokens, f.Clock);
+        var commands = new AdminCommands(f.Tenants, f.Tokens, f.Clock, new InProcessRateCounter(f.Clock));
         var scoped = ActorScope.ForTenant("acme");
         await Assert.ThrowsAsync<AccessDeniedException>(() => commands.CreateTenantAsync(scoped, new NewTenant("zz", "Z", "https://h/", "", "https://h/f", 1, TenantOrigin.Operator), default));
         await Assert.ThrowsAsync<AccessDeniedException>(() => commands.SuspendTenantAsync(scoped, "globex", default));
@@ -1064,7 +1064,7 @@ public class AdminWriteTests
     [Fact]
     public void Admin_site_code_never_builds_a_tenant_scope()
     {
-        // The core's dotnet folder (Packmoat.sln), so the scan runs in core/ alone too (#197).
+        // The core's dotnet folder (Packmoat.sln), so the scan runs in core/ alone too.
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Packmoat.sln"))) dir = dir.Parent;
         var files = Directory.GetFiles(Path.Combine(dir!.FullName, "src", "Packmoat.Host", "Admin"), "*.cs");

@@ -12,7 +12,7 @@ public abstract record ServingNotice
 }
 
 /// <summary>
-/// A serving gate's answer about one tenant now (#191). <see cref="Serve"/>, <see cref="ServeUntil"/> (serve, but not at or after
+/// A serving gate's answer about one tenant now. <see cref="Serve"/>, <see cref="ServeUntil"/> (serve, but not at or after
 /// <see cref="ServeUntil.At"/>, so a cache never keeps it past then) or <see cref="Refuse"/>; any of them may carry a <see cref="Notice"/>
 /// for the customer. <see cref="OperatorText"/> is the gate's one line for the operator's tenant page (null: the
 /// gate has nothing to say).
@@ -52,7 +52,7 @@ public abstract record ServingAnswer
 }
 
 /// <summary>
-/// Whether a tenant serves, beyond the operator's switch (#191). The core asks it on the proxy's token path (on a cache miss only), before
+/// Whether a tenant serves, beyond the operator's switch. The core asks it on the proxy's token path (on a cache miss only), before
 /// issuing a customer token, for the customer's home notice and for the operator's tenant page. The core's own gate
 /// (<see cref="ServeAllGate"/>) serves every tenant; a module may register one gate of its own. A gate that throws never serves: the
 /// proxy answers 503 and the sites show their error page.

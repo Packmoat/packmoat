@@ -1,6 +1,6 @@
 namespace Packmoat.TestSupport;
 
-/// <summary>The temp-folder guard and its helper (#292), checked in every test project that runs under the guard.</summary>
+/// <summary>The temp-folder guard and its helper, checked in every test project that runs under the guard.</summary>
 public class TempLeakGuardTests
 {
     [Fact]   // mutation: TempLeakGuard does not point TMPDIR at its run folder

@@ -177,6 +177,44 @@ public class ProxyHttpTests
         Assert.Equal(0, p.Upstream.FeedRequestCount);
     }
 
+    /// <summary>
+    /// Info for P5: a NUL in a package id would fail a whole decision chunk on
+    /// PostgreSQL (22021, text cannot hold one), and must never reach a decision, an audit row or the upstream. A request whose package id
+    /// holds one, in every route that names a package, is refused with no upstream call, no publish-date lookup and no audit event:
+    /// <list type="bullet">
+    /// <item>%00: the server (Kestrel) answers 400 to a path that decodes to a NUL;</item>
+    /// <item>%2500: Kestrel decodes it once, to "%00", which the proxy's route parser would unescape to a NUL. The parser refuses any
+    /// control character once unescaped (NuGetRouteParser): 404, as for any path it does not recognise.</item>
+    /// </list>
+    /// The control: the same path without the NUL does reach the upstream or the publish dates, so the zeros mean something.
+    /// </summary>
+    // mutation: the parser's control-character refusal removed (the %2500 cases then decide, audit or call out)
+    [Theory]
+    [InlineData("/v3/u/org/proj/_packaging/feed/nuget/v3/flat2/moq%00x/index.json", HttpStatusCode.BadRequest)]
+    [InlineData("/v3/u/org/proj/_packaging/feed/nuget/v3/flat2/moq%00x/1.0.0/moq%00x.1.0.0.nupkg", HttpStatusCode.BadRequest)]
+    [InlineData("/v3/u/org/proj/_packaging/feed/nuget/v3/registrations2/moq%00x/index.json", HttpStatusCode.BadRequest)]
+    [InlineData("/v3/u/org/proj/_packaging/feed/nuget/v3/registrations2-semver2/moq%00x/1.0.0.json", HttpStatusCode.BadRequest)]
+    [InlineData("/v3/u/org/proj/_packaging/feed/nuget/v3/flat2/moq%2500x/index.json", HttpStatusCode.NotFound)]
+    [InlineData("/v3/u/org/proj/_packaging/feed/nuget/v3/flat2/moq%2500x/1.0.0/moq%2500x.1.0.0.nupkg", HttpStatusCode.NotFound)]
+    [InlineData("/v3/u/org/proj/_packaging/feed/nuget/v3/registrations2/moq%2500x/index.json", HttpStatusCode.NotFound)]
+    [InlineData("/v3/u/org/proj/_packaging/feed/nuget/v3/registrations2-semver2/moq%2500x/1.0.0.json", HttpStatusCode.NotFound)]
+    public async Task A_NUL_in_a_package_id_is_refused_at_the_boundary_without_calling_upstream(string path, HttpStatusCode refused)
+    {
+        await using var p = await StartAsync();
+        using var http = p.Client(AcmeToken);
+
+        var response = await http.GetAsync(path);
+
+        Assert.Equal(refused, response.StatusCode);
+        Assert.Equal(0, p.Upstream.FeedRequestCount);
+        Assert.Equal(0, p.Dates.Calls);
+        Assert.Empty(p.Audit.Events);
+
+        // The control: without the NUL, the same route is decided on (it reaches the upstream or the publish dates).
+        await http.GetAsync(path.Replace("%2500", "", StringComparison.Ordinal).Replace("%00", "", StringComparison.Ordinal));
+        Assert.True(p.Upstream.FeedRequestCount + p.Dates.Calls > 0, "the control path reached neither the upstream nor the publish dates");
+    }
+
     [Fact]
     public async Task Unauthenticated_requests_get_401_with_a_challenge_and_cost_no_upstream_call()
     {

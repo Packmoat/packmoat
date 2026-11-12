@@ -4,7 +4,7 @@ using Packmoat.Infrastructure.Tests.Postgres;
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// The core's track on every engine (#288 P2, PR 5): <see cref="CoreSchema.Track"/> is SQLite's frozen statements (unmoved) and PostgreSQL's
+/// The core's track on every engine: <see cref="CoreSchema.Track"/> is SQLite's frozen statements (unmoved) and PostgreSQL's
 /// baseline, with the same versions. The schema comparison itself needs a server: PostgresCoreBaselineTests; the rules' behaviour is
 /// SchemaRulesContract's. PostgreSQL stays refused until P5 (DatabaseEngineTests pins it).
 /// </summary>
@@ -23,17 +23,17 @@ public class CoreSchemaTests
         Assert.Null(CoreSchema.Track.Baseline);
     }
 
-    // mutation: a SQLite v24 with no PostgreSQL v24 (the track then cannot be made: CoreSchema's type initialiser throws)
+    // mutation: a SQLite v27 with no PostgreSQL v27 (the track then cannot be made: CoreSchema's type initialiser throws)
     [Fact]
     public void A_core_version_on_one_engine_only_cannot_make_the_track()
     {
-        string[][] sqlite24 = [.. SqliteDatabase.Migrations, ["CREATE TABLE later(x TEXT)"]];
+        string[][] sqlite27 = [.. SqliteDatabase.Migrations, ["CREATE TABLE later(x TEXT)"]];
         var ex = Assert.Throws<ArgumentException>(() => new MigrationTrack(MigrationTrack.CoreName, new Dictionary<DatabaseEngine, string[][]>
         {
-            [DatabaseEngine.Sqlite] = sqlite24,
+            [DatabaseEngine.Sqlite] = sqlite27,
             [DatabaseEngine.Postgres] = PostgresCoreMigrations.Statements,
         }));
-        Assert.Contains("sqlite 24, postgres 23", ex.Message);
+        Assert.Contains("sqlite 27, postgres 26", ex.Message);
     }
 
     [Fact]   // mutation: a statement in one of 1 to 22; the baseline moved to another version
@@ -44,10 +44,23 @@ public class CoreSchemaTests
         Assert.Equal(23, PostgresCoreMigrations.BaselineVersion);
         Assert.All(pg[..22], Assert.Empty);
         Assert.NotEmpty(pg[22]);
-        // One statement per element, as SQLite's (#162): no statement ends in a semicolon with more after it. A function's $$ body is one
+        // One statement per element, as SQLite's: no statement ends in a semicolon with more after it. A function's $$ body is one
         // string to PostgreSQL, so its semicolons are not statement ends.
         Assert.All(pg[22], s => Assert.DoesNotContain(";", WithoutDollarBodies(s).TrimEnd().TrimEnd(';'), StringComparison.Ordinal));
         Assert.Equal(20, pg[22].Count(s => s.TrimStart().StartsWith("CREATE TABLE", StringComparison.Ordinal)));
+        // After the baseline, SQLite's versions one for one (24 is rate_counters and its index).
+        Assert.Equal(2, pg[23].Length);
+        Assert.StartsWith("CREATE TABLE rate_counters(", pg[23][0]);
+        Assert.Equal("CREATE INDEX ix_rate_counters_ends_at ON rate_counters(ends_at)", pg[23][1]);
+        // 25 is form_nonces and its two indexes.
+        Assert.Equal(3, pg[24].Length);
+        Assert.StartsWith("CREATE TABLE form_nonces(", pg[24][0]);
+        Assert.Equal("CREATE INDEX ix_form_nonces_subject ON form_nonces(scope, subject, expires_at)", pg[24][1]);
+        Assert.Equal("CREATE INDEX ix_form_nonces_expires_at ON form_nonces(expires_at)", pg[24][2]);
+        // 26 is feed_setup_scratch and its index.
+        Assert.Equal(2, pg[25].Length);
+        Assert.StartsWith("CREATE TABLE feed_setup_scratch(", pg[25][0]);
+        Assert.Equal("CREATE INDEX ix_feed_setup_scratch_expires_at ON feed_setup_scratch(expires_at)", pg[25][1]);
         Assert.Equal(SchemaTriggerTests.Current.Length + SchemaShape.PostgresOnlyTriggers.Length,
             pg[22].Count(s => s.TrimStart().StartsWith("CREATE TRIGGER", StringComparison.Ordinal)));
     }
@@ -84,7 +97,7 @@ public class CoreSchemaTests
     public async Task The_sqlite_shape_reads_every_kind_of_fact()
     {
         var lines = await SqliteShapeAsync();
-        Assert.Equal(20, lines.Count(l => l.StartsWith("table ", StringComparison.Ordinal)));
+        Assert.Equal(23, lines.Count(l => l.StartsWith("table ", StringComparison.Ordinal)));   // 20 at the baseline, rate_counters since 24, form_nonces since 25, feed_setup_scratch since 26
         Assert.Contains("table tenants", lines);
         Assert.DoesNotContain("table schema_migrations", lines);
         Assert.Contains("tenants#01 id text NOT NULL pk1", lines);
@@ -107,7 +120,7 @@ public class CoreSchemaTests
         Assert.Contains("trigger audit_no_delete on audit_events before delete row", triggers);
     }
 
-    // The trigger line from either engine's catalogue (PR 6). mutations: tgtype's bits read wrongly; tgenabled ignored
+    // The trigger line from either engine's catalogue. mutations: tgtype's bits read wrongly; tgenabled ignored
     [Theory]
     [InlineData("CREATE TRIGGER t1 BEFORE UPDATE OF id ON x WHEN 1 BEGIN SELECT 1; END;", "trigger t1 on x before update of id row")]
     [InlineData("CREATE TRIGGER t1 DELETE ON x BEGIN SELECT 1; END;", "trigger t1 on x before delete row")]

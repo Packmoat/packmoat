@@ -145,8 +145,7 @@ public partial class OnboardingChecksTests
 
     private static CheckResult Get(IReadOnlyList<CheckResult> r, string id) => r.Single(x => x.Id == id);
 
-    // Descriptors and identities in the shape the live identities API returned them. The organisation's and project's numbers are made up
-    // (#187); the structure is kept, and pinned by the test below. Both built-in admin groups have SIDs ending -0-0-0-0-1, so only the
+    // Descriptors and identities in the shape the live identities API returned them. The organisation's and project's numbers are made up; the structure is kept, and pinned by the test below. Both built-in admin groups have SIDs ending -0-0-0-0-1, so only the
     // identities API tells them apart.
     internal const string PcaDescriptor = "Microsoft.TeamFoundation.Identity;S-1-9-1551374245-1000000001-1000000002-1000000003-1000000004-0-0-0-0-1";
     internal const string ProjectAdminsDescriptor = "Microsoft.TeamFoundation.Identity;S-1-9-1551374245-2000000001-2000000002-2000000003-2000000004-0-0-0-0-1";

@@ -6,7 +6,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The server's public test seams (#197): exactly five, the fakes a module author needs to test signed-in pages (an identity provider for
+/// The server's public test seams: exactly five, the fakes a module author needs to test signed-in pages (an identity provider for
 /// each site, the Azure DevOps sign-in and transport, the shared app's credential). Each is null by default, is never read from the
 /// environment, and is named in a warning at start when set, so a seam set where it should not be is seen in the log.
 /// </summary>
@@ -60,6 +60,19 @@ public class TestSeamTests
         Assert.Equal($"Warning: Test seam set: {seam}. A test seam replaces a real part of the server and is never set in production.", Assert.Single(lines));
     }
 
+    [Theory]   // mutation: a time seam left out of SetTestSeams
+    [InlineData(nameof(PackmoatOptions.JobLeaseTtl))]
+    [InlineData(nameof(PackmoatOptions.RetentionInterval))]
+    public async Task A_time_seam_that_is_set_is_named_in_a_warning_at_start(string seam)
+    {
+        var lines = await StartLogAsync(o =>
+        {
+            if (seam == nameof(PackmoatOptions.JobLeaseTtl)) o.JobLeaseTtl = TimeSpan.FromSeconds(5);
+            else o.RetentionInterval = TimeSpan.FromSeconds(5);
+        });
+        Assert.Equal($"Warning: Test seam set: {seam}. A test seam replaces a real part of the server and is never set in production.", Assert.Single(lines));
+    }
+
     [Fact]
     public async Task With_no_seam_set_as_in_production_the_start_has_no_warning_and_the_seams_stay_null()
     {
@@ -78,7 +91,7 @@ public class TestSeamTests
             var logs = new Lines();
             await using var app = PackmoatApp.Build(["--urls", "http://127.0.0.1:0"], TestModules.Server, s => s.AddSingleton<ILoggerProvider>(logs), o =>
             {
-                o.DatabasePath = Path.Combine(dir, "packmoat.db");
+                o.Database = Path.Combine(dir, "packmoat.db");
                 o.MasterKeyBase64 = AesGcmSecretProtector.GenerateKeyBase64();
                 o.AllowedHosts = "feeds.example.test";
                 configure?.Invoke(o);

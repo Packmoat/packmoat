@@ -3,9 +3,9 @@ using Packmoat.Admin;
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// PACKMOAT_DB_ENGINE in packmoat-admin (#232 P1): unset is sqlite, as before; postgres, which this build cannot run yet, and an unknown
-/// value are the usual "error:" line and exit 1, before the database is opened; backup, verify and restore refuse on postgres and point to
-/// pg_dump.
+/// PACKMOAT_DB_ENGINE in packmoat-admin: unset is sqlite, as before; an unknown value is the usual "error:" line and exit 1,
+/// before the database is opened; backup, verify and restore refuse on postgres and point to pg_dump. Postgres itself is taken
+/// Its commands against a real server are in PostgresCliTests.
 /// </summary>
 [Collection("sqlite-pools")]
 public class DatabaseEngineCliTests
@@ -37,17 +37,42 @@ public class DatabaseEngineCliTests
         Assert.Equal(DatabaseEngine.Postgres, CliEnvironment.FromSettings(file.Read).Engine);
     }
 
-    [Fact]   // mutation: the tool runs on postgres
-    public async Task Postgres_is_an_error_line_and_the_database_is_never_opened()
+    [Theory]   // Postgres is taken, but PACKMOAT_DB must then be a connection string. mutation: a file path opened as SQLite
+    [InlineData("tenant", "list")]
+    [InlineData("db", "check-migrations")]
+    public async Task On_postgres_a_file_path_is_an_error_line_naming_the_setting_and_no_file_is_made(string group, string verb)
     {
         await WithDirAsync(async dir =>
         {
-            var (code, output, error) = await Run(() => On(dir, DatabaseEngine.Postgres), "tenant", "list");
+            var (code, output, error) = await Run(() => On(dir, DatabaseEngine.Postgres), group, verb);
             Assert.Equal(1, code);
             Assert.Equal("", output);
-            Assert.Equal("error: PACKMOAT_DB_ENGINE=postgres is not available in this build yet.", error.Trim());
+            Assert.Equal("error: PACKMOAT_DB is not a valid PostgreSQL connection string.", error.Trim());
             Assert.False(File.Exists(Path.Combine(dir, "packmoat.db")));
         });
+    }
+
+    // PACKMOAT_DB_SINGLE_ROLE reaches the command line's start checks, read as the server reads it: strictly, on PostgreSQL only.
+    // mutations: the setting not read into the environment; read on SQLite too
+    [Theory]
+    [InlineData("postgres", "on", true)]
+    [InlineData("postgres", "off", false)]
+    [InlineData("postgres", null, false)]
+    [InlineData("sqlite", "on", false)]
+    [InlineData("sqlite", "yes", false)]   // not read at all on SQLite, so not refused
+    public void The_single_role_setting_is_read_on_postgres_only(string engine, string? singleRole, bool expected)
+    {
+        var env = CliEnvironment.FromSettings(n => n == DatabaseEngines.Variable ? engine : n == "PACKMOAT_DB_SINGLE_ROLE" ? singleRole : null);
+        Assert.Equal(expected, env.SingleRole);
+    }
+
+    [Fact]
+    public async Task On_postgres_a_bad_single_role_setting_is_an_error_line_naming_it()
+    {
+        var (code, output, error) = await Run(() => CliEnvironment.FromSettings(n => n == DatabaseEngines.Variable ? "postgres" : n == "PACKMOAT_DB_SINGLE_ROLE" ? "yes" : null), "tenant", "list");
+        Assert.Equal(1, code);
+        Assert.Equal("", output);
+        Assert.Equal("error: PACKMOAT_DB_SINGLE_ROLE must be on or off.", error.Trim());
     }
 
     [Theory]   // mutations: an unknown value is taken; whitespace only is read as unset
