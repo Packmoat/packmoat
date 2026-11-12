@@ -11,7 +11,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// #136 through the real host: only downloads are audited, the audit write is off the request path (a broken or stuck store changes
+/// through the real host: only downloads are audited, the audit write is off the request path (a broken or stuck store changes
 /// nothing a client sees), and the daily retention pass prunes audit_events and token_activity. Each test that kills one of the plan's
 /// mutations says which.
 /// </summary>
@@ -173,7 +173,7 @@ public class AuditDownloadsHostTests
     private static WebApplication BuildProductionHost(string dir, IClock clock, Action<IServiceCollection>? more = null) =>
         PackmoatApp.Build(new[] { "--urls", "http://127.0.0.1:0" }, TestModules.Server, s => { s.AddSingleton(clock); more?.Invoke(s); }, o =>
         {
-            o.DatabasePath = Path.Combine(dir, "packmoat.db");
+            o.Database = Path.Combine(dir, "packmoat.db");
             o.MasterKeyBase64 = AesGcmSecretProtector.GenerateKeyBase64();
             o.AllowedHosts = "feeds.example.test";
         });
@@ -227,7 +227,7 @@ public class AuditDownloadsHostTests
             var dbPath = Path.Combine(dir, "packmoat.db");
             await using var app = PackmoatApp.Build(new[] { "--urls", "http://127.0.0.1:0" }, TestModules.Server, s => s.AddSingleton<IClock>(clock), o =>
             {
-                o.DatabasePath = dbPath;
+                o.Database = dbPath;
                 o.MasterKeyBase64 = AesGcmSecretProtector.GenerateKeyBase64();
                 o.AllowedHosts = "feeds.example.test";
             });

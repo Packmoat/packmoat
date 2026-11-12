@@ -1,9 +1,10 @@
 using Packmoat.Application;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// The cookie key store (#232 B1) as a contract: keys round trip in a fixed order, and the one-time import from the key folder stores a
+/// The cookie key store as a contract: keys round trip in a fixed order, and the one-time import from the key folder stores a
 /// set only into an empty store, once, even when several servers import at the same moment. The encryption is in
 /// <see cref="SqliteCookieKeyStoreTests"/>.
 /// </summary>
@@ -14,7 +15,7 @@ public abstract class CookieKeyStoreContract : StoreContract
     private static IReadOnlyList<CookieKey> Keys(int count, string prefix = "key") =>
         Enumerable.Range(1, count).Select(i => new CookieKey($"{prefix}-{i}", Xml(i))).ToList();
 
-    [Fact]   // mutation: store the friendly name in place of the XML (or the other way round)
+    [EngineFact]   // mutation: store the friendly name in place of the XML (or the other way round)
     public async Task Keys_round_trip_with_their_names_and_xml()
     {
         await using var t = await CreateDbAsync();
@@ -29,7 +30,7 @@ public abstract class CookieKeyStoreContract : StoreContract
         Assert.Equal(2L, await ScalarAsync(t, "SELECT COUNT(*) FROM cookie_keys"));
     }
 
-    [Fact]   // mutations: drop the ORDER BY (rows come newest first); order by id only (a random order: right once in 8! runs)
+    [EngineFact]   // mutations: drop the ORDER BY (rows come newest first); order by id only (a random order: right once in 8! runs)
     public async Task Keys_come_oldest_first_then_by_id_the_same_every_time()
     {
         await using var t = await CreateDbAsync();
@@ -51,7 +52,7 @@ public abstract class CookieKeyStoreContract : StoreContract
         for (var i = 0; i < 3; i++) Assert.Equal(names, (await Engine.CookieKeys(t).GetAllAsync(default)).Select(k => k.FriendlyName).ToList());
     }
 
-    [Fact]   // mutation: return 0 (or keys.Count - 1) from a successful import
+    [EngineFact]   // mutation: return 0 (or keys.Count - 1) from a successful import
     public async Task An_import_into_an_empty_store_stores_every_key_and_returns_the_count()
     {
         await using var t = await CreateDbAsync();
@@ -63,7 +64,7 @@ public abstract class CookieKeyStoreContract : StoreContract
         Assert.Equal(Keys(3).OrderBy(k => k.FriendlyName, StringComparer.Ordinal), (await store.GetAllAsync(default)).OrderBy(k => k.FriendlyName, StringComparer.Ordinal));
     }
 
-    [Fact]   // mutation: import whatever the store holds (every start imports again)
+    [EngineFact]   // mutation: import whatever the store holds (every start imports again)
     public async Task A_second_import_adds_nothing_and_returns_zero()
     {
         await using var t = await CreateDbAsync();
@@ -79,7 +80,48 @@ public abstract class CookieKeyStoreContract : StoreContract
         Assert.Equal(["made-here"], (await Engine.CookieKeys(u).GetAllAsync(default)).Select(k => k.FriendlyName));
     }
 
-    [Fact]   // mutation: count and insert outside one write transaction (deferred, or none): two servers both import
+    /// <summary>A key whose XML says "expired" stands for one the key ring can no longer use; the host judges real keys' dates.</summary>
+    private static bool NotExpired(CookieKey k) => !k.Xml.Contains("expired", StringComparison.Ordinal);
+
+    [EngineFact]   // mutations: add whatever the store holds (a plain insert); add only into an empty store (every key expired: nothing added)
+    public async Task A_new_key_is_added_only_when_no_key_is_usable()
+    {
+        await using var t = await CreateDbAsync();
+        var store = Engine.CookieKeys(t);
+        Assert.True(await store.AddUnlessAnyAsync(new CookieKey("first", Xml(1)), NotExpired, default));   // empty: added
+        Assert.False(await store.AddUnlessAnyAsync(new CookieKey("second", Xml(2)), NotExpired, default));   // one usable: nothing added
+        Assert.Equal(["first"], (await store.GetAllAsync(default)).Select(k => k.FriendlyName));
+
+        // Every key expired: one new key is added, beside them (they stay, so what they protected is still read).
+        await using var u = await CreateDbAsync();
+        var old = Engine.CookieKeys(u);
+        await old.AddAsync("old-1", "<key expired=\"1\"/>", default);
+        await old.AddAsync("old-2", "<key expired=\"2\"/>", default);
+        t.Clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.True(await old.AddUnlessAnyAsync(new CookieKey("new", Xml(3)), NotExpired, default));
+        Assert.False(await old.AddUnlessAnyAsync(new CookieKey("newer", Xml(4)), NotExpired, default));
+        Assert.Equal(["new", "old-1", "old-2"], (await old.GetAllAsync(default)).Select(k => k.FriendlyName).Order(StringComparer.Ordinal));
+    }
+
+    [EngineFact]   // mutation: read and insert outside one write transaction (or without the import's lock): two servers both add a key
+    public async Task Of_eight_servers_adding_at_once_over_expired_keys_exactly_one_adds()
+    {
+        for (var round = 0; round < 5; round++)
+        {
+            await using var t = await CreateDbAsync();
+            await Engine.CookieKeys(t).AddAsync("old", "<key expired=\"1\"/>", default);
+            var stores = Enumerable.Range(0, 8).Select(_ => Engine.CookieKeys(t)).ToList();
+            var go = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var racers = stores.Select((store, i) => Task.Run(async () => { await go.Task; return await store.AddUnlessAnyAsync(new CookieKey($"copy{i}", Xml(i + 1)), NotExpired, default); })).ToList();
+            go.SetResult();   // every server starts at once
+            var results = await Task.WhenAll(racers);
+            Assert.Single(results, r => r);
+            Assert.Equal(2L, await ScalarAsync(t, "SELECT COUNT(*) FROM cookie_keys"));
+            Assert.Equal($"copy{Array.IndexOf(results, true)}", Assert.Single(await Engine.CookieKeys(t).GetAllAsync(default), NotExpired).FriendlyName);
+        }
+    }
+
+    [EngineFact]   // mutation: count and insert outside one write transaction (deferred, or none): two servers both import
     public async Task Of_eight_importers_racing_exactly_one_imports_and_one_set_is_left()
     {
         for (var round = 0; round < 5; round++)

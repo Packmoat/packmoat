@@ -2,7 +2,7 @@ namespace Packmoat.Domain;
 
 /// <summary>
 /// An explicit, expiring exception. Version is an exact version or "*" for every version of the package (operator only).
-/// <c>Source</c> says who made it: the operator (CLI or admin site) or a customer Admin on the customer site (#157).
+/// <c>Source</c> says who made it: the operator (CLI or admin site) or a customer Admin on the customer site.
 /// </summary>
 public sealed record Waiver(string Id, string PackageId, string Version, DateTimeOffset ExpiresAt, string Reason, string CreatedBy, WaiverSource Source = WaiverSource.Operator);
 

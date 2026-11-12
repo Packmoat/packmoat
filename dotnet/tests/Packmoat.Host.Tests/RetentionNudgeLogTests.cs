@@ -5,7 +5,7 @@ using Packmoat.Domain;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// #233: the steps moved into <see cref="RetentionPass"/>, but the server's scheduled pass still tells the operator, in its own line, how
+/// The steps moved into <see cref="RetentionPass"/>, but the server's scheduled pass still tells the operator, in its own line, how
 /// many tenants are due for purge and what to run.
 /// </summary>
 public class RetentionNudgeLogTests

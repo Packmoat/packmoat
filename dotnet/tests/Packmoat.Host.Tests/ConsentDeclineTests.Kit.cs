@@ -3,10 +3,10 @@ using System.Security.Cryptography.X509Certificates;
 
 namespace Packmoat.Host.Tests;
 
-/// <summary>A key and certificate on disk (#197): the core's tests and the hosted tests (which compile this file in) share it.</summary>
+/// <summary>A key and certificate on disk: the core's tests and the hosted tests (which compile this file in) share it.</summary>
 public partial class ConsentDeclineTests
 {
-    /// <summary>A key and certificate in <paramref name="path"/>, in a folder of its own that the caller disposes (#292).</summary>
+    /// <summary>A key and certificate in <paramref name="path"/>, in a folder of its own that the caller disposes.</summary>
     internal static TempDir WritePem(out string path)
     {
         var dir = TempDir.Create("packmoat-consent-");

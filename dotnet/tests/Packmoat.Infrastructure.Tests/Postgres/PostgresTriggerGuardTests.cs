@@ -5,7 +5,7 @@ using static Packmoat.Infrastructure.Tests.SchemaRulesContract;
 namespace Packmoat.Infrastructure.Tests.Postgres;
 
 /// <summary>
-/// What the schema's rules do on PostgreSQL only (#288 P2, PR 6): the TRUNCATE guards (tests named <c>&lt;guard&gt;__…</c>, one per
+/// What the schema's rules do on PostgreSQL only: the TRUNCATE guards (tests named <c>&lt;guard&gt;__…</c>, one per
 /// <see cref="SchemaShape.PostgresOnlyTriggers"/>), the per-tenant advisory lock that keeps two read-committed transactions from each
 /// passing a rule the other's uncommitted row breaks, and the retention floor under a session time zone with daylight saving. The races
 /// are made, not hoped for: the second transaction is let go only once pg_locks shows it waiting on the first's lock.
@@ -151,7 +151,7 @@ public sealed class PostgresTriggerGuardTests
         Assert.Equal(0L, await Engine.ScalarAsync(t, "SELECT COUNT(*) FROM tenant_purges"));
     }
 
-    // ---------------------------------------------------------------- the functions' search_path (#298 review M1)
+    // ---------------------------------------------------------------- the functions' search_path
 
     // mutation: the functions' path captured from the session ("$user", public: pg_temp is then searched first for tables)
     [PostgresFact]

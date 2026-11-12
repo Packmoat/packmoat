@@ -9,41 +9,18 @@ namespace Packmoat.Infrastructure;
 /// <summary>
 /// The tenant purge's SQLite side (migration 15). The core's tables are classified once, in <see cref="CoreTables"/>: deleted for the
 /// tenant, kept, or holding no tenant data; a module's tables are classified by its <see cref="IPurgeContributor"/>. Inside the purge's
-/// one transaction, two guards (#194) refuse and roll back: a table in the database that nobody classified (or two classified), and a
+/// one transaction, two guards refuse and roll back: a table in the database that nobody classified (or two classified), and a
 /// deleted table that still holds a row for the tenant afterwards. Who is due is the <see cref="IPurgeRecheck"/>'s to say, and it
 /// re-checks under the write lock; with none, every purge is refused.
 /// </summary>
-public sealed class SqliteTenantPurgeStore : ITenantPurgeStore
+public sealed class SqliteTenantPurgeStore : IPurgeSummaryStore
 {
     /// <summary>
-    /// The core's tables and what a purge does to them. The deleted ones are deleted in this order (children first; the contributors'
-    /// just before tenants), then tenant_purges is written and audit_events deleted (its trigger allows that only then).
+    /// The core's tables and what a purge does to them (<see cref="CorePurgeTables"/>, shared by every engine), with
+    /// SQLite's own sqlite_sequence where it has always been: the same list, in the same order, as before the move.
     /// </summary>
-    public static IReadOnlyList<PurgeTable> CoreTables { get; } = new PurgeTable[]
-    {
-        new("token_activity", PurgeTableFate.Deleted, "which token was used on which day"),
-        new("decision_records", PurgeTableFate.Deleted, "what was decided per package version, and why (no token or person)", "tenant_id"),
-        new("tokens", PurgeTableFate.Deleted, "the tenant's feed tokens (hashes), owners and labels", "tenant_id"),
-        new("shared_app_verifications", PurgeTableFate.Deleted, "the tenant's onboarding check records", "tenant_id"),
-        new("feed_checks", PurgeTableFate.Deleted, "the tenant's feed setup checks (may hold admin names)", "tenant_id"),
-        new("upstream_identities", PurgeTableFate.Deleted, "the tenant's upstream binding and certificate", "tenant_id"),
-        new("sign_in_directories", PurgeTableFate.Deleted, "the directory link: freed, so the organisation may sign up again", "tenant_id"),
-        new("members", PurgeTableFate.Deleted, "who signed in, with display names", "tenant_id"),
-        new("auto_join_settings", PurgeTableFate.Deleted, "the tenant's auto-join switch", "tenant_id"),
-        new("internal_prefixes", PurgeTableFate.Deleted, "the tenant's policy", "tenant_id"),
-        new("package_overrides", PurgeTableFate.Deleted, "the tenant's policy", "tenant_id"),
-        new("waivers", PurgeTableFate.Deleted, "the tenant's policy", "tenant_id"),
-        new("tenants", PurgeTableFate.Deleted, "the tenant itself", "id"),
-        new("audit_events", PurgeTableFate.Deleted, "the tenant's package decisions (deleted last, through the purge trigger)", "tenant_id"),
-        new("admin_actions", PurgeTableFate.Kept, "the operator's evidence of what was done, including the purge itself (retention: TenantPurgePolicy.AdminActionsRetention, pruned daily by the retention pass)", "tenant_id"),
-        new("tenant_purges", PurgeTableFate.Kept, "the purge record: makes a second run a no-op and blocks the id's reuse; no personal fields", "tenant_id"),
-        new("meta", PurgeTableFate.NoTenantData, "the master key check and the last purge nudge day"),
-        new("schema_migrations", PurgeTableFate.NoTenantData, "schema versions"),
-        new("shared_app_credentials", PurgeTableFate.NoTenantData, "Packmoat's own shared app"),
-        new("sqlite_sequence", PurgeTableFate.NoTenantData, "SQLite's AUTOINCREMENT counters"),
-        new("job_leases", PurgeTableFate.NoTenantData, "which server copy runs each scheduled job, and until when"),
-        new("cookie_keys", PurgeTableFate.NoTenantData, "the cookie protection keys, encrypted"),
-    };
+    public static IReadOnlyList<PurgeTable> CoreTables { get; } =
+        CorePurgeTables.WithEngineTables(new PurgeTable("sqlite_sequence", PurgeTableFate.NoTenantData, "SQLite's AUTOINCREMENT counters"));
 
     /// <summary>The delete for each of the core's deleted tables before the contributors', in order. <c>@t</c> is the tenant id.</summary>
     private static readonly (string Table, string Sql)[] ChildDeletes =
@@ -53,6 +30,7 @@ public sealed class SqliteTenantPurgeStore : ITenantPurgeStore
         ("tokens", "DELETE FROM tokens WHERE tenant_id=@t"),
         ("shared_app_verifications", "DELETE FROM shared_app_verifications WHERE tenant_id=@t"),
         ("feed_checks", "DELETE FROM feed_checks WHERE tenant_id=@t"),
+        ("feed_setup_scratch", "DELETE FROM feed_setup_scratch WHERE tenant_id=@t"),
         ("upstream_identities", "DELETE FROM upstream_identities WHERE tenant_id=@t"),
         ("sign_in_directories", "DELETE FROM sign_in_directories WHERE tenant_id=@t"),
         ("members", "DELETE FROM members WHERE tenant_id=@t"),
@@ -134,6 +112,8 @@ public sealed class SqliteTenantPurgeStore : ITenantPurgeStore
             counts.Add(new PurgedTable(table, await ExecAsync(cmd, sql, ct, ("@t", tenantId))));
         foreach (var contributor in _contributors)
             counts.AddRange(await contributor.DeleteAsync(tx, tenantId, ct));
+        // The tenant's feed-check lease (job_leases holds no tenant data but this row's name, AzureSetupState.LeaseJob): not counted.
+        await ExecAsync(cmd, CorePurgeTables.FeedCheckLeaseDelete, ct, ("@t", tenantId));
         counts.Add(new PurgedTable("tenants", await ExecAsync(cmd, "DELETE FROM tenants WHERE id=@t", ct, ("@t", tenantId))));
 
         // Recorded only once the tenant row is gone (a trigger insists), with 'purging' set: the one moment its audit rows may be deleted.

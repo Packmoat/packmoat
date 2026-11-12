@@ -8,7 +8,7 @@ using Xunit.Abstractions;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// #63 S0: runs the onboarding check engine against a real Azure DevOps feed with a delegated (user) bearer token, as the setup
+/// Runs the onboarding check engine against a real Azure DevOps feed with a delegated (user) bearer token, as the setup
 /// wizard will. Runs only when pointed at one; nothing identifying a real organisation lives in the repository:
 ///   PACKMOAT_LIVE_ADO_BEARER_FILE  a file (outside the repository, mode 600) holding an Azure DevOps access token, e.g. from
 ///                                  `az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798`
@@ -60,7 +60,7 @@ public class LiveDelegatedCheckTests
             Organization = org, Project = project, Feed = feed,
             PackagesBase = index.GetLeftPart(UriPartial.Authority),
             AdminToken = token, AdminTokenIsBearer = true,
-            CheckProject = true,   // as the wizard runs it (#63 H2): the feed's project must be private
+            CheckProject = true,   // as the wizard runs it: the feed's project must be private
             SharedAppClientId = sharedApp is not null && directory is not null ? sharedApp : null,
             SharedAppDirectoryId = sharedApp is not null && directory is not null ? directory : null,
         };
@@ -82,7 +82,7 @@ public class LiveDelegatedCheckTests
         var expectPass = new List<string> { "feed", "upstreams", "permissions", "views" };
         if (o.SharedAppClientId is not null) expectPass.Insert(1, "identity");
         else _out.WriteLine("identity not run: set PACKMOAT_LIVE_ADO_SHARED_APP and PACKMOAT_LIVE_ADO_DIRECTORY.");
-        if (results.Any(r => r.Id == "project")) expectPass.Add("project");   // the 'project' check arrives with #63 H2
+        if (results.Any(r => r.Id == "project")) expectPass.Add("project");   // the 'project' check arrives with the delegated check
         foreach (var id in expectPass)
         {
             var r = results.Single(x => x.Id == id);
@@ -93,7 +93,7 @@ public class LiveDelegatedCheckTests
     }
 
     /// <summary>
-    /// The prefix-tightening spike (#63): does every resource in the live service index sit under {org}/{projectId}/_packaging/{feedId}/?
+    /// The prefix-tightening spike: does every resource in the live service index sit under {org}/{projectId}/_packaging/{feedId}/?
     /// Resource URLs carry no credential; only they, and the ids from Get Feed, are written out.
     /// </summary>
     private async Task RecordIndexPrefixes(HttpClient http, string token, Uri index, string org, string? project, string feed)

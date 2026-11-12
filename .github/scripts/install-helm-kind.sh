@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install pinned releases of helm and kind (#249) into a folder, each checked by sha256 before it is used: the versions and checksums are
+# Install pinned releases of helm and kind into a folder, each checked by sha256 before it is used: the versions and checksums are
 # pinned here, never read from the download site at run time.
 # Usage: install-helm-kind.sh <folder>   (Linux x86-64, or macOS on Apple silicon for a local run; then put the folder on PATH)
 set -euo pipefail

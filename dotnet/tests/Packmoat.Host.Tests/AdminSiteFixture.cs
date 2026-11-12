@@ -134,7 +134,7 @@ public sealed class AdminBrowser
 }
 
 /// <summary>
-/// The admin and customer sites through the running host, on a real database (#197: the core's, shared with the hosted tests, which
+/// The admin and customer sites through the running host, on a real database (the core's, shared with the hosted tests, which
 /// compile it in). It runs <see cref="TestModules.Server"/>, the tracks of <see cref="TestTracks.Modules"/>, the creation participants of
 /// <see cref="TestLifecycle.Participants"/>, and the stores and serving gate of <see cref="TestModules"/>: none in the core's tests, the
 /// hosted module's in the hosted tests.
@@ -188,7 +188,7 @@ public sealed partial class AdminSiteFixture : IAsyncDisposable
         }
         catch
         {
-            await f.DisposeAsync();   // the folder, and whatever started before the failure (#292)
+            await f.DisposeAsync();   // the folder, and whatever started before the failure
             throw;
         }
     }
@@ -213,7 +213,53 @@ public sealed partial class AdminSiteFixture : IAsyncDisposable
         await f.Tenants.CreateAsync(new NewTenant("globex", "Globex", f.Upstream.BaseUrl, "org/", f.Upstream.FeedIndexUrl, 7, TenantOrigin.Operator), default);
         f.SignInAs(Tid, Oid);
 
-        f.App = PackmoatApp.Build(new[] { "--urls", "http://127.0.0.1:0" }, modules ?? TestModules.Server, s =>
+        f._build = () => f.BuildApp(configure, auditQuery, fakeProvider, keysDir, services, fixtureServices, modules);
+        f.App = f._build();
+        await f.App.StartAsync();
+        f.BaseUrl = AddressOf(f.App);
+    }
+
+    private Func<WebApplication>? _build;
+
+    private static string AddressOf(WebApplication app) =>
+        app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First().Replace("localhost", "127.0.0.1").TrimEnd('/');
+
+    /// <summary>
+    /// Another copy of the server, built exactly as <see cref="App"/> was (the same database, the same stores and fakes, the same cookie
+    /// keys folder), on a port of its own: for what one copy keeps and another must find.
+    /// </summary>
+    public async Task<ServerCopy> StartCopyAsync()
+    {
+        var app = (_build ?? throw new InvalidOperationException("The fixture has not started."))();
+        try
+        {
+            await app.StartAsync();
+            return new ServerCopy(app, AddressOf(app));
+        }
+        catch
+        {
+            await app.DisposeAsync();
+            throw;
+        }
+    }
+
+    /// <summary>A second copy of the server (<see cref="StartCopyAsync"/>): its app and the address it answers on.</summary>
+    public sealed record ServerCopy(WebApplication App, string BaseUrl) : IAsyncDisposable
+    {
+        public AdminBrowser Browser(string host) => new(BaseUrl, host);
+
+        public async ValueTask DisposeAsync()
+        {
+            try { await App.StopAsync(); }
+            finally { await App.DisposeAsync(); }
+        }
+    }
+
+    private WebApplication BuildApp(Action<PackmoatOptions>? configure, IAuditQuery? auditQuery, bool fakeProvider, string? keysDir, Action<IServiceCollection>? services,
+        Action<AdminSiteFixture, IServiceCollection>? fixtureServices, IReadOnlyList<IPackmoatModule>? modules)
+    {
+        var f = this;
+        return PackmoatApp.Build(new[] { "--urls", "http://127.0.0.1:0" }, modules ?? TestModules.Server, s =>
         {
             s.AddSingleton<IClock>(f.Clock);
             s.AddSingleton<IPublishDateSource>(new FakeDateSource());
@@ -243,11 +289,9 @@ public sealed partial class AdminSiteFixture : IAsyncDisposable
             o.AdminAllow = Tid + ":" + Oid;
             o.AdminKeysDir = keysDir ?? f.KeysDir;
             if (fakeProvider) o.AdminRemoteSchemeOverride = auth => auth.AddScheme<AuthenticationSchemeOptions, FakeEntraHandler>(AdminSite.RemoteScheme, null);
-            TestOperator.Apply(o);   // the hosted wording (#186); a test of the unset settings sets o.Operator itself
+            TestOperator.Apply(o);   // the hosted wording; a test of the unset settings sets o.Operator itself
             configure?.Invoke(o);
         });
-        await f.App.StartAsync();
-        f.BaseUrl = f.App.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First().Replace("localhost", "127.0.0.1").TrimEnd('/');
     }
 
     /// <summary>An Azure Artifacts feed URL that passes the strict rules (https, a path prefix): what a set-up tenant has.</summary>

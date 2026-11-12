@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 namespace Packmoat.Host;
 
 /// <summary>
-/// Which addresses may set X-Forwarded-For, -Proto and -Host (#233, PACKMOAT_TRUSTED_PROXIES). Loopback is always trusted (a reverse proxy
+/// Which addresses may set X-Forwarded-For, -Proto and -Host (PACKMOAT_TRUSTED_PROXIES). Loopback is always trusted (a reverse proxy
 /// on the same machine, as in the deploy kit); the setting adds IP addresses or networks (CIDR, such as 10.0.0.0/8), separated by spaces,
 /// commas or semicolons, for a proxy elsewhere. Unset or empty means loopback only, as before. Only the nearest proxy is believed
 /// (ForwardLimit stays 1).

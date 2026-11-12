@@ -9,7 +9,7 @@ namespace Packmoat.Host.Auth;
 /// the service, not to meter normal restores (a large solution restore makes hundreds of requests).
 /// </summary>
 /// <remarks>
-/// Observe only (#125): when a token's window closes above half the ceiling, one Information line records its peak,
+/// Observe only: when a token's window closes above half the ceiling, one Information line records its peak,
 /// so production data can show how close real build farms come. Only the token id is logged, never the token.
 /// A window closes when its token's next request replaces it, or when the sweep removes it. The sweep runs at most
 /// once a minute, on whichever request comes next from any token, so a token that never returns is still logged and

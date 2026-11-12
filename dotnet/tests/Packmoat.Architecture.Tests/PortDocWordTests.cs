@@ -1,7 +1,7 @@
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// Port docs state guarantees, not mechanisms (#278 step 0, A6; architecture test 9). The doc comments of the Application project (the
+/// Port docs state guarantees, not mechanisms. The doc comments of the Application project (the
 /// ports and their rules) and of the module seams (<c>///</c> and <c>/** */</c>) name no storage mechanism: not SQLite, IMMEDIATE, WAL,
 /// PRAGMA, rowid, a trigger, a write lock, an exclusive lock, the journal, a savepoint or busy_timeout, and no <c>Sqlite*</c> type. Say what a caller can rely on instead, for example "no other writer can change it between
 /// the check and the write". A ratchet: each file's count is pinned and may only fall (a file not listed is pinned at zero). The hosted

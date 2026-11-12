@@ -3,7 +3,7 @@ using Packmoat.Domain;
 
 namespace Packmoat.Application;
 
-/// <summary>The customer site's own limits on waiver changes (#157). The waiver limits themselves are <see cref="WaiverRules"/>.</summary>
+/// <summary>The customer site's own limits on waiver changes. The waiver limits themselves are <see cref="WaiverRules"/>.</summary>
 public static class CustomerWaiverRules
 {
     /// <summary>Per person, per <see cref="RateWindow"/>: at most this many add attempts, and separately this many revokes.</summary>
@@ -18,7 +18,7 @@ public static class CustomerWaiverRules
 }
 
 /// <summary>
-/// The customer site's waiver writes (#157). Packmoat.Admin only, with a sign-in within <see cref="CustomerTokenRules.FreshSignIn"/>:
+/// The customer site's waiver writes. Packmoat.Admin only, with a sign-in within <see cref="CustomerTokenRules.FreshSignIn"/>:
 /// checked HERE, first, because the core command receives an <see cref="ActorScope"/>, which carries neither a role nor a sign-in time.
 /// Then the same guard as the token pages (<see cref="CustomerTokenGuard"/>: the directory still bound to the actor's tenant, the tenant
 /// active); the tenant is ONLY <c>actor.TenantId</c>. The waiver limits are the core's (<see cref="AdminCommands.AddWaiverAsync"/> for a
@@ -31,19 +31,21 @@ public sealed class CustomerWaiverCommands
     private readonly IClock _clock;
     private readonly AdminCommands _core;
     private readonly CustomerTokenGuard _guard;
-    private readonly PersonRateLimiter _adds;
-    private readonly PersonRateLimiter _revokes;
+    private readonly RateLimit _adds;
+    private readonly RateLimit _revokes;
 
     /// <param name="alerts">Where the core raises <see cref="OpsAlert.WaiverCapReached"/>. The core commands are this instance's own (a
-    /// singleton), so their per-tenant alert throttle lives as long as the site; the customer site never sees <see cref="AdminCommands"/>.</param>
-    public CustomerWaiverCommands(ITenantStore tenants, ITokenService tokens, ISignInDirectoryStore directories, IAdminActionLog log, IClock clock, IOpsAlerts? alerts = null)
+    /// singleton); their per-tenant alert throttle is the shared counter's; the customer site never sees <see cref="AdminCommands"/>.</param>
+    /// <param name="rates">The shared rate counter: each person's adds and revokes are counted there.</param>
+    public CustomerWaiverCommands(ITenantStore tenants, ITokenService tokens, ISignInDirectoryStore directories, IAdminActionLog log, IClock clock, IRateCounter rates,
+        IOpsAlerts? alerts = null)
     {
         _log = log;
         _clock = clock;
-        _core = new AdminCommands(tenants, tokens, clock, alerts: alerts);
+        _core = new AdminCommands(tenants, tokens, clock, rates, alerts: alerts);
         _guard = new CustomerTokenGuard(tenants, directories, shared: null);
-        _adds = new PersonRateLimiter(clock, CustomerWaiverRules.MaxAddsPerWindow, CustomerWaiverRules.RateWindow);
-        _revokes = new PersonRateLimiter(clock, CustomerWaiverRules.MaxRevokesPerWindow, CustomerWaiverRules.RateWindow);
+        _adds = new RateLimit(rates, RateScopes.WaiverAdd, CustomerWaiverRules.MaxAddsPerWindow, CustomerWaiverRules.RateWindow);
+        _revokes = new RateLimit(rates, RateScopes.WaiverRevoke, CustomerWaiverRules.MaxRevokesPerWindow, CustomerWaiverRules.RateWindow);
     }
 
     /// <summary>
@@ -60,7 +62,7 @@ public sealed class CustomerWaiverCommands
         var why = WaiverRules.CleanReason(reason) ?? throw new WaiverRefusedException(WaiverRefusal.BadReason);
 
         var (tid, oid, tenant) = await _guard.CheckLinkedAsync(actor, ct);
-        if (!_adds.TryAcquire(tid + "/" + oid)) throw new CustomerTokenRefusedException(CustomerTokenRefusal.TooManyRequests);
+        if (!await _adds.TryAcquireAsync(tid + "/" + oid, ct)) throw new CustomerTokenRefusedException(CustomerTokenRefusal.TooManyRequests);
 
         var detail = $"package={package}; version={exact}; days={days}; reason={CustomerTokenRules.Quote(why)}";   // the reason last and quoted
         await _log.AppendAsync(Record(actor, tid, oid, "waiver.add", tenant.Id, detail), ct);   // no record, no waiver
@@ -88,7 +90,7 @@ public sealed class CustomerWaiverCommands
     {
         CustomerTokenRules.RequireFreshAdmin(actor, _clock.UtcNow);
         var (tid, oid, tenant) = await _guard.CheckLinkedAsync(actor, ct);
-        if (!_revokes.TryAcquire(tid + "/" + oid)) throw new CustomerTokenRefusedException(CustomerTokenRefusal.TooManyRequests);
+        if (!await _revokes.TryAcquireAsync(tid + "/" + oid, ct)) throw new CustomerTokenRefusedException(CustomerTokenRefusal.TooManyRequests);
         if (!CustomerWaiverRules.IsWaiverId(waiverId)) return false;
         var waiver = tenant.Policy.Waivers.FirstOrDefault(w => string.Equals(w.Id, waiverId, StringComparison.Ordinal));   // this tenant's only
         if (waiver is null) return false;
@@ -151,7 +153,7 @@ public sealed class CustomerWaiverQueries
     }
 
     /// <summary>
-    /// The tenant's waivers. The store lists active waivers first (#161 review), so no active one is lost behind
+    /// The tenant's waivers. The store lists active waivers first, so no active one is lost behind
     /// <see cref="AdminQueries.WaiverListLimit"/> rows of history. <c>CreatedBy</c> and <c>RevokedBy</c> come back ready to show: a
     /// person's display name only when the stored value is exactly "Name (object id)" (how the customer site records a person) AND that
     /// object id is a member of this tenant; anything else, and every maker of an operator waiver, is <see cref="OperatorName"/>.

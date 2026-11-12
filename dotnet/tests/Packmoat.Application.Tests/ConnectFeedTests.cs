@@ -29,7 +29,7 @@ internal sealed class FakeSelfServiceFeeds : ISelfServiceFeedStore
 }
 
 /// <summary>
-/// #64 I1: <see cref="ConnectRules"/> (results, the two windows to the edge, two different people, the URL shape), the withdraw rule,
+/// <see cref="ConnectRules"/> (results, the two windows to the edge, two different people, the URL shape), the withdraw rule,
 /// <see cref="ConnectFeedCommands"/>' person checks, and the re-check hook in <see cref="AzureSetupCommands"/>.
 /// </summary>
 public class ConnectFeedTests
@@ -84,7 +84,7 @@ public class ConnectFeedTests
     [Fact]
     public void An_h2_settings_check_without_private_never_qualifies()
     {
-        var h2 = Pass("feed", "identity", "upstreams", "permissions", "views", "project");   // what #63 H2 records today
+        var h2 = Pass("feed", "identity", "upstreams", "permissions", "views", "project");   // what the delegated check records
         Assert.Equal(ConnectResult.NotPassed, ConnectRules.Check(Settings(results: h2), Developer(), Now));
     }
 
@@ -273,7 +273,7 @@ public class ConnectFeedTests
                 Shared.Verifications["selfco"] = Verification;
             }
             Feeds.Shared = Shared;
-            Commands = new AzureSetupCommands(Tenants, Directories, Shared, Checks, Check, new AzureSetupState(Clock), AzureSetupSettings.Parse("on"), Clock, feeds: Feeds,
+            Commands = new AzureSetupCommands(Tenants, Directories, Shared, Checks, Check, SetupStates.New(Clock), AzureSetupSettings.Parse("on"), Clock, new InProcessRateCounter(Clock), feeds: Feeds,
                 log: (level, message) => Logs.Add((level, message)));
         }
 
@@ -310,7 +310,7 @@ public class ConnectFeedTests
     [Fact]   // mutation: skip the withdrawal for a flagged (operator-made) tenant
     public async Task A_failed_recheck_of_a_connected_flagged_operator_tenant_withdraws_it_too()
     {
-        var w = new World(origin: TenantOrigin.Operator, feedSetup: FeedSetup.Customer);   // #207: made for its customer to connect, and connected
+        var w = new World(origin: TenantOrigin.Operator, feedSetup: FeedSetup.Customer);   // Made for its customer to connect, and connected
         w.Results(("upstreams", CheckStatus.Fail, "remove 1 extra upstream source(s): https://evil.example/"));
         var held = await w.Commands.RunAsync(w.Admin, w.Names, Token, default);
         Assert.Equal(FeedCheckOutcome.Failed, held.Outcome);
@@ -322,7 +322,7 @@ public class ConnectFeedTests
         Assert.Null(await w.Shared.GetVerificationAsync("selfco", default));
     }
 
-    /// <summary>#107 review: the 30-day blanking before a recorded check is best effort; its failure never blocks the record or the withdrawal.</summary>
+    /// <summary>The 30-day blanking before a recorded check is best effort; its failure never blocks the record or the withdrawal.</summary>
     [Fact]
     public async Task A_blanking_failure_is_logged_by_kind_and_the_check_is_still_recorded_and_withdraws()
     {
@@ -462,7 +462,7 @@ public class ConnectFeedTests
         var w = new World(connected: false);
         Assert.Null((await w.Commands.ViewAsync(w.Admin, default)).Connect);
         w.Checks.Rows.Add(Settings() with { Id = 1, ClientId = Client });
-        Assert.Null((await w.Commands.ViewAsync(w.Admin, default)).Connect);   // no developer proof yet (#64 I2)
+        Assert.Null((await w.Commands.ViewAsync(w.Admin, default)).Connect);   // no developer proof yet
         w.Checks.Rows.Add(Developer() with { Id = 2 });
         var offer = (await w.Commands.ViewAsync(w.Admin, default)).Connect;
         Assert.NotNull(offer);
@@ -483,7 +483,7 @@ public class ConnectFeedTests
         Assert.Null(view.Connect);
     }
 
-    /// <summary>#64 I1 follow-up: once the failed check is recorded, the browser going away (the request's token cancelled) must not skip the withdrawal.</summary>
+    /// <summary>Once the failed check is recorded, the browser going away (the request's token cancelled) must not skip the withdrawal.</summary>
     [Fact]
     public async Task A_browser_that_goes_away_after_a_failed_check_is_recorded_still_gets_the_feed_withdrawn()
     {

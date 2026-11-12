@@ -8,7 +8,7 @@ using Packmoat.Host.Web;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// #143 on the Azure DevOps check's sign-in, through the REAL OpenID Connect handler (the customer's own sign-in stays the fake): a decline
+/// on the Azure DevOps check's sign-in, through the REAL OpenID Connect handler (the customer's own sign-in stays the fake): a decline
 /// of Microsoft's consent page shows Approval needed with the person's own approval link, matched to the sign-in or not; any other error
 /// code shows Sign-in failed.
 /// </summary>
@@ -120,7 +120,7 @@ public partial class AzureSetupSiteTests
     }
 
     /// <summary>
-    /// #145: the failure event counts a check sign-in only when Microsoft had issued a code for it (the request is marked when the code
+    /// The failure event counts a check sign-in only when Microsoft had issued a code for it (the request is marked when the code
     /// arrives). Declines, bare and forged callbacks reach the event unmarked and never count, whatever the error code.
     /// </summary>
     [Fact]

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Image smoke (#197): proves a built image runs the entry point it should. CI runs it on every image it builds.
+# Image smoke: proves a built image runs the entry point it should. CI runs it on every image it builds.
 #   .github/scripts/image-smoke.sh <image> <entry dll>      e.g.  packmoat-core:ci /app/host/Packmoat.Server.dll
 # 1. docker inspect shows ENTRYPOINT ["dotnet", "<entry dll>"].
 # 2. The image's own packmoat-admin wrapper runs: --help exits 0, and keygen makes the throwaway master key for step 3.

@@ -7,7 +7,7 @@ using Packmoat.Infrastructure;
 
 namespace Packmoat.Host.Tests;
 
-// The fake Azure DevOps and the runs the bad-answer tests use. Shared with the hosted tests (#197), which compile this file in: their
+// The fake Azure DevOps and the runs the bad-answer tests use. Shared with the hosted tests, which compile this file in: their
 // customer pages read the same wording.
 public partial class OnboardingBadResponseTests
 {
@@ -62,7 +62,7 @@ public partial class OnboardingBadResponseTests
             FeedsApiBase = "https://feeds.example", PackagesBase = "https://pkgs.example", GraphApiBase = "https://vssps.example",
             AdminToken = AdminSecret, AdminTokenIsBearer = true, SharedAppClientId = AppId, SharedAppDirectoryId = Dir, RetryWaitCap = TimeSpan.Zero,
         };
-        if (customer) { o.CustomerWording = true; o.Support = support; }   // the CLI runs with the default (#119)
+        if (customer) { o.CustomerWording = true; o.Support = support; }   // the CLI runs with the default
         var tenant = new Tenant("acme", "Acme", "https://pkgs.example/", "org/", "https://pkgs.example/org/proj/_packaging/pub/nuget/v3/index.json", new TenantPolicy(14));
         return new OnboardingChecks(new HttpClient(fake), new StaticBasicCredentialSource("packmoat", "SP"), tenant, o).RunAsync(default);
     }

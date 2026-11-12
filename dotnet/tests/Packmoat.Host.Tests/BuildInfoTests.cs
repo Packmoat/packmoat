@@ -4,7 +4,7 @@ using static Packmoat.Host.Tests.ProxyFixture;
 
 namespace Packmoat.Host.Tests;
 
-/// <summary>#166: /healthz says which commit is running, so a deploy check can tell whether a merge has landed.</summary>
+/// <summary>/healthz says which commit is running, so a deploy check can tell whether a merge has landed.</summary>
 public class BuildInfoTests
 {
     private const string Sha = "0123456789abcdef0123456789abcdef01234567";

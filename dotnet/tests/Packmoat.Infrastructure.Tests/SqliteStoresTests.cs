@@ -4,7 +4,7 @@ using Packmoat.Infrastructure.Lifecycle;
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// The one list of SQLite adapters (#278 step 0, A3) the server, the command line and the hosted modules all build from: the eager
+/// The one list of SQLite adapters the server, the command line and the hosted modules all build from: the eager
 /// stores are made once, with the database, and every read gives the same one; each factory makes its adapter over the same database.
 /// </summary>
 [Collection("sqlite-pools")]

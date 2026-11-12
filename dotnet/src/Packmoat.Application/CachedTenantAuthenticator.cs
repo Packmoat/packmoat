@@ -5,7 +5,7 @@ namespace Packmoat.Application;
 /// <summary>
 /// Remembers successful token lookups for a few seconds so the database is not hit on every request.
 /// This bounds how long a revoked token, a changed waiver or a suspended tenant stays in effect. A token's expiry is exact: an entry is
-/// never kept past the token's own <c>expires_at</c>, nor past a known end the serving gate gave (<see cref="AuthResult.ServeUntil"/>, #174).
+/// never kept past the token's own <c>expires_at</c>, nor past a known end the serving gate gave (<see cref="AuthResult.ServeUntil"/>).
 /// </summary>
 public sealed class CachedTenantAuthenticator : ITenantAuthenticator
 {

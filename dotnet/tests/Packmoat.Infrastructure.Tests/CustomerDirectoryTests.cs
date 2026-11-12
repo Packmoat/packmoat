@@ -1,10 +1,59 @@
 using Microsoft.Data.Sqlite;
+using Npgsql;
 using Packmoat.Admin;
 using Packmoat.Application;
+using Packmoat.Domain;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
-/// <summary><see cref="CustomerDirectoryContract"/> on SQLite, and the tests only SQLite has (#232 S1).</summary>
+/// <summary>
+/// <see cref="CustomerDirectoryContract"/> on PostgreSQL, each test on a database of its own, and the lock only PostgreSQL
+/// takes: the tenant row the unbind reads FOR NO KEY UPDATE.
+/// </summary>
+[Collection(PostgresCollection.Name)]
+[Trait("Category", PostgresTestServer.Category)]
+public class PostgresCustomerDirectoryTests : CustomerDirectoryContract
+{
+    protected override IStoreEngine Engine => PostgresStoreEngine.Instance;
+
+    /// <summary>
+    /// The unbind takes the tenant's row FOR NO KEY UPDATE first, as the member token cap does, so it waits for
+    /// whoever holds that row (a member issue, the purge) and only then removes the link and revokes the directory's tokens. Here a
+    /// session holds the row; the unbind must wait for it, and finishes once it is let go. Without the lock it would write at once: the
+    /// link and the tokens it changes need no lock on the tenant row of their own.
+    /// </summary>
+    [PostgresFact]   // mutations: FOR NO KEY UPDATE dropped from the unbind; weakened to FOR KEY SHARE
+    public async Task The_unbind_waits_for_whoever_holds_the_tenant_row()
+    {
+        await using var t = await Engine.CreateAsync();
+        var db = ((PostgresTestDb)t).Db;
+        await AddTenantAsync(t, "acme");
+        var store = Engine.SignInDirectory(t);
+        Assert.True(await store.BindAsync(new DirectoryBinding(Dir, "acme", t.Clock.UtcNow, "op"), default));
+        var token = (await Engine.Tokens(t).IssueForMemberAsync("acme", Dir, "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "laptop", t.Clock.UtcNow.AddDays(9),
+            TokenKind.Developer, 5, default))!;
+
+        await using var holder = await db.OpenAsync();
+        await using var hold = await holder.BeginTransactionAsync();
+        // FOR NO KEY UPDATE, as a member issue holds it: the weakest lock the unbind must still wait for. A FOR UPDATE
+        // holder would also block an unbind weakened to FOR KEY SHARE, which a member issue does not, and the race would be back.
+        await using (var lockRow = new NpgsqlCommand("SELECT 1 FROM tenants WHERE id='acme' FOR NO KEY UPDATE", holder, hold)) await lockRow.ExecuteScalarAsync();
+
+        var running = Task.Run(() => store.UnbindAsync("acme", Dir, t.Clock.UtcNow, "op", default));
+        await PostgresTenantStoreTests.WaitForAsync(holder, hold, running);
+        Assert.False(running.IsCompleted, "the unbind wrote while another session held the tenant row");
+        Assert.NotNull(await store.GetAsync(Dir, default));
+        Assert.NotNull(await Engine.Tokens(t).AuthenticateAsync(token.Plaintext, default));
+
+        await hold.CommitAsync();
+        Assert.Equal(1, await running.WaitAsync(TimeSpan.FromSeconds(30)));
+        Assert.Null(await store.GetAsync(Dir, default));
+        Assert.Null(await Engine.Tokens(t).AuthenticateAsync(token.Plaintext, default));
+    }
+}
+
+/// <summary><see cref="CustomerDirectoryContract"/> on SQLite, and the tests only SQLite has.</summary>
 [Collection("sqlite-pools")]
 public class CustomerDirectoryTests : CustomerDirectoryContract
 {

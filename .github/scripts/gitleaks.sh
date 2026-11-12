@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Scan for committed secrets with a pinned gitleaks (#266): the release is downloaded by version and its sha256 checked before it runs.
+# Scan for committed secrets with a pinned gitleaks: the release is downloaded by version and its sha256 checked before it runs.
 # --redact: a finding is shown by its rule, file and line, never by the secret itself, so a real leak is not copied into a public log.
 # A false alarm is marked where it is, with an inline gitleaks:allow comment on its line, so each one is seen and reviewed on its own.
 # Usage: gitleaks.sh git <repository>   (every commit; the checkout needs fetch-depth: 0)

@@ -5,8 +5,7 @@ using Packmoat.Infrastructure.Tests.Postgres;
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// The schema's rules on SQLite: <see cref="SchemaRulesContract"/>, and the two checks that hold its coverage to the schema (#288 P2,
-/// PR 6): every trigger has a rules test by name (test 4), and every CHECK has a probe.
+/// The schema's rules on SQLite: <see cref="SchemaRulesContract"/>, and the two checks that hold its coverage to the schema: every trigger has a rules test by name (test 4), and every CHECK has a probe.
 /// </summary>
 [Collection("sqlite-pools")]
 public class SchemaRulesTests : SchemaRulesContract
@@ -45,13 +44,13 @@ public class SchemaRulesTests : SchemaRulesContract
             while (await r.ReadAsync()) schema.AddRange(SchemaShape.CheckBodies(r.GetString(1)).Select(b => Key(r.GetString(0), b)));
         }
 
-        Assert.Equal(19, schema.Count);
+        Assert.Equal(20, schema.Count);
         Assert.Equal(schema.Order(StringComparer.Ordinal), CheckProbes.Select(p => Key(p.Table, p.Check)).Order(StringComparer.Ordinal));
         Assert.All(CheckProbes, p => Assert.True(p.Accepted.Length > 0 && p.Refused.Length > 0, $"{p.Table} CHECK({p.Check}) needs a row each way"));
     }
 }
 
-/// <summary>The schema's rules on PostgreSQL (#288 P2, PR 6): <see cref="SchemaRulesContract"/>, each test on a database of its own.</summary>
+/// <summary>The schema's rules on PostgreSQL: <see cref="SchemaRulesContract"/>, each test on a database of its own.</summary>
 [Collection(PostgresCollection.Name)]
 [Trait("Category", PostgresTestServer.Category)]
 public class PostgresSchemaRulesTests : SchemaRulesContract

@@ -31,7 +31,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      # The pod's pause process is PID 1, as the compose kit's init is (#240): the server is not PID 1, so signals and an abort end it as
+      # The pod's pause process is PID 1, as the compose kit's init is: the server is not PID 1, so signals and an abort end it as
       # they would anywhere else.
       shareProcessNamespace: true
       # No Kubernetes API token: the server never calls the API.

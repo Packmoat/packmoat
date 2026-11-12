@@ -3,8 +3,8 @@ using Packmoat.Domain;
 namespace Packmoat.Application;
 
 /// <summary>
-/// Who sets up a tenant's feed (tenants.feed_setup, core migration 22, #207). <see cref="Operator"/>: the operator, on the command line
-/// (every tenant made before #207). <see cref="Customer"/>: the tenant's own Admins, with the Azure setup wizard and Connect, as a
+/// Who sets up a tenant's feed (tenants.feed_setup, core migration 22). <see cref="Operator"/>: the operator, on the command line
+/// (every tenant made before customers could connect their own feed). <see cref="Customer"/>: the tenant's own Admins, with the Azure setup wizard and Connect, as a
 /// self-made tenant's do; set by <c>tenant create … --azure-tenant</c> with no upstream options. Any operator write of the upstream or
 /// identity sets it back to <see cref="Operator"/>, so the wizard never replaces what an operator set.
 /// </summary>

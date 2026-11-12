@@ -4,7 +4,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// #119 PR A through the fake Azure DevOps: the wizard's check uses the customer wording (never the CLI's), the private check explains
+/// through the fake Azure DevOps: the wizard's check uses the customer wording (never the CLI's), the private check explains
 /// ADO's default feed (outside any project, named after the organisation), and the developer probe records the site's own sentences.
 /// </summary>
 public partial class DelegatedFeedCheckTests
@@ -60,7 +60,7 @@ public partial class DelegatedFeedCheckTests
     }
 }
 
-/// <summary>#119 PR A: the developer probe's site sentences (the CLI keeps the shared verdict's text).</summary>
+/// <summary>The developer probe's site sentences (the CLI keeps the shared verdict's text).</summary>
 public partial class DeveloperFeedProbeTests
 {
     [Theory]

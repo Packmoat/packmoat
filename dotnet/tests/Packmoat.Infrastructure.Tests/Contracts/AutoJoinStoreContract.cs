@@ -1,14 +1,15 @@
 using Packmoat.Application;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// The auto-join setting (#80) as a contract (#232 S1): no row means on, one row per tenant, no cache. Migration 11 and a failed read stay
+/// The auto-join setting as a contract: no row means on, one row per tenant, no cache. Migration 11 and a failed read stay
 /// in <see cref="AutoJoinStoreTests"/>.
 /// </summary>
 public abstract class AutoJoinStoreContract : StoreContract
 {
-    [Fact]
+    [EngineFact]
     public async Task No_row_reads_as_on()
     {
         await using var t = await CreateDbAsync();
@@ -16,7 +17,7 @@ public abstract class AutoJoinStoreContract : StoreContract
         Assert.True(await Engine.AutoJoin(t).IsOnAsync("acme", default));
     }
 
-    [Fact]
+    [EngineFact]
     public async Task Off_and_on_round_trip_with_who_and_when()
     {
         await using var t = await CreateDbAsync();
@@ -36,7 +37,7 @@ public abstract class AutoJoinStoreContract : StoreContract
         Assert.Equal("Ada", await ScalarAsync(t, "SELECT changed_by FROM auto_join_settings WHERE tenant_id='acme'"));
     }
 
-    [Fact]
+    [EngineFact]
     public async Task There_is_no_cache_a_change_made_elsewhere_is_read_at_once()
     {
         await using var t = await CreateDbAsync();
@@ -47,7 +48,7 @@ public abstract class AutoJoinStoreContract : StoreContract
         Assert.False(await store.IsOnAsync("acme", default));
     }
 
-    [Fact]
+    [EngineFact]
     public async Task The_schema_refuses_anything_but_zero_or_one_and_an_unknown_tenant()
     {
         await using var t = await CreateDbAsync();
@@ -59,7 +60,7 @@ public abstract class AutoJoinStoreContract : StoreContract
         Assert.Equal(0L, await ScalarAsync(t, "SELECT COUNT(*) FROM auto_join_settings"));
     }
 
-    [Fact]
+    [EngineFact]
     public async Task Each_tenant_has_its_own_setting()
     {
         await using var t = await CreateDbAsync();

@@ -6,9 +6,9 @@ using Packmoat.Infrastructure.Lifecycle;
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// A module's last check before a purge, in the help (#197 C3): the core's <c>tenant purge</c> line names nothing with no module, and a
+/// A module's last check before a purge, in the help: the core's <c>tenant purge</c> line names nothing with no module, and a
 /// module's words go between "only when due" and "recorded". The hint under <c>tenant purge-due</c> is pinned with the hosted module's
-/// words in the hosted lifecycle golden. The purge-due line is the core's generic words unless one module gives its own (#226).
+/// words in the hosted lifecycle golden. The purge-due line is the core's generic words unless one module gives its own.
 /// </summary>
 public class PurgeCheckNoteTests
 {
@@ -46,7 +46,7 @@ public class PurgeCheckNoteTests
     private const string DueLine = "tenant purge-due                                    ";
     private static readonly string Column = new(' ', 54);
 
-    [Fact]   // #226
+    [Fact]
     public async Task Without_a_module_the_purge_due_line_is_generic()
     {
         foreach (var help in new[] { await HelpAsync(), await HelpAsync(new NoteModule("plain", new("checked", "checked"))) })
@@ -58,7 +58,7 @@ public class PurgeCheckNoteTests
         }
     }
 
-    [Fact]   // #226. mutations: ignore DueLines; drop the indent
+    [Fact]   // mutations: ignore DueLines; drop the indent
     public async Task A_modules_purge_due_lines_replace_the_core_words_with_later_lines_indented()
     {
         var help = (await HelpAsync(new NoteModule("one", new("asked", "asked", ["first line of the module", "second line"])), new NoteModule("two", null))).Replace("\r", "");
@@ -66,7 +66,7 @@ public class PurgeCheckNoteTests
         Assert.DoesNotContain("any to check by hand", help);
     }
 
-    [Fact]   // #226. mutation: accept two modules
+    [Fact]   // mutation: accept two modules
     public async Task Two_modules_giving_purge_due_lines_stop_the_tool()
     {
         var o = new StringWriter();
@@ -78,7 +78,7 @@ public class PurgeCheckNoteTests
         Assert.Contains("Two modules give the tenant purge-due help lines", e.ToString());
     }
 
-    [Fact]   // #238. mutations: count an empty list as given, in the two-module check or in the lines' choice
+    [Fact]   // mutations: count an empty list as given, in the two-module check or in the lines' choice
     public async Task An_empty_list_of_purge_due_lines_counts_as_not_given()
     {
         var one = (await HelpAsync(new NoteModule("one", new("a", "a", [])))).Replace("\r", "");

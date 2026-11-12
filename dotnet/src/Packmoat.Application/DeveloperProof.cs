@@ -23,17 +23,17 @@ public sealed record DeveloperProbeDecision(DeveloperFinding Finding, CheckStatu
 
 /// <summary>
 /// The developer check's verdict, pure, shared by the CLI's <c>onboard check</c> (a developer PAT) and the wizard's developer proof (a
-/// developer's own sign-in, #64 I2). Two controls come first, so a refusal means something: (a) Packmoat's own identity reads the
+/// developer's own sign-in). Two controls come first, so a refusal means something: (a) Packmoat's own identity reads the
 /// public-only feed index (200), and (b) the developer's credential lists the organisation's feeds (200). Only then does the developer's
 /// GET of the feed index decide: 401 or 403 PASS, 200 FAIL, anything else (404 included, per the I0 spike) NOT VERIFIED.
 /// </summary>
 public static class DeveloperProbeVerdict
 {
     public const string Id = ConnectRules.DeveloperCheck;
-    /// <summary>The site's title (#119; the CLI prints its own).</summary>
+    /// <summary>The site's title (the CLI prints its own).</summary>
     public const string Title = "A developer account is refused on Packmoat's feed";
 
-    // The site's detail for each finding (#119 item 8). The CLI keeps the verdict's own text below.
+    // The site's detail for each finding. The CLI keeps the verdict's own text below.
     public const string SiteRefused = "Your account could sign in to Azure DevOps, and Azure DevOps refused it on Packmoat's feed.";
     public const string SiteCanRead = "Your account can read Packmoat's feed directly.";
     public const string SiteNotMember = "Azure DevOps didn't list this organisation's feeds for your account.";
@@ -102,7 +102,7 @@ public sealed record FeedUpstream(string? Protocol, string? SourceType, string? 
 public sealed record VisibleFeed(string Id, string Name, IReadOnlyList<FeedUpstream>? Upstreams);
 
 /// <summary>
-/// The bypass advisory (#64 I2), pure: from the developer's own feed list, the other feeds that let developers skip Packmoat's cooldown:
+/// The bypass advisory, pure: from the developer's own feed list, the other feeds that let developers skip Packmoat's cooldown:
 /// a public upstream with protocol nuget (any case), or an internal upstream pointing at the public-only feed. Advisory only: a WARN
 /// (found) or NOT VERIFIED (a feed's upstream sources were not in the list: never a silent pass), never a FAIL, so it never blocks Connect.
 /// </summary>
@@ -110,13 +110,13 @@ public static class BypassAdvisory
 {
     public const string Id = "bypass";
     public const string Title = "No other feed lets developers skip Packmoat";
-    /// <summary>The developer's sentence (#119 item 9): {0} is the feed names.</summary>
+    /// <summary>The developer's sentence: {0} is the feed names.</summary>
     public const string FoundSentence = "Feeds that let you skip Packmoat's cooldown: {0}. Ask your Admin to remove nuget.org, and any upstream that points to Packmoat's feed, from them.";
-    /// <summary>The same finding on the Admin's Connect card (#119 item 9): {0} is the feed names.</summary>
+    /// <summary>The same finding on the Admin's Connect card: {0} is the feed names.</summary>
     public const string AdminFoundSentence = "Feeds that let developers skip Packmoat's cooldown: {0}. Remove nuget.org, and any upstream that points to Packmoat's feed, from them.";
-    /// <summary>The Admin's sentence for a row recorded before the names were kept (#119).</summary>
+    /// <summary>The Admin's sentence for a row recorded before the names were kept.</summary>
     public const string AdminFoundOlderSentence = "A developer's check found feeds that skip Packmoat's cooldown. Remove nuget.org, and any upstream that points to Packmoat's feed, from them.";
-    /// <summary>Not checked, on the Admin's Connect card (#119): about the developer's account, not the reader's.</summary>
+    /// <summary>Not checked, on the Admin's Connect card: about the developer's account, not the reader's.</summary>
     public const string AdminNotCheckedSentence = "Bypass not checked: Azure DevOps didn't show the developer's account the upstream sources of every feed, so Packmoat couldn't tell whether any of them get packages from nuget.org.";
     public const string NotCheckedSentence = "Bypass not checked: Azure DevOps didn't show the upstream sources of {0} of your feeds to your account, so Packmoat couldn't tell whether they get packages from nuget.org.";
     public const string NoneSentence = "None of the {0} other feeds your account can see gets packages from nuget.org or from Packmoat's feed.";
@@ -159,7 +159,7 @@ public static class BypassAdvisory
 public sealed record PrivateProbe(string Name, int? Status, bool OrganisationDefault = false);
 
 /// <summary>
-/// The 'private' result (#64 I2), pure: Packmoat's own identity must be refused on every other feed and non-private view the Admin's
+/// The 'private' result, pure: Packmoat's own identity must be refused on every other feed and non-private view the Admin's
 /// account can see. It limits the blast radius if the shared certificate leaks. FAIL on any 200 or 3xx (with the names); PASS only with
 /// the identity check PASS, the control (Packmoat reads the public-only feed: 200) and every probe 401 or 403; anything else, or more than
 /// <see cref="MaxFeeds"/> feeds or <see cref="MaxProbes"/> probes, NOT VERIFIED. Only feeds the Admin can see were checked, and it says so.
@@ -172,12 +172,12 @@ public static class PrivateFeedVerdict
     public const int MaxProbes = 100;
     /// <summary>The plan's wording: {0} the number of other feeds.</summary>
     public const string PassSentence = "Packmoat feed access can read Packmoat's feed and is refused on the {0} other feeds your account can see. Feeds your account can't see weren't checked.";
-    /// <summary>#119 item 4: {0} the feed's name.</summary>
+    /// <summary>{0} the feed's name.</summary>
     public const string FailOneSentence = "Packmoat feed access can read 1 other feed: {0}.";
-    /// <summary>#119 item 4: {0} how many, {1} their names.</summary>
+    /// <summary>{0} how many, {1} their names.</summary>
     public const string FailManySentence = "Packmoat feed access can read {0} other feeds: {1}.";
     public const string FailHint = "Remove its access there (often through the project's Readers group, or a view shared with your organisation), then check again.";
-    /// <summary>#119 item 4, when Azure DevOps' default feed is one of them: {0} its name.</summary>
+    /// <summary>When Azure DevOps' default feed is one of them: {0} its name.</summary>
     public const string DefaultFeedHint = "Azure DevOps made a feed called {0} that everyone in your organisation can read. In its Permissions, remove Project Collection Valid Users, or delete the feed if you don't use it.";
 
     /// <summary>
@@ -200,7 +200,7 @@ public static class PrivateFeedVerdict
         return sb.ToString();
     }
 
-    /// <summary>More feeds than one check tests. <paramref name="support"/>: who to ask (#186), the operator's address or neutral words.</summary>
+    /// <summary>More feeds than one check tests. <paramref name="support"/>: who to ask, the operator's address or neutral words.</summary>
     public static CheckResult TooMany(int feeds, int probes, SupportContact support) => new(Id, Title, CheckStatus.Skip,
         $"NOT VERIFIED: your account can see {feeds} other feeds ({probes} feeds and views to test), more than Packmoat tests in one check ({MaxFeeds} feeds, {MaxProbes} tests). {support.CapitalPhrase}.");
 
@@ -258,7 +258,7 @@ public static class GuidIndexUrls
 }
 
 /// <summary>
-/// Packmoat's own identity reading feed indexes (#64 I2): the active shared app's certificate, signed in to the customer's directory, as
+/// Packmoat's own identity reading feed indexes: the active shared app's certificate, signed in to the customer's directory, as
 /// the proxy would. Used as the control of both the private check and the developer proof, and to probe the customer's other feeds. The
 /// HTTP lives in Infrastructure: its own client, <c>pkgs.dev.azure.com</c> only, <see cref="GuidIndexUrls"/> only, no redirects.
 /// </summary>
@@ -278,7 +278,7 @@ public sealed record DeveloperProbeRequest(string DirectoryId, string FeedIndexU
 public sealed record DeveloperProbeRun(IReadOnlyList<CheckResult> Results, DeveloperFinding Finding);
 
 /// <summary>
-/// The developer proof's probe (#64 I2) with a developer's own short-lived Azure DevOps token: (a) Packmoat's identity reads the index,
+/// The developer proof's probe with a developer's own short-lived Azure DevOps token: (a) Packmoat's identity reads the index,
 /// (b) the developer lists the organisation's feeds, (c) the developer GETs the index, (d) the bypass advisory from (b). The token is used
 /// only for this call and sent only to <c>feeds.dev.azure.com</c> and the exact feed index URL; never stored, logged or put in a result.
 /// </summary>

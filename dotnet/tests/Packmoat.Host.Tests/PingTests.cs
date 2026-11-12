@@ -23,7 +23,7 @@ public class PingTests
 
     /// <summary>
     /// The deploy canary as docs/runbooks/cicd.md creates it: no path prefix, a feed that does not exist and no upstream binding, so its
-    /// upstream is not set up. Its operator-issued token must keep pinging: the proxy's token path does not ask about the upstream (#63).
+    /// upstream is not set up. Its operator-issued token must keep pinging: the proxy's token path does not ask about the upstream.
     /// </summary>
     [Fact]
     public async Task A_canary_tenant_with_no_upstream_still_gets_204()

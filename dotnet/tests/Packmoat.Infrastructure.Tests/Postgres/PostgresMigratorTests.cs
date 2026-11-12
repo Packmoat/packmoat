@@ -5,7 +5,7 @@ using Packmoat.Infrastructure.Postgres;
 namespace Packmoat.Infrastructure.Tests.Postgres;
 
 /// <summary>
-/// The PostgreSQL migrator (#288 P2, PR 4) on test tracks (the core track's PostgreSQL statements are PR 5). Each test has its own database
+/// The PostgreSQL migrator on test tracks (the core track's PostgreSQL statements are the core's own). Each test has its own database
 /// (<see cref="PostgresScratchDatabase"/>), made before it and dropped after it. The rules the SQLite migrator shares (a track declared
 /// twice, a module named core, an undeclared track table, a track newer than this build) come from <see cref="TrackRules"/>, so their
 /// messages are SQLite's word for word.
@@ -393,7 +393,7 @@ public sealed class PostgresMigratorTests : IAsyncLifetime
 
 /// <summary>
 /// The migrator's settings, with no server: the lock timeout and the lock's key. (Through <see cref="ISchemaMigrator"/> it runs the core's
-/// real track since #288 P2 PR 5: PostgresCoreBaselineTests.)
+/// real track: PostgresCoreBaselineTests.)
 /// </summary>
 public class PostgresMigratorRefusalTests
 {
@@ -417,9 +417,10 @@ public class PostgresMigratorRefusalTests
 }
 
 /// <summary>
-/// A database of its own on the test server (#288): CREATE DATABASE pm_&lt;guid&gt; when made, DROP DATABASE … WITH (FORCE) when disposed.
+/// A database of its own on the test server: CREATE DATABASE pm_&lt;guid&gt; when made, DROP DATABASE … WITH (FORCE) when disposed.
+/// Public so a module's test project, which references this one, can make and read one too.
 /// </summary>
-internal sealed class PostgresScratchDatabase : IAsyncDisposable
+public sealed class PostgresScratchDatabase : IAsyncDisposable
 {
     private readonly string name;
     private readonly string connectionString;
@@ -433,40 +434,64 @@ internal sealed class PostgresScratchDatabase : IAsyncDisposable
     /// <summary>The database's name (pm_ and a GUID).</summary>
     public string Name => name;
 
-    /// <summary>An empty database, or (with <paramref name="template"/>) a copy of that one: CREATE DATABASE … TEMPLATE.</summary>
-    public static async Task<PostgresScratchDatabase> CreateAsync(string? template = null)
+    /// <summary>
+    /// An empty database, or (with <paramref name="template"/>) a copy of that one: CREATE DATABASE … TEMPLATE. With <paramref name="owner"/>,
+    /// that role owns it (and so its public schema, which PostgreSQL 15 and newer give to the database's owner).
+    /// </summary>
+    public static async Task<PostgresScratchDatabase> CreateAsync(string? template = null, string? owner = null)
     {
         var name = $"pm_{Guid.NewGuid():N}";
         await using (var admin = new NpgsqlConnection(Admin()))
         {
             await admin.OpenAsync();
-            await using var create = new NpgsqlCommand(template is null ? $"CREATE DATABASE {name}" : $"CREATE DATABASE {name} TEMPLATE {template}", admin);
+            await using var create = new NpgsqlCommand($"CREATE DATABASE {name}" + (template is null ? "" : $" TEMPLATE {template}") + (owner is null ? "" : $" OWNER {owner}"), admin);
             await create.ExecuteNonQueryAsync();
         }
         return new PostgresScratchDatabase(name, new NpgsqlConnectionStringBuilder(PostgresTestServer.ConnectionString) { Database = name }.ConnectionString);
     }
 
     private static readonly SemaphoreSlim TemplateGate = new(1, 1);
-    private static PostgresScratchDatabase? template;
+
+    /// <summary>The templates this run made, by the names of the module tracks each was migrated with ("" for the core's alone).</summary>
+    private static readonly Dictionary<string, PostgresScratchDatabase> Templates = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// A database at the core's current schema (#303): a copy of the template, which is made once per test run, on first use, by the
-    /// migrator (<see cref="ISchemaMigrator"/>), and dropped when the Postgres collection ends (<see cref="PostgresTemplateFixture"/>).
-    /// Copying is far quicker than migrating each database. The template is never connected to after it is made: PostgreSQL copies a
-    /// database only while nothing is connected to it.
+    /// A database at the core's current schema, then <paramref name="modules"/>' (none: the core's alone): a copy of the template
+    /// for exactly those tracks, which is made once per test run, on first use, by the migrator (<see cref="ISchemaMigrator"/>), and
+    /// dropped when the Postgres collection ends (<see cref="PostgresTemplateFixture"/>). An engine that adds a module's track so gets a template of its own beside the core's. Copying is far quicker than migrating each database. A template is never
+    /// connected to after it is made: PostgreSQL copies a database only while nothing is connected to it.
     /// </summary>
-    public static async Task<PostgresScratchDatabase> FromTemplateAsync()
+    public static async Task<PostgresScratchDatabase> FromTemplateAsync(IReadOnlyList<MigrationTrack>? modules = null) =>
+        (await FromTemplateAsync(modules, asAppRole: false)).Scratch;
+
+    /// <summary>
+    /// As <see cref="FromTemplateAsync(IReadOnlyList{MigrationTrack}?)"/>; with <paramref name="asAppRole"/> the template is
+    /// owned by this run's owner role (<see cref="RunRoles"/>) and migrated by it with <c>db migrate --grant-to</c> this run's app role, as
+    /// production's owner would, and each copy is owned by the owner role too. Returns the copy and, with <paramref name="asAppRole"/>, the roles.
+    /// </summary>
+    public static async Task<(PostgresScratchDatabase Scratch, PostgresTestRoles? Roles)> FromTemplateAsync(IReadOnlyList<MigrationTrack>? modules, bool asAppRole)
     {
+        modules ??= [];
+        var key = (asAppRole ? "app-role:" : "") + string.Join(",", modules.Select(m => m.Name));
         await TemplateGate.WaitAsync();
         try
         {
-            if (template is null)
+            var roles = asAppRole ? RunRoles ??= await PostgresTestRoles.CreateAsync() : null;
+            if (!Templates.TryGetValue(key, out var template))
             {
-                var made = await CreateAsync();
+                var made = await CreateAsync(owner: roles?.Owner);
                 try
                 {
-                    await using var db = made.Database();
-                    await ((ISchemaMigrator)db).MigrateAsync([]);
+                    if (roles is null)
+                    {
+                        await using var db = made.Database();
+                        await ((ISchemaMigrator)db).MigrateAsync(modules);
+                    }
+                    else
+                    {
+                        await using var db = roles.Database(made, roles.Owner);
+                        await db.MigrateAndGrantAsync(modules, roles.App);
+                    }
                 }
                 catch
                 {
@@ -474,9 +499,9 @@ internal sealed class PostgresScratchDatabase : IAsyncDisposable
                     throw;
                 }
                 // The migrator's pooled connections are closed with its data source (disposed above), so nothing holds the template open.
-                template = made;
+                Templates[key] = template = made;
             }
-            return await CreateAsync(template.Name);
+            return (await CreateAsync(template.Name, roles?.Owner), roles);
         }
         finally
         {
@@ -484,16 +509,32 @@ internal sealed class PostgresScratchDatabase : IAsyncDisposable
         }
     }
 
-    /// <summary>Drops the template, if this run made one. The next <see cref="FromTemplateAsync"/> makes it again.</summary>
+    /// <summary>
+    /// This run's owner and app roles, made with the first app-role template and dropped with the templates
+    /// (<see cref="DropTemplateAsync"/>), after them: a role is dropped only once no database holds anything of it.
+    /// </summary>
+    private static PostgresTestRoles? RunRoles;
+
+    /// <summary>
+    /// Drops every template this run made, then this run's roles. The next <see cref="FromTemplateAsync(IReadOnlyList{MigrationTrack}?)"/>
+    /// makes its template again.
+    /// </summary>
     public static async Task DropTemplateAsync()
     {
         await TemplateGate.WaitAsync();
         try
         {
-            if (template is { } made)
+            var made = Templates.Values.ToList();
+            Templates.Clear();
+            try
             {
-                template = null;
-                await made.DisposeAsync();
+                foreach (var template in made) await template.DisposeAsync();
+            }
+            finally
+            {
+                var roles = RunRoles;
+                RunRoles = null;
+                if (roles is not null) await roles.DisposeAsync();
             }
         }
         finally
@@ -593,7 +634,7 @@ internal sealed class PostgresScratchDatabase : IAsyncDisposable
 }
 
 /// <summary>
-/// The Postgres collection's fixture (#303): when the collection's last test has run, it drops the migrated template every scratch database
+/// The Postgres collection's fixture: when the collection's last test has run, it drops the migrated template every scratch database
 /// was copied from (<see cref="PostgresScratchDatabase.FromTemplateAsync"/>), so a run leaves no database behind on the server.
 /// </summary>
 public sealed class PostgresTemplateFixture : IAsyncLifetime

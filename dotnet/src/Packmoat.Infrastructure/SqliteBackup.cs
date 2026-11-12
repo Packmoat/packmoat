@@ -8,7 +8,7 @@ public static class SqliteBackup
     public enum KeyStatus { NotChecked, Matches, Mismatch, NotRecorded }
 
     /// <param name="SchemaVersion">The core's schema version.</param>
-    /// <param name="Tracks">Each module's migration track in the file (#196), by name, with its version; null or empty for none.</param>
+    /// <param name="Tracks">Each module's migration track in the file, by name, with its version; null or empty for none.</param>
     public sealed record Verification(bool Ok, string Detail, int SchemaVersion, long Tenants, long Tokens, long AuditEvents, KeyStatus Key = KeyStatus.NotChecked,
         IReadOnlyList<(string Track, int Version)>? Tracks = null);
 

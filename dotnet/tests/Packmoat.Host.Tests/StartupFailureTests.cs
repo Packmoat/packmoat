@@ -6,7 +6,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// #240: an error at start ends the server with exit code 1 and one error: line, instead of an abort that a container's first process
+/// An error at start ends the server with exit code 1 and one error: line, instead of an abort that a container's first process
 /// ignores. A known error (an InvalidOperationException, which names a setting but never its value) prints its message; any other prints
 /// only its type and stack trace, never its message.
 /// </summary>

@@ -3,7 +3,7 @@ using Packmoat.Admin;
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// packmoat-admin's setting errors are the usual "error:" line and exit 1, never a crash, and never print a value or a path (#238).
+/// packmoat-admin's setting errors are the usual "error:" line and exit 1, never a crash, and never print a value or a path.
 /// A master key that is set but bad (or whose file is missing) is an error even where the key check is optional: only a key that is not
 /// set at all skips the check in verify, restore, backup and db check-migrations.
 /// </summary>

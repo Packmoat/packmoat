@@ -1,9 +1,18 @@
 using Microsoft.Data.Sqlite;
 using Packmoat.Application;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
-/// <summary><see cref="AutoJoinStoreContract"/> on SQLite, and the tests only SQLite has (#232 S1).</summary>
+/// <summary><see cref="AutoJoinStoreContract"/> on PostgreSQL, each test on a database of its own.</summary>
+[Collection(PostgresCollection.Name)]
+[Trait("Category", PostgresTestServer.Category)]
+public class PostgresAutoJoinStoreTests : AutoJoinStoreContract
+{
+    protected override IStoreEngine Engine => PostgresStoreEngine.Instance;
+}
+
+/// <summary><see cref="AutoJoinStoreContract"/> on SQLite, and the tests only SQLite has.</summary>
 [Collection("sqlite-pools")]
 public class AutoJoinStoreTests : AutoJoinStoreContract
 {
@@ -28,7 +37,7 @@ public class AutoJoinStoreTests : AutoJoinStoreContract
         Assert.Equal(0L, await ScalarAsync(t, "SELECT COUNT(*) FROM auto_join_settings"));
     }
 
-    // Moved from the contract (#303): SQLite stores 'on' as text, so its CHECK refuses it. PostgreSQL cannot read 'on' as a bigint at all
+    // Moved from the contract: SQLite stores 'on' as text, so its CHECK refuses it. PostgreSQL cannot read 'on' as a bigint at all
     // (22P02, before any CHECK), which is not a refusal there.
     [Fact]
     public async Task The_schema_refuses_on_as_the_flag()

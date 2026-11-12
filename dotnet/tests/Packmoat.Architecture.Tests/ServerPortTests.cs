@@ -4,7 +4,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// PORT (#233 E2): the core server's entry point (Packmoat.Server's Program.cs) moves to http://+:PORT when PORT is set, and changes
+/// PORT: the core server's entry point (Packmoat.Server's Program.cs) moves to http://+:PORT when PORT is set, and changes
 /// nothing when it is not. A bad value stops the server at start, naming PORT but not the value. CI's PORT smoke runs the image with it.
 /// </summary>
 public class ServerPortTests
@@ -37,12 +37,11 @@ public class ServerPortTests
     [InlineData("99999999999")]
     public void A_PORT_outside_1_to_65535_stops_the_start_and_the_error_does_not_echo_it(string port)
     {
-        var ex = Assert.Throws<SettingsException>(() => ServerPort.Apply([], port));   // mutation: InvalidOperationException (#240)
+        var ex = Assert.Throws<SettingsException>(() => ServerPort.Apply([], port));   // mutation: InvalidOperationException
         Assert.Equal("PORT must be a whole number from 1 to 65535.", ex.Message);
     }
 
-    // mutations: Program.cs reads another variable, calls PackmoatApp.Build with args as they are, runs the server outside StartupFailure
-    // (#240), or keeps the line only in a comment
+    // mutations: Program.cs reads another variable, calls PackmoatApp.Build with args as they are, runs the server outside StartupFailure, or keeps the line only in a comment
     [Fact]
     public void The_entry_point_reads_PORT_and_passes_what_Apply_returns()
     {
@@ -53,7 +52,7 @@ public class ServerPortTests
             program);
     }
 
-    // mutations: docker run --init in port-smoke.sh (an abort then ends the container, so the smoke no longer sees the hang, #240); drop
+    // mutations: docker run --init in port-smoke.sh (an abort then ends the container, so the smoke no longer sees the hang); drop
     // the no-master-key run
     [Fact]
     public void The_port_smoke_runs_its_failing_starts_with_no_init()

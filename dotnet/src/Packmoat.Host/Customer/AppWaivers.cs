@@ -9,7 +9,7 @@ using static Packmoat.Host.Customer.AppHtml;
 namespace Packmoat.Host.Customer;
 
 /// <summary>
-/// The customer site's Waivers page (#157): /waivers for every role (a Developer sees the active list read-only and no forms), and the
+/// The customer site's Waivers page: /waivers for every role (a Developer sees the active list read-only and no forms), and the
 /// Admin-only writes: POST /waivers/create, GET and POST /waivers/revoke, POST /waivers/reauth. Thin handlers over
 /// <see cref="CustomerWaiverCommands"/> and <see cref="CustomerWaiverQueries"/>, which hold every rule; the tenant comes only from the
 /// session. Every write is a POST that has passed the antiforgery gate, with this site's Origin and a single-use nonce. The role and the
@@ -20,7 +20,7 @@ internal static class AppWaivers
 {
     public const string Path = "/waivers";
 
-    // The wording of #157, as visible text. The command is shown as code.
+    // The waiver wording, as visible text. The command is shown as code.
     internal const string PageText = "A waiver lets one exact version through the cooldown now. Use it for urgent fixes. Packmoat serves the version within seconds. " +
         "If a developer's restore still fails, clear their NuGet HTTP cache with dotnet nuget locals http-cache --clear and restore again. " +
         "Waivers end on their expiry date, at most 30 days.";
@@ -32,7 +32,7 @@ internal static class AppWaivers
         "<p>" + E("If a developer's restore still fails, clear their NuGet HTTP cache with") + $" <code>{E(CacheCommand)}</code> " +
         E("and restore again. Waivers end on their expiry date, at most 30 days.") + "</p>";
 
-    /// <summary>What a Developer is told (and the token page's NU1102 help says the same, #157).</summary>
+    /// <summary>What a Developer is told (and the token page's NU1102 help says the same).</summary>
     internal const string AskAnAdmin = "ask a Packmoat Admin in your organisation to waive that exact version";
 
     // ---------------------------------------------------------------- routing
@@ -186,7 +186,7 @@ internal static class AppWaivers
             changes = $"<p class=\"next\"><strong>Need a version waived?</strong>Only a Packmoat Admin can add or revoke waivers: {E(AskAnAdmin)}.</p>";
         else if (fresh)
         {
-            var nonce = Nonces(ctx).Issue(NonceKey(actor));
+            var nonce = await Nonces(ctx).IssueAsync(NonceKey(actor), ctx.RequestAborted);
             changes = "<h2>Add a waiver</h2>" +
                 $"<form method=\"post\" action=\"/waivers/create\" class=\"create\">{Af(ctx)}{Hidden("nonce", nonce)}" +
                 $"<label for=\"package\">Package</label><input id=\"package\" name=\"package\" type=\"text\" maxlength=\"{WaiverRules.MaxPackageId}\" required autocomplete=\"off\" placeholder=\"for example: Newtonsoft.Json\">" +
@@ -232,7 +232,7 @@ internal static class AppWaivers
     {
         RequireFreshAdmin(ctx, actor);
         var form = await ctx.Request.ReadFormAsync(ctx.RequestAborted);
-        if (!Nonces(ctx).Consume(Form(form, "nonce"), NonceKey(actor))) { await FormUsed(ctx); return; }
+        if (!await Nonces(ctx).ConsumeAsync(Form(form, "nonce"), NonceKey(actor), ctx.RequestAborted)) { await FormUsed(ctx); return; }
         var days = AdminInput.Days(Form(form, "days"), WaiverRules.MinCustomerDays, WaiverRules.MaxCustomerDays, "bad-days", out _)
                    ?? throw new WaiverRefusedException(WaiverRefusal.BadExpiry);
         await Commands(ctx).AddAsync(actor, Form(form, "package"), Form(form, "version"), days, Form(form, "reason"), ctx.RequestAborted);
@@ -254,7 +254,7 @@ internal static class AppWaivers
         RequireFreshAdmin(ctx, actor);
         var w = await FindActive(ctx, actor, QueryOne(ctx, "waiver"));
         if (w is null) { SeeOther(ctx, "/waivers?m=gone"); return; }
-        var nonce = Nonces(ctx).Issue(NonceKey(actor));
+        var nonce = await Nonces(ctx).IssueAsync(NonceKey(actor), ctx.RequestAborted);
         await Show(ctx, 200, "Revoke waiver",
             $"<section class=\"card notice\" aria-labelledby=\"confirm-h\"><h1 id=\"confirm-h\">Revoke the waiver for {E(w.PackageId)} {E(w.Version)}?</h1>" +
             $"<p>{E($"Made by {w.CreatedBy}, expires {When(w.ExpiresAt)}. Reason: {w.Reason}")}</p>" +
@@ -268,7 +268,7 @@ internal static class AppWaivers
     {
         RequireFreshAdmin(ctx, actor);
         var form = await ctx.Request.ReadFormAsync(ctx.RequestAborted);
-        if (!Nonces(ctx).Consume(Form(form, "nonce"), NonceKey(actor))) { await FormUsed(ctx); return; }
+        if (!await Nonces(ctx).ConsumeAsync(Form(form, "nonce"), NonceKey(actor), ctx.RequestAborted)) { await FormUsed(ctx); return; }
         var raw = Form(form, "waiver");
         var id = AdminInput.WaiverId(raw, out _);
         var done = id is not null && string.Equals(id, raw, StringComparison.Ordinal) && await Commands(ctx).RevokeAsync(actor, id, ctx.RequestAborted);

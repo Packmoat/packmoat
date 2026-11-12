@@ -1,4 +1,4 @@
-// Checks the conformance vectors outside .NET (#209): every file in ../vectors against its JSON Schema in ../schema (draft-07), with
+// Checks the conformance vectors outside .NET: every file in ../vectors against its JSON Schema in ../schema (draft-07), with
 // Ajv in strict mode. It also makes the checks a schema cannot say (../README.md, section 6): the vector and schema files pair one to
 // one, case names are unique in a file, and every time is a real calendar time. Run from this folder: npm ci, then npm run check.
 // Exit 0 when every file passes, 1 otherwise. A future implementation's runner can start from here.

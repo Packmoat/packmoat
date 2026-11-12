@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Builder;
 namespace Packmoat.Host;
 
 /// <summary>
-/// How a server's entry point builds and runs the server (#240), so that an error at start ends the process with exit code 1 and one
+/// How a server's entry point builds and runs the server, so that an error at start ends the process with exit code 1 and one
 /// <c>error:</c> line. Left unhandled, .NET ends such an error with an abort, which the kernel ignores for a container's first process, so
 /// without an init the container would keep running instead of exiting.
 /// <para>An <see cref="InvalidOperationException"/> (a <c>SettingsException</c>, PORT, PACKMOAT_HOSTS and the other start checks) prints its

@@ -1,7 +1,7 @@
 namespace Packmoat.Infrastructure;
 
 /// <summary>
-/// The migration tracks' rules that hold on every engine (#196, #288): the migrators call them before anything is written, so SQLite and
+/// The migration tracks' rules that hold on every engine: the migrators call them before anything is written, so SQLite and
 /// PostgreSQL refuse the same databases with the same words. Reading the database (which tables exist, which versions are recorded) is
 /// the engine's; judging what was read is here. Public, not internal: the PostgreSQL adapter is another assembly, and a core assembly may
 /// share its internals only with its own .Tests project (CoreSplitArchitectureTests).

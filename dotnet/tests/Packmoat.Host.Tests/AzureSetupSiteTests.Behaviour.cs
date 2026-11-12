@@ -7,7 +7,7 @@ using Packmoat.Host.Customer;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// #119 PR B through the running host: step 1 survives Microsoft's approval page (item 2), the developer's page names the feed (item 6),
+/// through the running host: step 1 survives Microsoft's approval page (item 2), the developer's page names the feed (item 6),
 /// and Connect's fresh sign-in says how it went when it comes back (item 10).
 /// </summary>
 public partial class AzureSetupSiteTests
@@ -146,7 +146,7 @@ public partial class AzureSetupSiteTests
         Assert.Equal(("fabrikam", "", "other-feed"), Step1((await ben.GetTextAsync(AppAzureSetup.Path)).Body));
     }
 
-    [Fact]   // review F3. mutation: the held check always wins, or the draft always wins
+    [Fact]   // mutation: the held check always wins, or the draft always wins
     public async Task Of_the_held_check_and_the_draft_the_newer_one_fills_step_one()
     {
         await using var site = await StartAsync();
@@ -179,7 +179,7 @@ public partial class AzureSetupSiteTests
         return form[..form.IndexOf("</form>", StringComparison.Ordinal)];
     }
 
-    [Fact]   // review F1. mutation: no default button, or one with a formaction
+    [Fact]   // mutation: no default button, or one with a formaction
     public async Task Enter_in_step_one_never_opens_the_approval_page()
     {
         await using var site = await StartAsync();
@@ -196,7 +196,7 @@ public partial class AzureSetupSiteTests
         Assert.Equal("<button type=\"submit\" disabled hidden aria-hidden=\"true\"></button>", Regex.Match(noCheck, "<button[^>]*>[^<]*</button>").Value);
     }
 
-    [Fact]   // review F2. mutation: the link to pass on is missing, or is a link
+    [Fact]   // mutation: the link to pass on is missing, or is a link
     public async Task An_admin_who_is_not_the_directory_administrator_can_pass_the_approval_page_on()
     {
         await using var site = await StartAsync();
@@ -277,7 +277,7 @@ public partial class AzureSetupSiteTests
         Assert.DoesNotContain(AppHtml.E(AppAzureSetup.ReauthUnconfirmedLine(TestOperator.Support)), (await b.GetTextAsync(AppAzureSetup.Path)).Body);   // only when coming back
     }
 
-    [Fact]   // review F4. mutation: no line when signed in but nothing to connect
+    [Fact]   // mutation: no line when signed in but nothing to connect
     public async Task Back_from_a_confirmed_sign_in_with_nothing_to_connect_the_page_says_check_again()
     {
         await using var site = await StartAsync();

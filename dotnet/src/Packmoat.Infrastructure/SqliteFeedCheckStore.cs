@@ -14,7 +14,7 @@ public sealed class SqliteFeedCheckStore : IFeedCheckStore
 
     public SqliteFeedCheckStore(SqliteDatabase db) => _db = db;
 
-    /// <summary>One result as stored. Names (#119) is left out when null, so a row without names reads and looks as before.</summary>
+    /// <summary>One result as stored. Names is left out when null, so a row without names reads and looks as before.</summary>
     private sealed record StoredResult(string Id, string Title, string Status, string Detail,
         [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string[]? Names = null);
 

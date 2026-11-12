@@ -1,12 +1,16 @@
 using Packmoat.Admin;
 using Packmoat.Application;
 using Packmoat.Domain;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// Members and the tokens they own (migration 8) as a contract (#232 S1): expiry, the cap, issued-via and revoked-by, and the store.
-/// Migration 8, bytes on disk, backup and the CLI list stay in <see cref="MemberTokenTests"/>.
+/// Members and the tokens they own (migration 8) as a contract: what needs the member or sign-in directory stores, which
+/// PostgreSQL has. The member token's own behaviour (expiry, the cap, revoke for a member, the member's list), which
+/// needs only the tenant store and the token service, is in <see cref="TokenContract"/>; the count of self-issued tokens
+/// as active developers, which needs the token-activity store, is in <see cref="DeveloperCountingContract"/>. Migration 8,
+/// bytes on disk, backup and the CLI list stay in <see cref="MemberTokenTests"/>.
 /// </summary>
 public abstract class MemberTokenContract : StoreContract
 {
@@ -17,96 +21,7 @@ public abstract class MemberTokenContract : StoreContract
     protected Task<IssuedToken?> IssueFor(IEngineDb t, string oid, DateTimeOffset expires, int max = 5, string tenant = "acme", TokenKind kind = TokenKind.Developer, string label = "laptop") =>
         Engine.Tokens(t).IssueForMemberAsync(tenant, Dir, oid, label, expires, kind, max, default);
 
-    [Fact]
-    public async Task A_token_past_its_expiry_does_not_authenticate()
-    {
-        await using var t = await CreateDbAsync();
-        await AddTenantAsync(t, "acme");
-        var issued = (await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90)))!;
-        Assert.NotNull(await Engine.Tokens(t).AuthenticateAsync(issued.Plaintext, default));
-        t.Clock.Advance(TimeSpan.FromDays(90) - TimeSpan.FromSeconds(1));
-        var ok = await Engine.Tokens(t).AuthenticateAsync(issued.Plaintext, default);
-        Assert.Equal(t.Clock.UtcNow.AddSeconds(1), ok!.TokenExpiresAt);
-        t.Clock.Advance(TimeSpan.FromSeconds(1));
-        Assert.Null(await Engine.Tokens(t).AuthenticateAsync(issued.Plaintext, default));
-    }
-
-    [Fact]
-    public async Task Through_the_cached_authenticator_an_expired_token_stops_within_the_cache_window()
-    {
-        await using var t = await CreateDbAsync();
-        await AddTenantAsync(t, "acme");
-        var issued = (await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(1)))!;
-        var cached = new CachedTenantAuthenticator(Engine.Tokens(t), t.Clock);
-        t.Clock.Advance(TimeSpan.FromDays(1) - TimeSpan.FromSeconds(2));
-        Assert.NotNull(await cached.AuthenticateAsync(issued.Plaintext, default));   // cached now, two seconds before expiry
-        t.Clock.Advance(TimeSpan.FromSeconds(2));
-        Assert.Null(await cached.AuthenticateAsync(issued.Plaintext, default));      // at expiry: refused, though the 5-second window has not passed
-        t.Clock.Advance(CachedTenantAuthenticator.DefaultLifetime);
-        Assert.Null(await cached.AuthenticateAsync(issued.Plaintext, default));
-    }
-
-    [Fact]
-    public async Task The_store_enforces_the_cap_per_person_counting_only_active_self_issued_tokens()
-    {
-        await using var t = await CreateDbAsync();
-        await AddTenantAsync(t, "acme");
-        await AddTenantAsync(t, "globex");
-        await Engine.Tokens(t).IssueAsync("acme", "operator", default);   // operator-issued: never counted
-        Assert.NotNull(await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(1)));
-        Assert.NotNull(await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90), kind: TokenKind.Automation));
-        Assert.Null(await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90), max: 2));
-        Assert.NotNull(await IssueFor(t, Bob, t.Clock.UtcNow.AddDays(90), max: 2));              // someone else
-        Assert.NotNull(await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90), max: 2, tenant: "globex"));   // another tenant
-        t.Clock.Advance(TimeSpan.FromDays(1));                                                       // the first one expires
-        Assert.NotNull(await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90), max: 2));
-        Assert.Null(await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90), max: 2));
-        var id = (await Engine.Tokens(t).ListForMemberAsync("acme", Dir, Ada, default)).First(x => x.IsActiveAt(t.Clock.UtcNow)).TokenId;
-        Assert.True(await Engine.Tokens(t).RevokeForMemberAsync("acme", Dir, Ada, id, "Ada", default));   // a revoked one frees a place
-        Assert.NotNull(await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90), max: 2));
-    }
-
-    [Fact]
-    public async Task Concurrent_issues_never_pass_the_cap()
-    {
-        await using var t = await CreateDbAsync();
-        await AddTenantAsync(t, "acme");
-        var results = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => Task.Run(() => IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90)))));
-        Assert.Equal(5, results.Count(r => r is not null));
-        Assert.Equal(5L, await ScalarAsync(t, "SELECT COUNT(*) FROM tokens WHERE issued_via='self'"));
-    }
-
-    [Fact]
-    public async Task Revoke_for_member_needs_the_owner_and_the_tenant_and_records_who()
-    {
-        await using var t = await CreateDbAsync();
-        await AddTenantAsync(t, "acme");
-        await AddTenantAsync(t, "globex");
-        var adas = (await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90)))!;
-        Assert.False(await Engine.Tokens(t).RevokeForMemberAsync("acme", Dir, Bob, adas.TokenId, "Bob", default));       // not the owner
-        Assert.False(await Engine.Tokens(t).RevokeForMemberAsync("globex", Dir, Ada, adas.TokenId, "Ada", default));     // not the tenant
-        Assert.False(await Engine.Tokens(t).RevokeInTenantAsync("globex", adas.TokenId, "Mallory", default));            // admin of another tenant
-        Assert.NotNull(await Engine.Tokens(t).AuthenticateAsync(adas.Plaintext, default));
-        Assert.True(await Engine.Tokens(t).RevokeInTenantAsync("acme", adas.TokenId, "Grace (ffffffff-ffff-4fff-8fff-ffffffffffff)", default));
-        Assert.Null(await Engine.Tokens(t).AuthenticateAsync(adas.Plaintext, default));
-        Assert.Equal("Grace (ffffffff-ffff-4fff-8fff-ffffffffffff)", Assert.Single(await Engine.Tokens(t).ListAsync("acme", default)).RevokedBy);
-        Assert.False(await Engine.Tokens(t).RevokeInTenantAsync("acme", adas.TokenId, "again", default));
-    }
-
-    [Fact]
-    public async Task List_for_member_returns_only_that_persons_tokens_in_that_tenant()
-    {
-        await using var t = await CreateDbAsync();
-        await AddTenantAsync(t, "acme");
-        await AddTenantAsync(t, "globex");
-        await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(1), label: "ada");
-        await IssueFor(t, Bob, t.Clock.UtcNow.AddDays(1), label: "bob");
-        await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(1), tenant: "globex", label: "ada-globex");
-        await Engine.Tokens(t).IssueAsync("acme", "operator", default);
-        Assert.Equal(new[] { "ada" }, (await Engine.Tokens(t).ListForMemberAsync("acme", Dir, Ada, default)).Select(x => x.Label));
-    }
-
-    [Fact]
+    [EngineFact]
     public async Task Unbinding_a_directory_revokes_its_self_issued_tokens_in_that_tenant_in_the_same_transaction()
     {
         const string Other = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -132,7 +47,30 @@ public abstract class MemberTokenContract : StoreContract
         Assert.Null(await store.GetAsync(Dir, default));
     }
 
-    [Fact]
+    /// <summary>
+    /// The unbind revokes only self-issued tokens (<c>issued_via='self'</c>), a second guard no test reached. An
+    /// operator-issued token that carries the directory as its owner (written here directly; no port issues one) is left working.
+    /// </summary>
+    [EngineFact]   // mutation: the unbind's revoke without its issued_via='self' clause
+    public async Task An_unbind_leaves_an_operator_issued_token_working_even_one_carrying_the_directory_as_owner()
+    {
+        await using var t = await CreateDbAsync();
+        await AddTenantAsync(t, "acme");
+        var store = Engine.SignInDirectory(t);
+        await store.BindAsync(new DirectoryBinding(Dir, "acme", t.Clock.UtcNow, "op"), default);
+        var adas = (await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90)))!;
+        var operatorIssued = await Engine.Tokens(t).IssueAsync("acme", "operator", default);
+        await ExecAsync(t, $"UPDATE tokens SET owner_tid='{Dir}', owner_oid='{Bob}' WHERE id='{operatorIssued.TokenId}'");
+        Assert.Equal("operator", await ScalarAsync(t, $"SELECT issued_via FROM tokens WHERE id='{operatorIssued.TokenId}'"));
+
+        Assert.Equal(1, await store.UnbindAsync("acme", Dir, t.Clock.UtcNow, "op", default));
+
+        Assert.Null(await Engine.Tokens(t).AuthenticateAsync(adas.Plaintext, default));
+        Assert.NotNull(await Engine.Tokens(t).AuthenticateAsync(operatorIssued.Plaintext, default));
+        Assert.Equal(DBNull.Value, await ScalarAsync(t, $"SELECT revoked_at FROM tokens WHERE id='{operatorIssued.TokenId}'"));
+    }
+
+    [EngineFact]
     public async Task A_failed_unbind_revokes_nothing()
     {
         await using var t = await CreateDbAsync();
@@ -143,7 +81,7 @@ public abstract class MemberTokenContract : StoreContract
         Assert.NotNull(await Engine.Tokens(t).AuthenticateAsync(adas.Plaintext, default));
     }
 
-    [Fact]
+    [EngineFact]
     public async Task The_token_list_carries_the_owners_last_seen_time()
     {
         await using var t = await CreateDbAsync();
@@ -155,15 +93,7 @@ public abstract class MemberTokenContract : StoreContract
         Assert.Equal(t.Clock.UtcNow.AddDays(2), Assert.Single(await Engine.Tokens(t).ListAsync("acme", default)).OwnerLastSeenAt);
     }
 
-    [Fact]
-    public async Task An_expiry_in_the_past_is_refused_by_the_store()
-    {
-        await using var t = await CreateDbAsync();
-        await AddTenantAsync(t, "acme");
-        await Assert.ThrowsAsync<ArgumentException>(() => IssueFor(t, Ada, t.Clock.UtcNow));
-    }
-
-    [Fact]
+    [EngineFact]
     public async Task Member_upsert_keeps_first_seen_and_updates_the_rest_and_the_schema_refuses_non_canonical_ids()
     {
         await using var t = await CreateDbAsync();
@@ -177,23 +107,32 @@ public abstract class MemberTokenContract : StoreContract
         Assert.Single(await members.ListForTenantAsync("acme", default));
         Assert.Null(await members.GetAsync("not-a-guid", Ada, default));
         await Assert.ThrowsAsync<ArgumentException>(() => members.UpsertAsync("nope", Ada, "acme", "x", first, default));
-        await RefusedAsync(() => ScalarAsync(t, $"INSERT INTO members VALUES('{Dir.ToUpperInvariant()}','{Bob}','acme','x','t','t')"));
+        // The times are real ones, which PostgreSQL can read, so the refusal is the CHECK's and not a malformed value's.
+        const string Time = "'2026-01-01T00:00:00.0000000+00:00'";
+        await RefusedAsync(() => ScalarAsync(t, $"INSERT INTO members VALUES('{Dir.ToUpperInvariant()}','{Bob}','acme','x',{Time},{Time})"));
         await RefusedAsync(() => members.UpsertAsync(Dir, Bob, "nobody", "x", first, default));   // unknown tenant
     }
 
-    [Fact]
-    public async Task Self_issued_developer_tokens_count_as_active_developers_and_automation_tokens_do_not()
+    [EngineFact]   // mutations: members.display_name without COLLATE "C" (PostgreSQL); the list without its tenant_id scope
+    public async Task A_tenants_members_are_listed_by_the_bytes_of_their_names_then_by_object_id()
     {
         await using var t = await CreateDbAsync();
         await AddTenantAsync(t, "acme");
-        var activity = Engine.TokenActivity(t);
-        var dev = (await IssueFor(t, Ada, t.Clock.UtcNow.AddDays(90)))!;
-        var auto = (await IssueFor(t, Bob, t.Clock.UtcNow.AddDays(90), kind: TokenKind.Automation))!;
-        var op = await Engine.Tokens(t).IssueAsync("acme", "operator-dev", default);
-        var today = DateOnly.FromDateTime(t.Clock.UtcNow.UtcDateTime);
-        foreach (var id in new[] { dev.TokenId, auto.TokenId, op.TokenId }) await activity.RecordAsync(id, today, default);
-        var active = await activity.GetAsync("acme", 30, default);
-        Assert.Equal(2, active.Count);
-        Assert.Equal(new[] { dev.TokenId, op.TokenId }.Order(), active.Tokens.Select(x => x.TokenId).Order());
+        await AddTenantAsync(t, "globex");
+        var members = Engine.Members(t);
+        // Written out of order. By bytes (SQLite's BINARY, PostgreSQL's "C"): upper case before lower case, and "É" (0xC3 0x89) after both.
+        // A language's collation would put them ann, Émile, Zed.
+        string[] oids = ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333",
+            "44444444-4444-4444-8444-444444444444"];
+        await members.UpsertAsync(Dir, oids[3], "acme", "Émile", t.Clock.UtcNow, default);
+        await members.UpsertAsync(Dir, oids[2], "acme", "ann", t.Clock.UtcNow, default);
+        await members.UpsertAsync(Dir, oids[1], "acme", "Zed", t.Clock.UtcNow, default);
+        await members.UpsertAsync(Dir, oids[0], "acme", "ann", t.Clock.UtcNow, default);   // the same name: the object id decides
+        await members.UpsertAsync(Dir, Bob, "globex", "Aaron", t.Clock.UtcNow, default);  // another tenant's: never listed
+
+        var list = await members.ListForTenantAsync("acme", default);
+        Assert.Equal(["Zed", "ann", "ann", "Émile"], list.Select(m => m.DisplayName));
+        Assert.Equal([oids[1], oids[0], oids[2], oids[3]], list.Select(m => m.ObjectId));
+        Assert.Equal(["Aaron"], (await members.ListForTenantAsync("globex", default)).Select(m => m.DisplayName));
     }
 }

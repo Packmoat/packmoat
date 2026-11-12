@@ -5,7 +5,7 @@ namespace Packmoat.Infrastructure;
 
 /// <summary>
 /// Token use by day, in the <c>token_activity(token_id, day)</c> table. A row holds a token id and a UTC date and nothing about the
-/// caller: no address, no user agent, no label. Days are kept for <see cref="AuditPolicy.TokenActivityRetentionDays"/> (#136).
+/// caller: no address, no user agent, no label. Days are kept for <see cref="AuditPolicy.TokenActivityRetentionDays"/>.
 /// </summary>
 public sealed class SqliteTokenActivity : ITokenActivityLog, IActiveDeveloperQuery, ITokenActivityRetention
 {

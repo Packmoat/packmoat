@@ -1,7 +1,7 @@
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// Reads C# source as the compiler sees its comments (#270, shared since #278): // to the end of the line, and /* to */. String literals
+/// Reads C# source as the compiler sees its comments (shared): // to the end of the line, and /* to */. String literals
 /// (regular, verbatim, interpolated with their holes, raw) and char literals are stepped over, so data, and a URL or a quote in data, is
 /// never taken for a comment, and a comment marker in data never hides the code after it. Linked into the hosted architecture tests.
 /// </summary>

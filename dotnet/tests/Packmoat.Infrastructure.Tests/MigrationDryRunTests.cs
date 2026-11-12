@@ -5,8 +5,8 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// #196: <c>packmoat-admin db check-migrations FILE</c> never opens the live database, by whatever path it is named. The core's part of
-/// the dry run's tests (#197): the rest run with the hosted track, in the hosted tests.
+/// <c>packmoat-admin db check-migrations FILE</c> never opens the live database, by whatever path it is named. The core's part of
+/// the dry run's tests: the rest run with the hosted track, in the hosted tests.
 /// </summary>
 [Collection("sqlite-pools")]
 public class MigrationDryRunTests
@@ -66,7 +66,7 @@ public class MigrationDryRunTests
     }
 
     /// <summary>
-    /// #232 M1 on the core alone: a core-22 backup goes to 23; the two tables the migration adds are new and empty, which is no row change,
+    /// on the core alone: a core-22 backup goes to 23; the two tables the migration adds are new and empty, which is no row change,
     /// so the dry run says OK. A table the migrations create with rows in it is still a change (the hosted track's adoption test shows one).
     /// </summary>
     [Fact]   // mutations: count a new, empty table as changed; count any new table as equal
@@ -87,7 +87,10 @@ public class MigrationDryRunTests
         var (exit, output, err) = await RunAsync(Env(t, Path.Combine(t.Dir, "live.db")), [], "db", "check-migrations", backup);
 
         Assert.True(exit == 0, output + err);
-        Assert.Contains("track core: before v22, after v23: migrated v22 to v23\n", output.Replace("\r", ""));
+        Assert.Contains("track core: before v22, after v26: migrated v22 to v26\n", output.Replace("\r", ""));   // and 24 (the rate counter), 25 (the form nonces), 26 (the feed setup scratch)
+        Assert.Contains("rows feed_setup_scratch: none -> 0  (new, empty)\n", output.Replace("\r", ""));
+        Assert.Contains("rows form_nonces: none -> 0  (new, empty)\n", output.Replace("\r", ""));
+        Assert.Contains("rows rate_counters: none -> 0  (new, empty)\n", output.Replace("\r", ""));
         Assert.Contains("rows cookie_keys: none -> 0  (new, empty)\n", output.Replace("\r", ""));
         Assert.Contains("rows job_leases: none -> 0  (new, empty)\n", output.Replace("\r", ""));
         Assert.Contains("rows tenants: 1 -> 1\n", output.Replace("\r", ""));

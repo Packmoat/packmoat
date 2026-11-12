@@ -5,7 +5,7 @@ public enum CheckStatus { Pass, Fail, Warn, Skip }
 
 /// <summary>
 /// One item of the customer isolation checklist: its id (for example "permissions"), title, status, and a detail that never holds a
-/// credential. <paramref name="Names"/>: the feeds a result is about, when a page words them itself (the bypass advisory's, #119); null otherwise.
+/// credential. <paramref name="Names"/>: the feeds a result is about, when a page words them itself (the bypass advisory's); null otherwise.
 /// </summary>
 public sealed record CheckResult(string Id, string Title, CheckStatus Status, string Detail, IReadOnlyList<string>? Names = null);
 

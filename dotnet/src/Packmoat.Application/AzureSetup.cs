@@ -56,7 +56,7 @@ public sealed class AzureSetupSettings
 public sealed record FeedNames(string Organization, string? Project, string Feed);
 
 /// <summary>
-/// Step 1 as it was when the person opened Microsoft's approval page (#119 item 2): only the names that passed their own rule (any other
+/// Step 1 as it was when the person opened Microsoft's approval page: only the names that passed their own rule (any other
 /// is null), and when. Names only: never anything else from the form.
 /// </summary>
 public sealed record FeedNamesDraft(DateTimeOffset At, string? Organization, string? Project, string? Feed)
@@ -137,7 +137,7 @@ public static class AzureFeedNames
 /// <summary>
 /// A feed as Azure DevOps identified it: the organisation (as typed; compared ignoring case everywhere) and the GUIDs Get Feed returned.
 /// Every URL is built from these, never from the response's own <c>url</c>. The path prefix is tight: only this feed's own
-/// <c>{org}/{projectId}/_packaging/{feedId}/</c> (the #63 S0 spike found every NuGet resource under it).
+/// <c>{org}/{projectId}/_packaging/{feedId}/</c> (every NuGet resource of the feed sits under it).
 /// </summary>
 public sealed record ResolvedFeed(string Organization, Guid? ProjectId, Guid FeedId)
 {
@@ -218,7 +218,7 @@ public static class AzureSetupRules
     }
 
     /// <summary>
-    /// The developer proof's step-up sign-in (#64 I2) against the current session. <paramref name="decision"/> is
+    /// The developer proof's step-up sign-in against the current session. <paramref name="decision"/> is
     /// <see cref="CustomerSignIn.Decide"/> on the step-up's own claims, with the same binding and the tenant's auto-join setting as at
     /// sign-in. Null when all hold: exactly one tid and one oid, the session's; the session is a Developer; the decision let the person in
     /// as THIS session's person and tenant, with the Developer role (an Admin, or both roles, is refused: Admins can often read the feed
@@ -241,12 +241,12 @@ public static class AzureSetupRules
     }
 
     /// <summary>
-    /// The checks the wizard runs: the feed's settings, and 'private' (#64 I2: Packmoat's own identity is refused on the other feeds the
+    /// The checks the wizard runs: the feed's settings, and 'private' (Packmoat's own identity is refused on the other feeds the
     /// Admin can see). The developer proof and the proxy are separate steps.
     /// </summary>
     public static readonly string[] SettingsChecks = { "feed", "identity", "upstreams", "permissions", "views", "private" };
 
-    /// <summary>The developer proof is offered only while the latest settings check passed at most this long ago (#64 plan).</summary>
+    /// <summary>The developer proof is offered only while the latest settings check passed at most this long ago).</summary>
     public static readonly TimeSpan DeveloperStepWindow = TimeSpan.FromDays(7);
 
     /// <summary>
@@ -266,6 +266,12 @@ public static class AzureSetupRules
     public static readonly TimeSpan RateWindow = TimeSpan.FromHours(1);
     /// <summary>The whole check, Azure DevOps calls included, must finish within this.</summary>
     public static readonly TimeSpan Deadline = TimeSpan.FromSeconds(60);
+    /// <summary>
+    /// How long a check's lease runs: the <see cref="Deadline"/> bounds only the Azure DevOps calls, and the lease is taken before them and
+    /// ended after the result is blanked, recorded, withdrawn and kept, so it lasts a minute more than the deadline. Only a copy stopped
+    /// mid-check leaves it to run out.
+    /// </summary>
+    public static readonly TimeSpan CheckLease = Deadline + TimeSpan.FromSeconds(60);
     /// <summary>A throttled Azure DevOps answer is retried at most once, waiting at most this long.</summary>
     public const int MaxRetries = 1;
     public static readonly TimeSpan RetryWaitCap = TimeSpan.FromSeconds(5);
@@ -274,7 +280,7 @@ public static class AzureSetupRules
 }
 
 /// <summary>What the check needs besides the token: the directory the shared app must come from, its client id and the confirmed admins (descriptors).</summary>
-/// <para>TenantId: the Packmoat tenant, for the check's log lines only (#119).</para>
+/// <para>TenantId: the Packmoat tenant, for the check's log lines only.</para>
 public sealed record DelegatedCheckRequest(string DirectoryId, string SharedClientId, IReadOnlyList<string> ConfirmedAdmins, string? TenantId = null);
 
 /// <summary>One run's results: the feed URL it was about (built from GUIDs; empty when the names did not resolve), the results and the named admins found.</summary>
@@ -294,14 +300,14 @@ public interface IDelegatedFeedCheck
 
 /// <summary>
 /// What the wizard offers a tenant (<see cref="FeedSetupRules.Kind"/>). <see cref="Wizard"/>: a tenant whose customer sets up the feed
-/// (self-made, or operator-made for the customer to connect, #207) with no upstream or a shared binding in the person's own directory;
+/// (self-made, or operator-made for the customer to connect) with no upstream or a shared binding in the person's own directory;
 /// its checks are recorded in feed_checks. <see cref="CheckOnly"/>: an operator-made shared tenant (like e2e-shared) in the
 /// person's directory: "Check again" runs on the stored feed and nothing is recorded. <see cref="ReadOnly"/>: everything else (own app,
 /// operator-made without the shared app): a status card only.
 /// </summary>
 public enum AzureSetupKind { Wizard, CheckOnly, ReadOnly }
 
-/// <summary>A check held in memory for the person who ran it, so the page can show it (and the named admins to confirm) after the redirect.</summary>
+/// <summary>A check held for the person who ran it (in the shared scratch, 30 minutes), so the page can show it (and the named admins to confirm) after the redirect.</summary>
 public sealed record HeldFeedCheck(DateTimeOffset At, FeedNames? Names, string FeedIndexUrl, FeedCheckOutcome Outcome, IReadOnlyList<CheckResult> Results,
     IReadOnlyList<NamedFeedAdmin> NamedAdmins, bool Recorded)
 {
@@ -354,75 +360,102 @@ public sealed class AzureSetupRefusedException : InvalidOperationException
 }
 
 /// <summary>
-/// In-memory, per server: the last check each person ran (30 minutes), each person's step 1 draft (30 minutes, names only, #119) and
-/// which tenants have a check running now (one at a time per tenant). A restart forgets all three, which only means the page shows the
-/// recorded result instead.
+/// The wizard's state between pages, kept where every copy of the server sees it: the last check each person ran and their last developer
+/// proof (30 minutes each), each person's step 1 draft (30 minutes, names only), all in <see cref="IFeedSetupScratch"/>; and one check
+/// at a time per tenant, under the job lease <c>feed-check:{tenant}</c> (<see cref="LeaseJob"/>), which runs out by itself
+/// <see cref="AzureSetupRules.CheckLease"/> after it was taken if a copy stops mid-check. A sign-in round trip that comes back to another
+/// copy, or a restart, finds what the person left. Every method throws when the store cannot be reached: the commands decide what that
+/// means, and never take it as a result.
 /// </summary>
 public sealed class AzureSetupState
 {
     public static readonly TimeSpan HoldFor = TimeSpan.FromMinutes(30);
+    private readonly IFeedSetupScratch _scratch;
+    private readonly IJobLease _lease;
     private readonly IClock _clock;
-    private readonly Dictionary<string, HeldFeedCheck> _held = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _running = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, FeedNamesDraft> _drafts = new(StringComparer.Ordinal);
-    private readonly object _lock = new();
 
-    public AzureSetupState(IClock clock) => _clock = clock;
-
-    private static string Key(string tenantId, Guid oid, FeedCheckKind kind) => tenantId + "|" + oid.ToString("D") + "|" + kind;
-
-    public void Hold(string tenantId, Guid oid, HeldFeedCheck check, FeedCheckKind kind = FeedCheckKind.Settings)
+    /// <param name="scratch">Where each person's last check, last developer proof and draft are kept (production: the database's).</param>
+    /// <param name="lease">The job lease that lets one check run at a time per tenant (production: the database's).</param>
+    public AzureSetupState(IFeedSetupScratch scratch, IJobLease lease, IClock clock)
     {
-        lock (_lock)
-        {
-            _held[Key(tenantId, oid, kind)] = check;
-            if (_held.Count > 2_000)
-                foreach (var k in _held.Where(kv => _clock.UtcNow - kv.Value.At >= HoldFor).Select(kv => kv.Key).ToList()) _held.Remove(k);
-        }
+        _scratch = scratch ?? throw new ArgumentNullException(nameof(scratch));
+        _lease = lease ?? throw new ArgumentNullException(nameof(lease));
+        _clock = clock ?? throw new ArgumentNullException(nameof(clock));
     }
 
-    public HeldFeedCheck? Get(string tenantId, Guid oid, FeedCheckKind kind = FeedCheckKind.Settings)
-    {
-        lock (_lock)
-        {
-            if (!_held.TryGetValue(Key(tenantId, oid, kind), out var c)) return null;
-            var age = _clock.UtcNow - c.At;
-            if (age < TimeSpan.Zero || age >= HoldFor) { _held.Remove(Key(tenantId, oid, kind)); return null; }
-            return c;
-        }
-    }
+    /// <summary>The job lease a tenant's check runs under: the settings check and the developer proof share it.</summary>
+    public static string LeaseJob(string tenantId) => "feed-check:" + tenantId;
 
-    private static string DraftKey(string tenantId, Guid oid) => tenantId + "|" + oid.ToString("D");
+    private static string KindOf(FeedCheckKind kind) => kind == FeedCheckKind.Developer ? FeedSetupScratchKinds.Developer : FeedSetupScratchKinds.Settings;
+
+    /// <summary>Keeps (or replaces) this person's last check of <paramref name="kind"/> for this tenant, for <see cref="HoldFor"/>.</summary>
+    public Task HoldAsync(string tenantId, Guid oid, HeldFeedCheck check, FeedCheckKind kind = FeedCheckKind.Settings, CancellationToken ct = default) =>
+        _scratch.PutAsync(tenantId, oid, KindOf(kind), FeedSetupPayload.Write(check), HoldFor, ct);
+
+    /// <summary>This person's last check of <paramref name="kind"/> for this tenant, or null when there is none or it is not between 0 and 30 minutes old.</summary>
+    public async Task<HeldFeedCheck?> GetAsync(string tenantId, Guid oid, FeedCheckKind kind = FeedCheckKind.Settings, CancellationToken ct = default) =>
+        FeedSetupPayload.ReadCheck(await _scratch.GetAsync(tenantId, oid, KindOf(kind), ct)) is { } c && Fresh(c.At) ? c : null;
+
+    /// <summary>Forgets this person's last check of <paramref name="kind"/> for this tenant.</summary>
+    public Task ForgetAsync(string tenantId, Guid oid, FeedCheckKind kind = FeedCheckKind.Settings, CancellationToken ct = default) =>
+        _scratch.DeleteAsync(tenantId, oid, KindOf(kind), ct);
 
     /// <summary>Keeps (or replaces) this person's step 1 draft for this tenant.</summary>
-    public void KeepDraft(string tenantId, Guid oid, FeedNamesDraft draft)
-    {
-        lock (_lock)
-        {
-            _drafts[DraftKey(tenantId, oid)] = draft;
-            if (_drafts.Count > 2_000)
-                foreach (var k in _drafts.Where(kv => _clock.UtcNow - kv.Value.At >= HoldFor).Select(kv => kv.Key).ToList()) _drafts.Remove(k);
-        }
-    }
+    public Task KeepDraftAsync(string tenantId, Guid oid, FeedNamesDraft draft, CancellationToken ct = default) =>
+        _scratch.PutAsync(tenantId, oid, FeedSetupScratchKinds.Draft, FeedSetupPayload.Write(draft), HoldFor, ct);
 
     /// <summary>Forgets this person's step 1 draft for this tenant.</summary>
-    public void ClearDraft(string tenantId, Guid oid) { lock (_lock) _drafts.Remove(DraftKey(tenantId, oid)); }
+    public Task ClearDraftAsync(string tenantId, Guid oid, CancellationToken ct = default) =>
+        _scratch.DeleteAsync(tenantId, oid, FeedSetupScratchKinds.Draft, ct);
 
-    /// <summary>This person's step 1 draft for this tenant, or null when there is none or it is 30 minutes old.</summary>
-    public FeedNamesDraft? GetDraft(string tenantId, Guid oid)
+    /// <summary>This person's step 1 draft for this tenant, or null when there is none or it is not between 0 and 30 minutes old.</summary>
+    public async Task<FeedNamesDraft?> GetDraftAsync(string tenantId, Guid oid, CancellationToken ct = default) =>
+        FeedSetupPayload.ReadDraft(await _scratch.GetAsync(tenantId, oid, FeedSetupScratchKinds.Draft, ct)) is { } d && Fresh(d.At) ? d : null;
+
+    /// <summary>The rule the in-memory state had: kept from its own time for less than <see cref="HoldFor"/>, and never from the future.</summary>
+    private bool Fresh(DateTimeOffset at) => _clock.UtcNow - at is var age && age >= TimeSpan.Zero && age < HoldFor;
+
+    /// <summary>
+    /// Takes the tenant's check lease for a holder made for this one run, so a second check (on this copy or another) is refused while it
+    /// runs. Returns that holder, to give to <see cref="EndAsync"/>, or null when another check holds the lease.
+    /// </summary>
+    public async Task<string?> TryBeginAsync(string tenantId, CancellationToken ct = default)
     {
-        lock (_lock)
-        {
-            if (!_drafts.TryGetValue(DraftKey(tenantId, oid), out var d)) return null;
-            var age = _clock.UtcNow - d.At;
-            if (age < TimeSpan.Zero || age >= HoldFor) { _drafts.Remove(DraftKey(tenantId, oid)); return null; }
-            return d;
-        }
+        var holder = JobLeases.ProcessHolder + "-" + Guid.NewGuid().ToString("N");
+        return await _lease.TryAcquireAsync(LeaseJob(tenantId), holder, AzureSetupRules.CheckLease, ct) ? holder : null;
     }
 
-    /// <summary>True when no check is running for the tenant; it then counts as running until <see cref="End"/>.</summary>
-    public bool TryBegin(string tenantId) { lock (_lock) return _running.Add(tenantId); }
-    public void End(string tenantId) { lock (_lock) _running.Remove(tenantId); }
+    /// <summary>Ends the run's lease (whatever the caller's token says: a check that has ended must free the tenant).</summary>
+    public Task EndAsync(string tenantId, string holder) => _lease.ReleaseAsync(LeaseJob(tenantId), holder, CancellationToken.None);
+}
+
+/// <summary>
+/// What the wizard writes into the scratch: a held check or a draft as JSON, enums by name. A payload that does not read back (a row
+/// written by a different build) reads as nothing kept, as after a restart before.
+/// </summary>
+public static class FeedSetupPayload
+{
+    private static readonly System.Text.Json.JsonSerializerOptions Options = new()
+    {
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
+    };
+
+    public static string Write(HeldFeedCheck check) => System.Text.Json.JsonSerializer.Serialize(check, Options);
+    public static string Write(FeedNamesDraft draft) => System.Text.Json.JsonSerializer.Serialize(draft, Options);
+
+    public static HeldFeedCheck? ReadCheck(string? payload) =>
+        Read<HeldFeedCheck>(payload) is { FeedIndexUrl: not null, Results: not null, NamedAdmins: not null } c
+        && c.Results.All(r => r is { Id: not null, Title: not null, Detail: not null }) && c.NamedAdmins.All(a => a is { Label: not null, Name: not null, Descriptor: not null })
+            ? c : null;
+    public static FeedNamesDraft? ReadDraft(string? payload) => Read<FeedNamesDraft>(payload);
+
+    private static T? Read<T>(string? payload) where T : class
+    {
+        if (payload is null) return null;
+        try { return System.Text.Json.JsonSerializer.Deserialize<T>(payload, Options); }
+        catch (System.Text.Json.JsonException) { return null; }
+        catch (NotSupportedException) { return null; }
+    }
 }
 
 /// <summary>
@@ -442,7 +475,7 @@ public sealed class AzureSetupCommands
     private readonly AzureSetupState _state;
     private readonly AzureSetupSettings _settings;
     private readonly IClock _clock;
-    private readonly PersonRateLimiter _limiter;
+    private readonly RateLimit _limiter;
     private readonly TimeSpan _deadline;
     private readonly ISelfServiceFeedStore? _feeds;
     private readonly Action<SetupLogLevel, string> _log;
@@ -452,10 +485,11 @@ public sealed class AzureSetupCommands
     /// <param name="deadline">A test seam: production always uses <see cref="AzureSetupRules.Deadline"/>.</param>
     /// <param name="feeds">Where a failed re-check withdraws a connected feed. Without it nothing is ever withdrawn.</param>
     /// <param name="log">Where a failed withdrawal is reported (the host's logger).</param>
-    /// <param name="developerProbe">The developer proof's probe (#64 I2). Without it the developer proof is not available.</param>
+    /// <param name="developerProbe">The developer proof's probe. Without it the developer proof is not available.</param>
     /// <param name="autoJoin">The auto-join setting, read only for the Admin's waiting card.</param>
+    /// <param name="rates">The shared rate counter: each person's checks and developer proofs are counted there.</param>
     public AzureSetupCommands(ITenantStore tenants, ISignInDirectoryStore directories, ISharedAppCredentialStore? shared,
-        IFeedCheckStore? checks, IDelegatedFeedCheck? check, AzureSetupState state, AzureSetupSettings settings, IClock clock, TimeSpan? deadline = null,
+        IFeedCheckStore? checks, IDelegatedFeedCheck? check, AzureSetupState state, AzureSetupSettings settings, IClock clock, IRateCounter rates, TimeSpan? deadline = null,
         ISelfServiceFeedStore? feeds = null, Action<SetupLogLevel, string>? log = null, IDeveloperFeedProbe? developerProbe = null,
         IAutoJoinSettingStore? autoJoin = null)
     {
@@ -472,7 +506,7 @@ public sealed class AzureSetupCommands
         _state = state;
         _settings = settings;
         _clock = clock;
-        _limiter = new PersonRateLimiter(clock, AzureSetupRules.MaxChecksPerWindow, AzureSetupRules.RateWindow);
+        _limiter = new RateLimit(rates, RateScopes.FeedCheck, AzureSetupRules.MaxChecksPerWindow, AzureSetupRules.RateWindow);
     }
 
     public AzureSetupSettings Settings => _settings;
@@ -530,15 +564,16 @@ public sealed class AzureSetupCommands
             try { autoJoin = await _autoJoin.IsOnAsync(c.Tenant.Id, ct); }
             catch (Exception ex) when (ex is not OperationCanceledException) { autoJoin = null; }   // only the card's sentence depends on it
         }
-        return new AzureSetupView(c.Tenant, c.Kind, c.Upstream, readiness, c.SharedClientId, latest, _state.Get(c.Tenant.Id, actor.ObjectId))
+        var held = await HeldOrNoneAsync(c.Tenant.Id, actor.ObjectId, FeedCheckKind.Settings, ct);
+        return new AzureSetupView(c.Tenant, c.Kind, c.Upstream, readiness, c.SharedClientId, latest, held)
         {
             CanCheck = CanCheck(c), Connect = offer, WaitingForDeveloper = waiting, AutoJoinOn = autoJoin,
-            Draft = c.Kind == AzureSetupKind.Wizard ? _state.GetDraft(c.Tenant.Id, actor.ObjectId) : null,
+            Draft = c.Kind == AzureSetupKind.Wizard ? await DraftOrNoneAsync(c.Tenant.Id, actor.ObjectId, ct) : null,
         };
     }
 
     /// <summary>
-    /// Step 2, "Open Microsoft's approval page" (#119 item 2): the setup page's rules (switch, Admin, directory still bound), a Wizard
+    /// Step 2, "Open Microsoft's approval page": the setup page's rules (switch, Admin, directory still bound), a Wizard
     /// tenant with the shared app configured; then the typed names that pass their rules are kept for this person and tenant for 30
     /// minutes (when none does, any earlier draft is forgotten), so step 1 is still filled in when they come back. Returns the shared app's client id, for the
     /// approval page. Nothing is checked in Azure DevOps and nothing is written.
@@ -548,8 +583,16 @@ public sealed class AzureSetupCommands
         var c = await GuardAsync(actor, ct);
         if (c.Kind != AzureSetupKind.Wizard) throw new AzureSetupRefusedException(AzureSetupRefusal.ReadOnly);
         if (c.SharedClientId is null) throw new AzureSetupRefusedException(AzureSetupRefusal.NotAvailable);
-        if (FeedNamesDraft.From(_clock.UtcNow, organization, project, feed) is { } draft) _state.KeepDraft(c.Tenant.Id, actor.ObjectId, draft);
-        else _state.ClearDraft(c.Tenant.Id, actor.ObjectId);   // nothing valid typed: an earlier draft is not brought back
+        try
+        {
+            if (FeedNamesDraft.From(_clock.UtcNow, organization, project, feed) is { } draft) await _state.KeepDraftAsync(c.Tenant.Id, actor.ObjectId, draft, ct);
+            else await _state.ClearDraftAsync(c.Tenant.Id, actor.ObjectId, ct);   // nothing valid typed: an earlier draft is not brought back
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            // Step 1 is then empty when the person comes back, as after a restart before: they type the names again.
+            ScratchFailed("keeping", FeedSetupScratchKinds.Draft, ex, "step 1 is not kept");
+        }
         return c.SharedClientId;
     }
 
@@ -566,7 +609,7 @@ public sealed class AzureSetupCommands
         && Guid.TryParse(latest.ClientId, out var seen) && Guid.TryParse(c.SharedClientId, out var active) && seen == active
         && ConnectRules.UrlsFor(latest.FeedIndexUrl) is not null;
 
-    // ---------------------------------------------------------------- the developer proof (#64 I2)
+    // ---------------------------------------------------------------- the developer proof
 
     /// <summary>
     /// The developer proof's rules: the switch allows the directory; the person is a Developer (an Admin is refused: Admins can often read
@@ -590,14 +633,14 @@ public sealed class AzureSetupCommands
     public async Task<DeveloperSetupView> DeveloperViewAsync(CustomerActor actor, CancellationToken ct)
     {
         var (c, settings) = await DeveloperGuardAsync(actor, ct);
-        return new DeveloperSetupView(c.Tenant, settings, _state.Get(c.Tenant.Id, actor.ObjectId, FeedCheckKind.Developer));
+        return new DeveloperSetupView(c.Tenant, settings, await HeldOrNoneAsync(c.Tenant.Id, actor.ObjectId, FeedCheckKind.Developer, ct));
     }
 
     /// <summary>Before the developer's step-up sign-in (POST "Sign in and check my access"): the rules, and at most 10 starts per person per hour.</summary>
     public async Task StartDeveloperAsync(CustomerActor actor, CancellationToken ct)
     {
         var (c, _) = await DeveloperGuardAsync(actor, ct);
-        if (!_limiter.TryAcquire($"developer:{c.Tid}/{actor.ObjectId:D}")) throw new AzureSetupRefusedException(AzureSetupRefusal.TooManyRequests);
+        if (!await _limiter.TryAcquireAsync($"developer:{c.Tid}/{actor.ObjectId:D}", ct)) throw new AzureSetupRefusedException(AzureSetupRefusal.TooManyRequests);
     }
 
     /// <summary>
@@ -610,9 +653,10 @@ public sealed class AzureSetupCommands
     {
         if (string.IsNullOrEmpty(accessToken)) throw new AzureSetupRefusedException(AzureSetupRefusal.NotAvailable);
         var (c, settings) = await DeveloperGuardAsync(actor, ct);
-        if (!_state.TryBegin(c.Tenant.Id)) throw new AzureSetupRefusedException(AzureSetupRefusal.CheckRunning);
+        var lease = await BeginAsync(c.Tenant.Id, ct);
         try
         {
+            await ForgetHeldAsync(c.Tenant.Id, actor.ObjectId, FeedCheckKind.Developer, ct);
             DeveloperProbeRun run;
             var timedOut = false;
             using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct))
@@ -638,10 +682,10 @@ public sealed class AzureSetupCommands
                 _ => run.Finding is DeveloperFinding.Refused or DeveloperFinding.CanRead ? DeveloperFinding.Unclear : run.Finding,
             };
             var held = new HeldFeedCheck(now, null, settings.FeedIndexUrl, outcome, results, Array.Empty<NamedFeedAdmin>(), Recorded: true) { Finding = finding };
-            _state.Hold(c.Tenant.Id, actor.ObjectId, held, FeedCheckKind.Developer);
+            await HoldOrReportAsync(c.Tenant.Id, actor.ObjectId, held, FeedCheckKind.Developer);
             return held;
         }
-        finally { _state.End(c.Tenant.Id); }
+        finally { await EndAsync(c.Tenant.Id, lease); }
     }
 
     /// <summary>
@@ -696,9 +740,9 @@ public sealed class AzureSetupCommands
             names = valid ?? throw new AzureSetupRefusedException(AzureSetupRefusal.BadNames);
         }
         var confirmed = Array.Empty<string>();
-        if (confirmAdmins && _state.Get(c.Tenant.Id, actor.ObjectId) is { } held && held.NamedAdmins.Count is > 0 and <= AzureSetupRules.MaxConfirmableAdmins)
+        if (confirmAdmins && await HeldForConfirmingAsync(c.Tenant.Id, actor.ObjectId, ct) is { } held && held.NamedAdmins.Count is > 0 and <= AzureSetupRules.MaxConfirmableAdmins)
             confirmed = held.NamedAdmins.Select(a => a.Descriptor).ToArray();
-        if (!_limiter.TryAcquire($"{c.Tid}/{actor.ObjectId:D}")) throw new AzureSetupRefusedException(AzureSetupRefusal.TooManyRequests);
+        if (!await _limiter.TryAcquireAsync($"{c.Tid}/{actor.ObjectId:D}", ct)) throw new AzureSetupRefusedException(AzureSetupRefusal.TooManyRequests);
         return new AzureSetupRequest(names, confirmed);
     }
 
@@ -723,9 +767,10 @@ public sealed class AzureSetupCommands
         }
         var confirmed = request.ConfirmedAdmins.Where(d => !string.IsNullOrWhiteSpace(d) && d.Length <= 512).Distinct(StringComparer.Ordinal)
             .Take(AzureSetupRules.MaxConfirmableAdmins).ToList();
-        if (!_state.TryBegin(c.Tenant.Id)) throw new AzureSetupRefusedException(AzureSetupRefusal.CheckRunning);
+        var lease = await BeginAsync(c.Tenant.Id, ct);
         try
         {
+            await ForgetHeldAsync(c.Tenant.Id, actor.ObjectId, FeedCheckKind.Settings, ct);
             var checkRequest = new DelegatedCheckRequest(c.Tid, c.SharedClientId!, confirmed, c.Tenant.Id);
             DelegatedCheckRun run;
             var timedOut = false;
@@ -770,14 +815,112 @@ public sealed class AzureSetupCommands
             }
             var held = new HeldFeedCheck(now, names, feedUrl, outcome, results, admins, recorded)
             { Withdrawn = withdrawn == WithdrawOutcome.Withdrawn, WithdrawFailed = withdrawn == WithdrawOutcome.Failed };
-            _state.Hold(c.Tenant.Id, actor.ObjectId, held);
+            await HoldOrReportAsync(c.Tenant.Id, actor.ObjectId, held, FeedCheckKind.Settings);
             return held;
         }
-        finally { _state.End(c.Tenant.Id); }
+        finally { await EndAsync(c.Tenant.Id, lease); }
+    }
+
+    // ---------------------------------------------------------------- the shared state, failing closed
+
+    /// <summary>
+    /// Takes the tenant's check lease, or refuses: <see cref="AzureSetupRefusal.CheckRunning"/> while another check (on any copy) holds it;
+    /// <see cref="AzureSetupRefusal.NotAvailable"/> when the lease cannot be read (logged), as nothing then says no other check runs.
+    /// </summary>
+    private async Task<string> BeginAsync(string tenantId, CancellationToken ct)
+    {
+        string? holder;
+        try { holder = await _state.TryBeginAsync(tenantId, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _log(SetupLogLevel.Warning, $"Feed setup: taking the check lease failed ({ex.GetType().Name}); the check is refused");
+            throw new AzureSetupRefusedException(AzureSetupRefusal.NotAvailable);
+        }
+        return holder ?? throw new AzureSetupRefusedException(AzureSetupRefusal.CheckRunning);
+    }
+
+    /// <summary>Ends the run's lease. A failure is logged and changes nothing else: the lease then runs out by itself within <see cref="AzureSetupRules.CheckLease"/>.</summary>
+    private async Task EndAsync(string tenantId, string holder)
+    {
+        try { await _state.EndAsync(tenantId, holder); }
+        catch (Exception ex)
+        {
+            _log(SetupLogLevel.Warning, $"Feed setup: ending the check lease failed ({ex.GetType().Name}); it runs out by itself within two minutes");
+        }
     }
 
     /// <summary>
-    /// A tenant whose customer sets up the feed (Wizard kind, #207 included): when the check just recorded meets <see cref="ConnectRules.ShouldWithdraw"/> against the
+    /// Before a check runs: forgets the person's last result of this kind, so a result kept by an earlier run can never stand in for this
+    /// one if keeping this one fails (its named admins could otherwise be confirmed). When that fails, the check is refused (logged).
+    /// </summary>
+    private async Task ForgetHeldAsync(string tenantId, Guid oid, FeedCheckKind kind, CancellationToken ct)
+    {
+        try { await _state.ForgetAsync(tenantId, oid, kind, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            ScratchFailed("clearing", kind == FeedCheckKind.Developer ? FeedSetupScratchKinds.Developer : FeedSetupScratchKinds.Settings, ex, "the check is refused");
+            throw new AzureSetupRefusedException(AzureSetupRefusal.NotAvailable);
+        }
+    }
+
+    /// <summary>
+    /// Keeps the result for the person's page. A failure is logged and changes nothing else: the check is recorded (or not) as it was, the
+    /// page shows the recorded result, and nothing is confirmed from it (the earlier result was forgotten before the check ran).
+    /// </summary>
+    private async Task HoldOrReportAsync(string tenantId, Guid oid, HeldFeedCheck held, FeedCheckKind kind)
+    {
+        // Not the request's token: once the check has run, a browser that goes away must not lose its result.
+        try { await _state.HoldAsync(tenantId, oid, held, kind, CancellationToken.None); }
+        catch (Exception ex)
+        {
+            ScratchFailed("keeping", kind == FeedCheckKind.Developer ? FeedSetupScratchKinds.Developer : FeedSetupScratchKinds.Settings, ex,
+                "the page shows the recorded result");
+        }
+    }
+
+    /// <summary>The person's last check, or null when there is none or the store failed (logged: the page then shows the recorded result, as after a restart before).</summary>
+    private async Task<HeldFeedCheck?> HeldOrNoneAsync(string tenantId, Guid oid, FeedCheckKind kind, CancellationToken ct)
+    {
+        try { return await _state.GetAsync(tenantId, oid, kind, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            ScratchFailed("reading", kind == FeedCheckKind.Developer ? FeedSetupScratchKinds.Developer : FeedSetupScratchKinds.Settings, ex,
+                "the page shows the recorded result");
+            return null;
+        }
+    }
+
+    /// <summary>The person's step 1 draft, or null when there is none or the store failed (logged: step 1 is then empty).</summary>
+    private async Task<FeedNamesDraft?> DraftOrNoneAsync(string tenantId, Guid oid, CancellationToken ct)
+    {
+        try { return await _state.GetDraftAsync(tenantId, oid, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            ScratchFailed("reading", FeedSetupScratchKinds.Draft, ex, "step 1 is empty");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The last check whose named admins the person is confirming. When the store fails, the start is refused (logged): the person asked to
+    /// confirm, and a check run without them would confirm nobody while looking like it did.
+    /// </summary>
+    private async Task<HeldFeedCheck?> HeldForConfirmingAsync(string tenantId, Guid oid, CancellationToken ct)
+    {
+        try { return await _state.GetAsync(tenantId, oid, FeedCheckKind.Settings, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            ScratchFailed("reading", FeedSetupScratchKinds.Settings, ex, "no admin is confirmed and the check is refused");
+            throw new AzureSetupRefusedException(AzureSetupRefusal.NotAvailable);
+        }
+    }
+
+    /// <summary>One warning: what failed, the kind and the error's type. Never the tenant, the person, or anything kept.</summary>
+    private void ScratchFailed(string action, string kind, Exception error, string consequence) =>
+        _log(SetupLogLevel.Warning, $"Feed setup: {action} the {kind} scratch failed ({error.GetType().Name}); {consequence}");
+
+    /// <summary>
+    /// A tenant whose customer sets up the feed (Wizard kind included): when the check just recorded meets <see cref="ConnectRules.ShouldWithdraw"/> against the
     /// verification as it is NOW (read after recording, not the binding read when the check started, so a Connect made while the check ran
     /// is withdrawn too), that exact verification is deleted and <c>feed.withdrawn</c> written, in one transaction. The proxy then fails
     /// closed for the tenant once its caches expire. A store error is logged and the whole step tried once more (reading the verification

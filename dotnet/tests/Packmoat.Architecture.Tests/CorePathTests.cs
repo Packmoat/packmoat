@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// The core is published as its own repository, with this folder as its root (#274). There, a path that starts with the private
+/// The core is published as its own repository, with this folder as its root. There, a path that starts with the private
 /// repository's folder name names nothing, so no text file in the core may name one: dotnet/src, not the same path under that folder.
 /// </summary>
 public class CorePathTests

@@ -13,6 +13,12 @@ public enum RetentionStepKind
     AdminActionsPruned,
     AuditEventsPruned,
     TokenActivityPruned,
+    /// <summary>The shared rate counter's ended windows deleted.</summary>
+    RateWindowsPruned,
+    /// <summary>The form nonces that expired deleted.</summary>
+    FormNoncesPruned,
+    /// <summary>The feed setup scratch's expired rows deleted.</summary>
+    FeedSetupScratchPruned,
 }
 
 /// <summary>What one step did: how many rows, or the failure (whose message is never shown: only its type).</summary>
@@ -22,9 +28,9 @@ public sealed record RetentionStep(RetentionStepKind Kind, int Count, Exception?
 }
 
 /// <summary>
-/// The retention pass's steps (#64 I1, #107, #105, #123, #117, #136), moved out of the server's daily service (#233) so the operator's
+/// The retention pass's steps, moved out of the server's daily service so the operator's
 /// command (packmoat-admin jobs run retention) runs the same steps where the server's background jobs are off. Each step is its own: one
-/// that fails does not stop the next. Who is due for purge is the purge eligibility's to say (#194). It never deletes a tenant.
+/// that fails does not stop the next. Who is due for purge is the purge eligibility's to say. It never deletes a tenant.
 /// <para>Only the server's pass claims the day's purge nudge and alerts (<see cref="ITenantPurgeStore.TryClaimNudgeDayAsync"/>); the
 /// command counts and prints, so a run by hand cannot take the day's nudge from the server.</para>
 /// </summary>
@@ -44,6 +50,9 @@ public sealed class RetentionPass
     private readonly IAdminActionLog? _actions;
     private readonly IAuditRetention? _audit;
     private readonly ITokenActivityRetention? _tokenActivity;
+    private readonly IRateCounter? _rates;
+    private readonly IFormNonceStore? _nonces;
+    private readonly IFeedSetupScratch? _scratch;
 
     /// <param name="checks">Where feed checks are blanked; nothing blanked when null.</param>
     /// <param name="purges">Where the tenants due for purge are counted (by its eligibility); 0 when null or when it has none.</param>
@@ -52,8 +61,12 @@ public sealed class RetentionPass
     /// <param name="actions">Where admin_actions is pruned; no pruning when null.</param>
     /// <param name="audit">Where audit_events is pruned; no pruning when null.</param>
     /// <param name="tokenActivity">Where token_activity is pruned; no pruning when null.</param>
+    /// <param name="rates">Where the rate counter's ended windows are deleted; no pruning when null.</param>
+    /// <param name="nonces">Where expired form nonces are deleted; no pruning when null.</param>
+    /// <param name="scratch">Where the feed setup scratch's expired rows are deleted; no pruning when null.</param>
     public RetentionPass(IFeedCheckStore? checks, IClock clock, ITenantPurgeStore? purges = null, IOpsAlerts? alerts = null,
-        IDecisionRecordLog? decisions = null, IAdminActionLog? actions = null, IAuditRetention? audit = null, ITokenActivityRetention? tokenActivity = null)
+        IDecisionRecordLog? decisions = null, IAdminActionLog? actions = null, IAuditRetention? audit = null, ITokenActivityRetention? tokenActivity = null,
+        IRateCounter? rates = null, IFormNonceStore? nonces = null, IFeedSetupScratch? scratch = null)
     {
         _checks = checks;
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
@@ -63,6 +76,9 @@ public sealed class RetentionPass
         _actions = actions;
         _audit = audit;
         _tokenActivity = tokenActivity;
+        _rates = rates;
+        _nonces = nonces;
+        _scratch = scratch;
     }
 
     /// <summary>Blanks the personal data of feed checks older than 30 days. Returns how many.</summary>
@@ -122,6 +138,20 @@ public sealed class RetentionPass
             : _tokenActivity.PruneAsync(DateOnly.FromDateTime(_clock.UtcNow.UtcDateTime).AddDays(-(AuditPolicy.TokenActivityRetentionDays - 1)), ct);
 
     /// <summary>
+    /// Deletes the rate counter's windows that have ended: a window still running keeps counting. Returns how many.
+    /// </summary>
+    public Task<int> PruneRateWindowsAsync(CancellationToken ct) =>
+        _rates is null ? Task.FromResult(0) : _rates.PruneAsync(_clock.UtcNow, ct);
+
+    /// <summary>Deletes the form nonces that have expired: a live one can still be used. Returns how many.</summary>
+    public Task<int> PruneFormNoncesAsync(CancellationToken ct) =>
+        _nonces is null ? Task.FromResult(0) : _nonces.PruneAsync(_clock.UtcNow, ct);
+
+    /// <summary>Deletes the feed setup scratch's expired rows (they may hold admin names): a live one is kept. Returns how many.</summary>
+    public Task<int> PruneFeedSetupScratchAsync(CancellationToken ct) =>
+        _scratch is null ? Task.FromResult(0) : _scratch.PruneAsync(_clock.UtcNow, ct);
+
+    /// <summary>
     /// Every step, in order, each reported to <paramref name="report"/> as it ends. A failed step is reported and the next runs; a
     /// cancellation stops the pass. With <paramref name="nudge"/> the purge step is <see cref="NudgePurgesAsync"/> (the server's);
     /// without, <see cref="CountDueAsync"/> (the command's: no day claimed, no alert).
@@ -144,6 +174,9 @@ public sealed class RetentionPass
         await Step(RetentionStepKind.AdminActionsPruned, PruneAdminActionsAsync);
         await Step(RetentionStepKind.AuditEventsPruned, PruneAuditAsync);
         await Step(RetentionStepKind.TokenActivityPruned, PruneTokenActivityAsync);
+        await Step(RetentionStepKind.RateWindowsPruned, PruneRateWindowsAsync);
+        await Step(RetentionStepKind.FormNoncesPruned, PruneFormNoncesAsync);
+        await Step(RetentionStepKind.FeedSetupScratchPruned, PruneFeedSetupScratchAsync);
         return steps;
     }
 }

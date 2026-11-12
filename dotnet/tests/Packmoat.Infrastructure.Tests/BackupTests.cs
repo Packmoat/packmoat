@@ -21,7 +21,7 @@ public class BackupTests
         }
         catch
         {
-            await t.DisposeAsync();   // #292: a failed set-up leaves no folder behind
+            await t.DisposeAsync();   // A failed set-up leaves no folder behind
             throw;
         }
     }

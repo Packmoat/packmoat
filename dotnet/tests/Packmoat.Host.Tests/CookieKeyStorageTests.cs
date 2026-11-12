@@ -5,15 +5,17 @@ using Microsoft.AspNetCore.DataProtection.Repositories;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Packmoat.Application;
+using Packmoat.Domain;
 using Packmoat.Host.Web;
 using Packmoat.Infrastructure;
 
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// PACKMOAT_COOKIE_KEYS (#232 B1). Unset (as on the live server) is the key folder, exactly as before. <c>database</c> keeps the keys in
+/// PACKMOAT_COOKIE_KEYS. Unset (as on the live server) is the key folder, exactly as before. <c>database</c> keeps the keys in
 /// the database, encrypted with the master key, so every copy of the server shares them; at its first start it imports the folder's keys
 /// once, and it never creates or changes the folder. Anything else stops the start, naming the setting and never the value.
 /// </summary>
@@ -53,7 +55,7 @@ public class CookieKeyStorageTests
         Assert.Equal(CookieKeyStorage.Database, CookieKeyStorages.Parse(reader.Read(CookieKeyStorages.Variable)));
     }
 
-    // ---------------------------------------------------------------- the rule (#278 step 0, D11)
+    // ---------------------------------------------------------------- the rule
 
     [Theory]   // mutations: either refusal dropped; the folder allowed for another engine
     [InlineData(CookieKeyStorage.Folder, DatabaseEngine.Sqlite, true)]
@@ -85,16 +87,16 @@ public class CookieKeyStorageTests
     public void The_key_folder_is_next_to_the_database_only_for_sqlite()
     {
         var db = Path.Combine(Path.GetTempPath(), "pm-keysdir", "packmoat.db");
-        var options = new PackmoatOptions { DatabasePath = db };
+        var options = new PackmoatOptions { Database = db };
         Assert.Equal(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(db))!, "admin-keys"), SignedInSite.KeysDir(options, DatabaseEngine.Sqlite));
         Assert.Null(SignedInSite.KeysDir(options, DatabaseEngine.Postgres));
         Assert.Null(SignedInSite.KeysDir(new PackmoatOptions(), DatabaseEngine.Sqlite));
         // A relative path is made full first, so the folder never moves with the working directory's later changes.
         Assert.Equal(Path.Combine(Path.GetDirectoryName(Path.GetFullPath("packmoat.db"))!, "admin-keys"),
-            SignedInSite.KeysDir(new PackmoatOptions { DatabasePath = "packmoat.db" }, DatabaseEngine.Sqlite));
-        Assert.True(Path.IsPathFullyQualified(SignedInSite.KeysDir(new PackmoatOptions { DatabasePath = "packmoat.db" }, DatabaseEngine.Sqlite)!));
+            SignedInSite.KeysDir(new PackmoatOptions { Database = "packmoat.db" }, DatabaseEngine.Sqlite));
+        Assert.True(Path.IsPathFullyQualified(SignedInSite.KeysDir(new PackmoatOptions { Database = "packmoat.db" }, DatabaseEngine.Sqlite)!));
         // PACKMOAT_ADMIN_KEYS_DIR wins on every engine.
-        var set = new PackmoatOptions { DatabasePath = db, AdminKeysDir = "/srv/keys" };
+        var set = new PackmoatOptions { Database = db, AdminKeysDir = "/srv/keys" };
         Assert.Equal("/srv/keys", SignedInSite.KeysDir(set, DatabaseEngine.Sqlite));
         Assert.Equal("/srv/keys", SignedInSite.KeysDir(set, DatabaseEngine.Postgres));
     }
@@ -112,7 +114,7 @@ public class CookieKeyStorageTests
 
     private static void Options(PackmoatOptions o, string dbDir, string? keysDir, string? cookieKeys, string? masterKey = null)
     {
-        o.DatabasePath = Path.Combine(dbDir, "packmoat.db");
+        o.Database = Path.Combine(dbDir, "packmoat.db");
         o.MasterKeyBase64 = masterKey ?? AesGcmSecretProtector.GenerateKeyBase64();
         o.AllowedHosts = "feeds.example.test";
         o.AdminHost = "admin.example.test";   // a signed-in site, so the cookie keys are used at all
@@ -185,7 +187,7 @@ public class CookieKeyStorageTests
             var (code, error) = Start(o =>
             {
                 Options(o, dir, Path.Combine(dir, "keys"), "database");
-                o.DatabasePath = null;
+                o.Database = null;
             });
             Assert.Equal(1, code);
             Assert.Equal("error: PACKMOAT_COOKIE_KEYS=database needs a database: PACKMOAT_DB is not set.", error);
@@ -219,7 +221,7 @@ public class CookieKeyStorageTests
             // A build that hangs must not hang the run: the build is bounded.
             var app = await Task.Run(() => PackmoatApp.Build(["--urls", "http://127.0.0.1:0"], TestModules.Server, null, o =>
             {
-                o.DatabasePath = Path.Combine(dir, "packmoat.db");
+                o.Database = Path.Combine(dir, "packmoat.db");
                 o.MasterKeyBase64 = AesGcmSecretProtector.GenerateKeyBase64();
                 o.AllowedHosts = "feeds.example.test";
                 if (adminSite) o.AdminHost = "admin.example.test";
@@ -255,27 +257,200 @@ public class CookieKeyStorageTests
         finally { Delete(dir); }
     }
 
+    // Two SQLite servers on one database at once are refused (SqliteInstanceLockTests); two copies starting at once on an empty
+    // database are below, at the store, and on PostgreSQL in PostgresCookieKeyColdStartTests.
     [Fact]   // mutations: the database mode creates or prepares the key folder; drops SetApplicationName; stores nothing in the database
-    public async Task Two_servers_on_one_database_share_protected_data_and_neither_creates_a_key_folder()
+    public async Task Two_servers_in_turn_on_one_database_share_protected_data_and_neither_creates_a_key_folder()
     {
         var dir = Dir("shared");
         var key = AesGcmSecretProtector.GenerateKeyBase64();
         var folderA = Path.Combine(dir, "keys-a");   // neither exists
         try
         {
-            await using var a = Build(dir, folderA, "database", key);
-            await using var b = Build(dir, null, "database", key);   // no folder set: the default, admin-keys next to the database
-            Assert.IsType<DatabaseXmlRepository>(a.Services.GetRequiredService<IOptions<KeyManagementOptions>>().Value.XmlRepository);
-            Assert.Equal("packmoat-admin", b.Services.GetRequiredService<IOptions<DataProtectionOptions>>().Value.ApplicationDiscriminator);
-
-            var payload = Protector(a).Protect("session");
-            Assert.Equal("session", Protector(b).Unprotect(payload));
-            Assert.Equal("antiforgery", Protector(a).Unprotect(Protector(b).Protect("antiforgery")));
-            Assert.Equal(1L, await RowsAsync(dir));   // one key, made by the first server to need one
+            string session, antiforgery;
+            await using (var a = Build(dir, folderA, "database", key))
+            {
+                Assert.IsType<DatabaseXmlRepository>(a.Services.GetRequiredService<IOptions<KeyManagementOptions>>().Value.XmlRepository);
+                session = Protector(a).Protect("session");
+            }
+            await using (var b = Build(dir, null, "database", key))   // no folder set: the default, admin-keys next to the database
+            {
+                Assert.Equal("packmoat-admin", b.Services.GetRequiredService<IOptions<DataProtectionOptions>>().Value.ApplicationDiscriminator);
+                Assert.Equal("session", Protector(b).Unprotect(session));
+                antiforgery = Protector(b).Protect("antiforgery");
+            }
+            await using (var a = Build(dir, folderA, "database", key)) Assert.Equal("antiforgery", Protector(a).Unprotect(antiforgery));
+            Assert.Equal(1L, await RowsAsync(dir));   // one key, made by the first server's start
             Assert.False(Directory.Exists(folderA));
             Assert.False(Directory.Exists(Path.Combine(dir, "admin-keys")));
         }
         finally { Delete(dir); }
+    }
+
+    /// <summary>
+    /// A store whose first read waits for the other copy's first read (both then see an empty table), so two starts on an empty
+    /// database race every time. Later reads pass straight through.
+    /// </summary>
+    private sealed class FirstReadTogether(ICookieKeyStore inner, Barrier together) : ICookieKeyStore
+    {
+        private int _reads;
+
+        public async Task<IReadOnlyList<CookieKey>> GetAllAsync(CancellationToken ct)
+        {
+            var keys = await inner.GetAllAsync(ct);
+            if (Interlocked.Increment(ref _reads) == 1)
+                Assert.True(await Task.Run(() => together.SignalAndWait(TimeSpan.FromSeconds(30)), ct), "the other copy never read the keys");
+            return keys;
+        }
+
+        public Task AddAsync(string friendlyName, string xml, CancellationToken ct) => inner.AddAsync(friendlyName, xml, ct);
+        public Task<int> ImportIfEmptyAsync(IReadOnlyList<CookieKey> keys, CancellationToken ct) => inner.ImportIfEmptyAsync(keys, ct);
+        public Task<bool> AddUnlessAnyAsync(CookieKey key, Func<CookieKey, bool> usable, CancellationToken ct) => inner.AddUnlessAnyAsync(key, usable, ct);
+    }
+
+    private static async Task<SqliteCookieKeyStore> MigratedStoreAsync(string dir, string masterKey)
+    {
+        var db = new SqliteDatabase(Path.Combine(dir, "packmoat.db"));
+        await db.MigrateAsync([]);
+        return new SqliteCookieKeyStore(db, new SystemClock(), AesGcmSecretProtector.FromBase64(masterKey));
+    }
+
+    private static IDataProtector RingOver(ICookieKeyStore store)
+    {
+        var services = new ServiceCollection();
+        services.AddDataProtection().SetApplicationName("packmoat-admin");
+        services.Configure<KeyManagementOptions>(o => o.XmlRepository = new DatabaseXmlRepository(store));
+        return services.BuildServiceProvider().GetRequiredService<IDataProtectionProvider>().CreateProtector(Purpose);
+    }
+
+    // The cold start of two copies on an empty database. mutations: the first key stored with a plain insert (each copy stores its own, and
+    // each key ring keeps its own for up to a day); no first key made at start (each key ring makes its own)
+    [Fact]
+    public async Task Two_copies_starting_at_once_on_an_empty_database_store_one_first_key_and_read_each_others_payloads()
+    {
+        var dir = Dir("cold");
+        var key = AesGcmSecretProtector.GenerateKeyBase64();
+        try
+        {
+            using var together = new Barrier(2);
+            var a = new FirstReadTogether(await MigratedStoreAsync(dir, key), together);
+            var b = new FirstReadTogether(await MigratedStoreAsync(dir, key), together);
+            var starts = new[] { a, b }.Select(s => Task.Run(() => CookieKeyImport.RunAsync(s, null, NullLogger.Instance)));
+            var imported = await Task.WhenAll(starts).WaitAsync(TimeSpan.FromMinutes(1));
+            Assert.Equal(new[] { 0, 0 }, imported);
+            Assert.Equal(1L, await RowsAsync(dir));
+            var stored = Assert.Single(await a.GetAllAsync(default));
+            Assert.Equal(stored, Assert.Single(await b.GetAllAsync(default)));
+
+            // Each copy's key ring, read now, protects under that one key, and reads the other's payloads.
+            var (ringA, ringB) = (RingOver(a), RingOver(b));
+            var fromA = ringA.Protect("from a"u8.ToArray());
+            var fromB = ringB.Protect("from b"u8.ToArray());
+            var id = Guid.Parse(System.Xml.Linq.XElement.Parse(stored.Xml).Attribute("id")!.Value);
+            Assert.Equal(id, KeyId(fromA));
+            Assert.Equal(id, KeyId(fromB));
+            Assert.Equal("from a"u8.ToArray(), ringB.Unprotect(fromA));
+            Assert.Equal("from b"u8.ToArray(), ringA.Unprotect(fromB));
+            Assert.Equal(1L, await RowsAsync(dir));   // neither key ring made another
+        }
+        finally { Delete(dir); }
+    }
+
+    // mutation: the keys not read back after the first key is stored (the copy that lost the race would start, then fail every sign-in on a
+    // key its master key cannot read)
+    [Fact]
+    public async Task A_copy_that_loses_the_first_key_race_to_another_master_key_refuses_to_start()
+    {
+        var dir = Dir("cold-mixed");
+        try
+        {
+            using var together = new Barrier(2);
+            var a = new FirstReadTogether(await MigratedStoreAsync(dir, AesGcmSecretProtector.GenerateKeyBase64()), together);
+            var b = new FirstReadTogether(await MigratedStoreAsync(dir, AesGcmSecretProtector.GenerateKeyBase64()), together);
+            var starts = new[] { a, b }.Select(s => Task.Run(() => CookieKeyImport.RunAsync(s, null, NullLogger.Instance))).ToArray();
+            await Task.WhenAny(Task.WhenAll(starts), Task.Delay(TimeSpan.FromMinutes(1)));
+            Assert.All(starts, s => Assert.True(s.IsCompleted));
+            Assert.Equal(1, starts.Count(s => s.IsCompletedSuccessfully));
+            var lost = Assert.Single(starts, s => s.IsFaulted).Exception!.InnerException!;
+            Assert.IsType<InvalidOperationException>(lost);
+            Assert.Equal("A cookie key in the database cannot be read with this master key. Refusing to start: use the master key this database was made with.", lost.Message);
+            Assert.Equal(1L, await RowsAsync(dir));
+        }
+        finally { Delete(dir); }
+    }
+
+    /// <summary>
+    /// The cold start again, on a database whose every key has expired (no server ran for longer than a key lives): left to the key ring,
+    /// each copy would make a key of its own and keep a ring without the other's for up to a day. One new key is stored, beside the old
+    /// ones (still read, so what they protected still opens), and both rings protect under it and read each other's payloads.
+    /// </summary>
+    [Fact]   // mutations: only an empty database gets a new key (every key expired: each ring makes its own); the new key stored with a plain insert
+    public async Task Two_copies_starting_at_once_over_expired_keys_store_one_new_key_and_read_each_others_payloads()
+    {
+        var dir = Dir("expired");
+        var key = AesGcmSecretProtector.GenerateKeyBase64();
+        try
+        {
+            var seed = await MigratedStoreAsync(dir, key);
+            var expired = CookieKeyImport.NewKey(DateTimeOffset.UtcNow.AddDays(-120));   // 90 days' life: expired a month ago
+            await seed.AddAsync(expired.FriendlyName, expired.Xml, default);
+            using var together = new Barrier(2);
+            var a = new FirstReadTogether(await MigratedStoreAsync(dir, key), together);
+            var b = new FirstReadTogether(await MigratedStoreAsync(dir, key), together);
+            var logs = new LevelLogs();
+            var log = logs.CreateLogger(CookieKeyImport.LogCategory);
+            var starts = new[] { a, b }.Select(s => Task.Run(() => CookieKeyImport.RunAsync(s, null, log)));
+            Assert.Equal(new[] { 0, 0 }, await Task.WhenAll(starts).WaitAsync(TimeSpan.FromMinutes(1)));
+            Assert.Equal(2L, await RowsAsync(dir));
+            var all = await a.GetAllAsync(default);
+            var made = Assert.Single(all, k => k != expired);
+            Assert.True(CookieKeyImport.Usable(made, DateTimeOffset.UtcNow));
+            Assert.Contains(CookieKeyImport.LogCategory + " Warning: Every one of the database's 1 cookie keys has expired: a new key is made, so anyone signed in before signs in again.", logs.Snapshot());
+
+            var (ringA, ringB) = (RingOver(a), RingOver(b));
+            var fromA = ringA.Protect("from a"u8.ToArray());
+            var fromB = ringB.Protect("from b"u8.ToArray());
+            var id = Guid.Parse(System.Xml.Linq.XElement.Parse(made.Xml).Attribute("id")!.Value);
+            Assert.Equal(id, KeyId(fromA));
+            Assert.Equal(id, KeyId(fromB));
+            Assert.Equal("from a"u8.ToArray(), ringB.Unprotect(fromA));
+            Assert.Equal("from b"u8.ToArray(), ringA.Unprotect(fromB));
+            Assert.Equal(2L, await RowsAsync(dir));   // neither key ring made another
+        }
+        finally { Delete(dir); }
+    }
+
+    [Fact]   // mutations: an expired key, one not active yet, or a revocation taken as usable (no new key, each ring makes its own)
+    public void A_key_is_usable_only_while_it_is_active_and_unexpired()
+    {
+        var now = DateTimeOffset.UtcNow;
+        Assert.True(CookieKeyImport.Usable(CookieKeyImport.NewKey(), now));
+        Assert.True(CookieKeyImport.Usable(CookieKeyImport.NewKey(now.AddDays(-89)), now));   // a day left
+        Assert.False(CookieKeyImport.Usable(CookieKeyImport.NewKey(now.AddDays(-91)), now));   // expired a day ago
+        Assert.True(CookieKeyImport.Usable(CookieKeyImport.NewKey(now.AddMinutes(4)), now));   // within the ring's clock allowance
+        Assert.False(CookieKeyImport.Usable(CookieKeyImport.NewKey(now.AddHours(1)), now));    // not active yet: the ring would make its own
+        Assert.False(CookieKeyImport.Usable(new CookieKey("revocation-1", "<revocation version=\"1\"><revocationDate>2026-01-01T00:00:00Z</revocationDate><key id=\"*\" /></revocation>"), now));
+        Assert.False(CookieKeyImport.Usable(new CookieKey("junk", "not xml"), now));
+    }
+
+    [Fact]   // mutations: the first key made with other algorithms, inactive, or already expired; a key with no id; more than one element stored
+    public void The_first_key_is_the_one_the_key_ring_would_make()
+    {
+        var made = CookieKeyImport.NewKey();
+        var xml = System.Xml.Linq.XElement.Parse(made.Xml);
+        Assert.Equal("key", xml.Name.LocalName);
+        var id = Guid.Parse(xml.Attribute("id")!.Value);
+        Assert.Equal("key-" + id.ToString("D"), made.FriendlyName);
+        var activation = DateTimeOffset.Parse(xml.Element("activationDate")!.Value, System.Globalization.CultureInfo.InvariantCulture);
+        var expiration = DateTimeOffset.Parse(xml.Element("expirationDate")!.Value, System.Globalization.CultureInfo.InvariantCulture);
+        Assert.InRange(activation, DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow);
+        Assert.Equal(TimeSpan.FromDays(90), expiration - activation);
+        Assert.NotEqual(id, Guid.Parse(System.Xml.Linq.XElement.Parse(CookieKeyImport.NewKey().Xml).Attribute("id")!.Value));
+        // A key ring over a store holding only it protects under it.
+        var store = new ListStore();
+        store.Keys.Add(made);
+        Assert.Equal(id, KeyId(RingOver(store).Protect("x"u8.ToArray())));
+        Assert.Single(store.Keys);
     }
 
     [Fact]   // mutations: no import (old cookies stop decrypting); import every start; write to (or delete from) the folder; log a key's XML
@@ -412,7 +587,9 @@ public class CookieKeyStorageTests
     private const string NoKeysWarning = "has no key files: a new key is made, so anyone signed in before signs in again. Start the first server " +
         "with PACKMOAT_COOKIE_KEYS=database where the existing key folder is mounted.";
 
-    [Fact]   // mutations: a missing or empty folder stops the start (or is created); its line is only Information (an operator would miss it)
+    // mutations: a missing or empty folder stops the start (or is created); its line is only Information (an operator would miss it); the
+    // first key left to the key ring (made on first use, not at start)
+    [Fact]
     public async Task Database_mode_with_no_key_files_warns_imports_nothing_and_makes_its_first_key_in_the_database()
     {
         var dir = Dir("fresh");
@@ -422,8 +599,11 @@ public class CookieKeyStorageTests
         {
             await using (var app = Build(dir, null, "database", key, logs))
             {
-                Assert.Equal(0L, await RowsAsync(dir));
-                Assert.Equal("x", Protector(app).Unprotect(Protector(app).Protect("x")));
+                Assert.Equal(1L, await RowsAsync(dir));   // made at start, before any key ring is read
+                var stored = Assert.Single(await app.Services.GetRequiredService<ICookieKeyStore>().GetAllAsync(default));
+                var payload = Protector(app).Protect("x"u8.ToArray());
+                Assert.Equal(Guid.Parse(System.Xml.Linq.XElement.Parse(stored.Xml).Attribute("id")!.Value), KeyId(payload));
+                Assert.Equal("x"u8.ToArray(), Protector(app).Unprotect(payload));
             }
             Assert.Equal(1L, await RowsAsync(dir));
             Assert.False(Directory.Exists(Path.Combine(dir, "admin-keys")));
@@ -479,6 +659,7 @@ public class CookieKeyStorageTests
         public Task<IReadOnlyList<CookieKey>> GetAllAsync(CancellationToken ct) => throw new System.Security.Cryptography.CryptographicException("unreadable");
         public Task AddAsync(string friendlyName, string xml, CancellationToken ct) => throw new InvalidOperationException("disk full");
         public Task<int> ImportIfEmptyAsync(IReadOnlyList<CookieKey> keys, CancellationToken ct) => throw new NotSupportedException();
+        public Task<bool> AddUnlessAnyAsync(CookieKey key, Func<CookieKey, bool> usable, CancellationToken ct) => throw new NotSupportedException();
     }
 
     private sealed class ListStore : ICookieKeyStore
@@ -487,6 +668,7 @@ public class CookieKeyStorageTests
         public Task<IReadOnlyList<CookieKey>> GetAllAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<CookieKey>>(Keys.ToList());
         public Task AddAsync(string friendlyName, string xml, CancellationToken ct) { Keys.Add(new CookieKey(friendlyName, xml)); return Task.CompletedTask; }
         public Task<int> ImportIfEmptyAsync(IReadOnlyList<CookieKey> keys, CancellationToken ct) => throw new NotSupportedException();
+        public Task<bool> AddUnlessAnyAsync(CookieKey key, Func<CookieKey, bool> usable, CancellationToken ct) => throw new NotSupportedException();
     }
 
     [Fact]   // mutation: the repository catches a store error and returns no keys (the key ring would mint a new key and sign everyone out)

@@ -1,11 +1,12 @@
 using System.Globalization;
 using Packmoat.Application;
 using Packmoat.Domain;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// The per-version decision record (#123) as a contract (#232 S1): the upsert (first seen kept, last seen the latest, counts added), the
+/// The per-version decision record as a contract: the upsert (first seen kept, last seen the latest, counts added), the
 /// 365-day prune and a late write for a purged tenant. Migration 17 and the adapter's chunking stay in <see cref="DecisionRecordStoreTests"/>.
 /// </summary>
 public abstract class DecisionRecordStoreContract : StoreContract
@@ -28,7 +29,7 @@ public abstract class DecisionRecordStoreContract : StoreContract
 
     // ---------------------------------------------------------------- the upsert
 
-    [Fact]
+    [EngineFact]
     public async Task Upsert_keeps_the_earliest_first_seen_takes_the_latest_last_seen_and_adds_the_counts()
     {
         await using var t = await CreateDbAsync();
@@ -37,17 +38,44 @@ public abstract class DecisionRecordStoreContract : StoreContract
 
         await store.UpsertAsync(new[] { Rec(first: T0, last: T0.AddMinutes(5), count: 3, published: T0.AddDays(-2)) }, Ct);
         // A later batch: a later first seen (must not replace the earlier), a later last seen, new policy facts.
-        await store.UpsertAsync(new[] { Rec(first: T0.AddHours(1), last: T0.AddHours(2), count: 4, cooldown: 7, revision: 4, published: T0.AddDays(-2)) }, Ct);
-        // A batch that arrives late with older times: it adds its count and can only move first seen earlier, never last seen or the facts.
+        await store.UpsertAsync(new[] { Rec(first: T0.AddHours(1), last: T0.AddHours(2), count: 4, cooldown: 7, revision: 4, published: T0.AddDays(-2), waiver: "w-1") }, Ct);
+        // A batch that arrives late with older times: it adds its count and can only move first seen earlier, never last seen or the facts
+        // (its null published time and null waiver do not clear the newer sighting's).
         await store.UpsertAsync(new[] { Rec(first: T0.AddMinutes(-10), last: T0.AddMinutes(-9), count: 2, cooldown: 30, revision: 1) }, Ct);
 
         var row = Assert.Single(await ListAsync(t, "acme"));
         Assert.Equal((T0.AddMinutes(-10), T0.AddHours(2), 9L), (row.FirstSeenAt, row.LastSeenAt, row.SeenCount));
-        Assert.Equal(((int?)7, 4L, (DateTimeOffset?)T0.AddDays(-2)), (row.CooldownDays, row.PolicyRevision, row.PublishedAt));
+        Assert.Equal(((int?)7, 4L, (DateTimeOffset?)T0.AddDays(-2), "w-1"), (row.CooldownDays, row.PolicyRevision, row.PublishedAt, row.WaiverId));
         Assert.Equal(("moq", "4.21.0", Decision.Hide, VerdictReason.Cooldown, Ecosystem.NuGet), (row.PackageId, row.Version, row.Decision, row.Reason, row.Ecosystem));
+
+        // A newer sighting with no published time, no waiver and no cooldown clears the stored ones. The facts are the
+        // latest sighting's, nulls and all, never kept from an older one (as a COALESCE would keep them).
+        await store.UpsertAsync(new[] { Rec(first: T0.AddHours(3), last: T0.AddHours(3), count: 1, cooldown: null, revision: 5) }, Ct);
+        row = Assert.Single(await ListAsync(t, "acme"));
+        Assert.Equal((T0.AddMinutes(-10), T0.AddHours(3), 10L), (row.FirstSeenAt, row.LastSeenAt, row.SeenCount));
+        Assert.Equal(((int?)null, 5L, (DateTimeOffset?)null, (string?)null), (row.CooldownDays, row.PolicyRevision, row.PublishedAt, row.WaiverId));
     }
 
-    [Fact]
+    /// <summary>
+    /// A sighting whose last seen equals the stored one takes the policy facts (the tie rule is <c>&gt;=</c>: the later
+    /// write wins). Each is its own batch, so the order is the order written.
+    /// </summary>
+    [EngineFact]
+    public async Task On_an_equal_last_seen_the_later_write_takes_the_policy_facts()
+    {
+        await using var t = await CreateDbAsync();
+        await AddTenantAsync(t, "acme");
+        var store = Engine.DecisionRecords(t);
+
+        await store.UpsertAsync(new[] { Rec(first: T0, last: T0.AddHours(1), cooldown: 14, revision: 3, published: T0.AddDays(-2), waiver: "w-1") }, Ct);
+        await store.UpsertAsync(new[] { Rec(first: T0, last: T0.AddHours(1), cooldown: 7, revision: 4, published: T0.AddDays(-5), waiver: "w-2") }, Ct);
+
+        var row = Assert.Single(await ListAsync(t, "acme"));
+        Assert.Equal((T0.AddHours(1), 2L), (row.LastSeenAt, row.SeenCount));
+        Assert.Equal(((int?)7, 4L, (DateTimeOffset?)T0.AddDays(-5), "w-2"), (row.CooldownDays, row.PolicyRevision, row.PublishedAt, row.WaiverId));
+    }
+
+    [EngineFact]
     public async Task A_changed_decision_for_the_same_version_adds_a_row_so_the_history_is_kept()
     {
         await using var t = await CreateDbAsync();
@@ -67,7 +95,7 @@ public abstract class DecisionRecordStoreContract : StoreContract
 
     // ---------------------------------------------------------------- retention
 
-    [Fact]
+    [EngineFact]
     public async Task Prune_deletes_rows_last_seen_before_the_cutoff_only()
     {
         await using var t = await CreateDbAsync();
@@ -90,7 +118,7 @@ public abstract class DecisionRecordStoreContract : StoreContract
         Assert.Equal(0, await store.PruneAsync(cutoff, Ct));
     }
 
-    [Fact]
+    [EngineFact]
     [Trait(Needs, Triggers)]
     public async Task A_late_write_for_a_purged_tenant_is_dropped_and_a_live_tenants_is_kept()
     {
@@ -106,7 +134,24 @@ public abstract class DecisionRecordStoreContract : StoreContract
         Assert.Single(await ListAsync(t, "acme"));
     }
 
-    [Fact]
+    /// <summary>
+    /// A published time long before any other (NuGet shows an unlisted package as published 1900-01-01) is stored and read
+    /// back as the same instant. On PostgreSQL the session's time zone, Pacific/Chatham, was UTC+12:15 in 1900, not today's offset, so a
+    /// time that went through local time would come back out.
+    /// </summary>
+    [EngineFact]
+    public async Task A_published_time_of_1900_01_01_round_trips()
+    {
+        await using var t = await CreateDbAsync();
+        await AddTenantAsync(t, "acme");
+        var published = new DateTimeOffset(1900, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        await Engine.DecisionRecords(t).UpsertAsync(new[] { Rec(published: published) }, Ct);
+
+        Assert.Equal(published, Assert.Single(await ListAsync(t, "acme")).PublishedAt);
+        Assert.Equal("1900-01-01T00:00:00.0000000+00:00", await ScalarAsync(t, "SELECT published_at FROM decision_records"));
+    }
+
+    [EngineFact]
     public async Task Times_are_stored_as_sortable_utc_text()
     {
         await using var t = await CreateDbAsync();

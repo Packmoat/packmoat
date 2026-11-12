@@ -5,7 +5,7 @@ using Packmoat.Domain;
 namespace Packmoat.Application;
 
 /// <summary>
-/// The rules for waivers a customer Admin makes (#157). The operator's waivers keep the operator's own limits
+/// The rules for waivers a customer Admin makes. The operator's waivers keep the operator's own limits
 /// (<see cref="AdminCommands.MinWaiverDays"/> to <see cref="AdminCommands.MaxWaiverDays"/>, wildcards allowed).
 /// </summary>
 public static class WaiverRules

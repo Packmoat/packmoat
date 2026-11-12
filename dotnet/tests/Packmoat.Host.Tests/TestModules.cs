@@ -7,7 +7,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The modules the core's server tests run (#197): none, the core alone. The shared fixtures (<see cref="ProxyFixture"/>,
+/// The modules the core's server tests run: none, the core alone. The shared fixtures (<see cref="ProxyFixture"/>,
 /// <see cref="AdminSiteFixture"/>) build the server with these; the hosted tests have their own TestModules.cs, which gives the hosted
 /// module as production does.
 /// </summary>

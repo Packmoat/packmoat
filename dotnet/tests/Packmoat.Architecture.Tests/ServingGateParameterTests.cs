@@ -4,7 +4,7 @@ using Packmoat.Application;
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// The serving gate is never optional (#200): a constructor that takes an <see cref="IServingGate"/> must be given one. A nullable or
+/// The serving gate is never optional: a constructor that takes an <see cref="IServingGate"/> must be given one. A nullable or
 /// defaulted gate parameter would quietly fall back to "serve everyone" (fail open) wherever a composition root forgot to pass the
 /// module's gate. The core's composition passes <see cref="ServeAllGate.Instance"/> explicitly where it has no gate of its own.
 /// </summary>

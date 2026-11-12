@@ -1,4 +1,4 @@
-# Code scanning (#276): CodeQL reads the C# in dotnet/ on each pull request, each push to main, and weekly (new queries find old code).
+# Code scanning: CodeQL reads the C# in dotnet/ on each pull request, each push to main, and weekly (new queries find old code).
 # build-mode none: CodeQL reads the source and its NuGet references without building it, so it needs no build command to keep in step
 # with dotnet.yml. No cache of any kind, as everywhere here. Its findings go to the repository's code scanning alerts. Its one job alone
 # may upload them (CoreWorkflowTests); it is not a required check yet. Every path here is relative to this repository's root.

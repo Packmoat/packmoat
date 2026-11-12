@@ -6,7 +6,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The 'private' check (#64 I2) against a fake Azure DevOps: the Admin's token lists the organisation's feeds and their views; Packmoat's
+/// The 'private' check against a fake Azure DevOps: the Admin's token lists the organisation's feeds and their views; Packmoat's
 /// OWN identity (never the Admin's token) is the control on the public-only feed and probes every other feed and non-private view, by
 /// GUID URLs on the package host only.
 /// </summary>
@@ -103,7 +103,7 @@ public partial class DelegatedFeedCheckTests
     {
         var (r, _, run) = await Private(ado => ado.OtherFeeds[0].PackmoatStatus = 404);
         Assert.Equal(CheckStatus.Skip, r.Status);
-        Assert.Equal("NOT VERIFIED: Azure DevOps gave an answer that doesn't prove a refusal for team-packages. Check again in a few minutes.", r.Detail);   // the status is logged, not shown (#119)
+        Assert.Equal("NOT VERIFIED: Azure DevOps gave an answer that doesn't prove a refusal for team-packages. Check again in a few minutes.", r.Detail);   // the status is logged, not shown
         Assert.Equal(FeedCheckOutcome.Incomplete, AzureSetupRules.Outcome(run.Results));
     }
 
@@ -218,7 +218,7 @@ public partial class DelegatedFeedCheckTests
 }
 
 /// <summary>
-/// The developer probe (#64 I2) against a fake Azure DevOps: (a) Packmoat's identity reads the index, (b) the developer lists the
+/// The developer probe against a fake Azure DevOps: (a) Packmoat's identity reads the index, (b) the developer lists the
 /// organisation's feeds, (c) the developer GETs the GUID index (401/403 PASS, 200 FAIL, anything else NOT VERIFIED), (d) the bypass
 /// advisory. The developer's token goes only to feeds.dev.azure.com and the exact index URL.
 /// </summary>

@@ -3,9 +3,9 @@ using System.Text.RegularExpressions;
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// The public code's examples are made up (#187): every email address in core/ is at a reserved example domain (RFC 2606 and 6761:
+/// The public code's examples are made up: every email address in core/ is at a reserved example domain (RFC 2606 and 6761:
 /// .example, .test, .invalid, .localhost and example.com, .net and .org), and core/ names no packmoat.com address and no packmoat.com
-/// host. The hosted service's own addresses are settings (#186); a test uses TestOperator's Contoso instead.
+/// host. The hosted service's own addresses are settings; a test uses TestOperator's Contoso instead.
 /// </summary>
 public class PublicFixtureTests
 {
@@ -41,7 +41,7 @@ public class PublicFixtureTests
     /// <summary>
     /// The named exceptions, as "file: address", each with the exact number of times it may appear there. An Azure DevOps feed URL with
     /// a user name before its host (a URL, not an address) is what those tests strip or refuse; and the one packmoat.com address is the
-    /// hosted-domain scanner's own test, which must show it finds one. The code of conduct's contact (#265) is the one real address the
+    /// hosted-domain scanner's own test, which must show it finds one. The code of conduct's contact is the one real address the
     /// public repository gives out. One more of any of them is an offender.
     /// </summary>
     private static readonly Dictionary<string, int> Named = new(StringComparer.Ordinal)

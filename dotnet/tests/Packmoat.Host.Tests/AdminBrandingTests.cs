@@ -139,7 +139,7 @@ public class AdminBrandingTests
         Assert.Equal("noindex, nofollow", Header(r, "X-Robots-Tag"));
     }
 
-    // ---- the signed-out page's layout (#113) and the 503 pages (#110)
+    // ---- the signed-out page's layout and the 503 pages
 
     /// <summary>One CSS rule's declarations, by its exact selector.</summary>
     private static string Rule(string css, string selector)

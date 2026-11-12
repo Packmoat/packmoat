@@ -4,7 +4,7 @@ using YamlDotNet.RepresentationModel;
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// The PostgreSQL service the test jobs run beside (#288), read from a workflow: every job that runs a whole solution's tests
+/// The PostgreSQL service the test jobs run beside, read from a workflow: every job that runs a whole solution's tests
 /// (<c>dotnet test</c> with no <c>--filter</c>) has a <c>postgres</c> service on one image pinned by digest, with a pg_isready health check
 /// and port 5432, and sets PACKMOAT_TEST_POSTGRES on each such step; a line that holds the throwaway password is marked gitleaks:allow.
 /// Without the service those jobs would fail (CI=true turns a skipped Postgres test into a failure), so this check says why first.
@@ -16,6 +16,14 @@ internal static class PostgresService
 
     /// <summary>The one supported major version, pinned by the index digest (the official image's multi-platform index).</summary>
     public static readonly Regex PinnedImage = new(@"^postgres:17\.\d+@sha256:[0-9a-f]{64}$", RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// The PgBouncer in transaction mode beside it, for the pooler test (PACKMOAT_TEST_PGBOUNCER): the image
+    /// tools/pgbouncer-tests.sh runs, pinned by digest.
+    /// </summary>
+    public const string BouncerVariable = "PACKMOAT_TEST_PGBOUNCER";
+
+    public static readonly Regex PinnedBouncerImage = new(@"^edoburu/pgbouncer@sha256:[0-9a-f]{64}$", RegexOptions.CultureInvariant);
 
     private static YamlMappingNode? Map(YamlNode? node, string key) =>
         node is YamlMappingNode m && m.Children.TryGetValue(new YamlScalarNode(key), out var v) ? v as YamlMappingNode : null;
@@ -69,6 +77,21 @@ internal static class PostgresService
                 && pn is YamlSequenceNode seq ? seq.OfType<YamlScalarNode>().Select(n => n.Value).ToArray() : [];
             if (!ports.Contains("5432:5432")) found.Add($"{jobId}: the postgres service does not publish port 5432");
         }
+        var bouncer = Map(Map(job, "services"), "pgbouncer");
+        if (bouncer is null) found.Add($"{jobId}: no pgbouncer service");
+        else
+        {
+            var bouncerImage = Text(bouncer, "image");
+            if (bouncerImage is null || !PinnedBouncerImage.IsMatch(bouncerImage))
+                found.Add($"{jobId}: the pgbouncer image is not edoburu/pgbouncer pinned by digest (edoburu/pgbouncer@sha256:<64 hex>): {bouncerImage}");
+            if (Text(Map(bouncer, "env"), "POOL_MODE") != "transaction") found.Add($"{jobId}: the pgbouncer service is not in transaction mode (POOL_MODE: transaction)");
+            if (Text(Map(bouncer, "env"), "DB_HOST") != "postgres") found.Add($"{jobId}: the pgbouncer service does not stand in front of the postgres service (DB_HOST: postgres)");
+            if (Text(bouncer, "options") is not { } options || !Regex.IsMatch(options, @"--health-cmd\s+""pg_isready\b"))
+                found.Add($"{jobId}: the pgbouncer service has no pg_isready health check");
+            var ports = bouncer.Children.TryGetValue(new YamlScalarNode("ports"), out var pn) && pn is YamlSequenceNode seq
+                ? seq.OfType<YamlScalarNode>().Select(n => n.Value).ToArray() : [];
+            if (!ports.Contains("6432:5432")) found.Add($"{jobId}: the pgbouncer service does not publish port 6432");
+        }
         var tests = Steps(job).Where(s => RunsWholeTests(Text(s, "run"))).ToArray();
         if (tests.Length == 0) found.Add($"{jobId}: no step runs dotnet test");
         foreach (var step in tests)
@@ -76,11 +99,22 @@ internal static class PostgresService
             var value = Text(Map(step, "env"), Variable);
             if (value is null || !value.Contains("Host=localhost;Port=5432;", StringComparison.Ordinal))
                 found.Add($"{jobId}: the step \"{Text(step, "name")}\" does not set {Variable} to the service (Host=localhost;Port=5432;...)");
+            var bouncerValue = Text(Map(step, "env"), BouncerVariable);
+            if (bouncerValue is null || !bouncerValue.Contains("Host=localhost;Port=6432;", StringComparison.Ordinal))
+                found.Add($"{jobId}: the step \"{Text(step, "name")}\" does not set {BouncerVariable} to the pgbouncer service (Host=localhost;Port=6432;...)");
         }
-        foreach (var line in workflow.Split('\n').Where(l => Regex.IsMatch(l, "POSTGRES_PASSWORD|Password=", RegexOptions.IgnoreCase)))
+        foreach (var line in workflow.Split('\n').Where(l => Regex.IsMatch(l, "POSTGRES_PASSWORD|DB_PASSWORD|Password=", RegexOptions.IgnoreCase)))
             if (!line.Contains("gitleaks:allow", StringComparison.Ordinal)) found.Add($"a line holds a password without gitleaks:allow: {line.Trim()}");
         return (image, found);
     }
+
+    /// <summary>The image job <paramref name="jobId"/>'s pgbouncer service names, or null.</summary>
+    public static string? BouncerImage(string workflow, string jobId) =>
+        Text(Map(Map(Map(Map(Load(workflow), "jobs"), jobId), "services"), "pgbouncer"), "image");
+
+    /// <summary>The PgBouncer image tools/pgbouncer-tests.sh runs (its <c>bouncer_image=</c> line).</summary>
+    public static string? ScriptBouncerImage(string script) =>
+        Regex.Match(script, @"(?m)^bouncer_image=""([^""]+)""") is { Success: true } m ? m.Groups[1].Value : null;
 
     /// <summary>The image tools/postgres-tests.sh runs (its <c>image=</c> line).</summary>
     public static string? ScriptImage(string script) =>

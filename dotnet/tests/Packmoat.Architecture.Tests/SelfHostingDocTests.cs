@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// The public docs (#188, #275) are followed by people who cannot read the code. The settings table in docs/operations.md and
+/// The public docs are followed by people who cannot read the code. The settings table in docs/operations.md and
 /// deploy/packmoat.env.example must name exactly the settings the code reads, no doc may name a setting nothing reads, and every
 /// repository path a doc names must exist.
 /// </summary>

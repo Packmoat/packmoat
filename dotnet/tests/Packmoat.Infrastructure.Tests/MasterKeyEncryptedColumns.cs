@@ -3,7 +3,7 @@ namespace Packmoat.Infrastructure.Tests;
 /// <summary>
 /// Every BLOB column of the core's schema, and whether what it holds is encrypted with the master key (AesGcmSecretProtector). There is no
 /// master-key rotation command yet (the KNOWN GAP in AesGcmSecretProtector); when one is written, it must re-encrypt every row this list
-/// marks encrypted, and the guard below makes sure a new encrypted column cannot be left off the list (#232 B1).
+/// marks encrypted, and the guard below makes sure a new encrypted column cannot be left off the list.
 /// </summary>
 public static class MasterKeyEncryptedColumns
 {
@@ -16,7 +16,7 @@ public static class MasterKeyEncryptedColumns
         new("meta", "value", "key='purge_nudge_day'", false, "the last purge nudge day, as UTF-8 text"),
         new("upstream_identities", "cert_encrypted", null, true, "a tenant's own app certificate, bound to the tenant id"),
         new("shared_app_credentials", "cert_encrypted", null, true, "Packmoat's shared app certificate, bound to its slot"),
-        new("cookie_keys", "xml_encrypted", null, true, "the cookie protection keys, bound to the row id (#232 B1)"),
+        new("cookie_keys", "xml_encrypted", null, true, "the cookie protection keys, bound to the row id"),
     ];
 }
 

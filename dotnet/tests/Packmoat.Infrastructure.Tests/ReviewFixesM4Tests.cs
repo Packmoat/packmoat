@@ -109,7 +109,7 @@ public class RestoreKeepsTheOldDatabaseCompleteTests
 }
 
 // The master-key check's backup tests. The class's other part (MasterKeyCheckTests.cs) is the SQLite fixture of MasterKeyCheckContract and
-// carries the collection (#288 P2).
+// carries the collection.
 public partial class MasterKeyCheckTests
 {
     private static AesGcmSecretProtector NewKey() => AesGcmSecretProtector.FromBase64(AesGcmSecretProtector.GenerateKeyBase64());

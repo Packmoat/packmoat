@@ -16,7 +16,7 @@ public class ReviewFixesM4HostTests
     {
         var app = PackmoatApp.Build(new[] { "--urls", "http://127.0.0.1:0" }, TestModules.Server, null, o =>
         {
-            o.DatabasePath = Path.Combine(dir, "packmoat.db");
+            o.Database = Path.Combine(dir, "packmoat.db");
             o.MasterKeyBase64 = key;
             o.AllowedHosts = hosts;
         });
@@ -41,7 +41,7 @@ public class ReviewFixesM4HostTests
 
             var ex = Assert.Throws<InvalidOperationException>(() => PackmoatApp.Build(new[] { "--urls", "http://127.0.0.1:0" }, TestModules.Server, null, o =>
             {
-                o.DatabasePath = Path.Combine(dir, "packmoat.db");
+                o.Database = Path.Combine(dir, "packmoat.db");
                 o.MasterKeyBase64 = NewKey();
                 o.AllowedHosts = "feeds.example.test";
             }));

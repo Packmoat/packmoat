@@ -9,7 +9,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The job lease in the server and the command (#232 M2): the retention pass runs under the lease the operator's command also takes, so
+/// The job lease in the server and the command: the retention pass runs under the lease the operator's command also takes, so
 /// the two never run it at once; the production composition hands the service the database's lease; each pass that runs logs its
 /// duration, and one that loses the lease is skipped and says so at Information level.
 /// </summary>
@@ -21,7 +21,7 @@ public class JobLeaseHostTests : IDisposable
     private readonly FakeClock _clock = new();
     private string DbPath => _temp.File("packmoat.db");
 
-    // xunit 2 disposes a test class through IDisposable only (an IAsyncDisposable one is never called): #292.
+    // xunit 2 disposes a test class through IDisposable only (an IAsyncDisposable one is never called).
     public void Dispose() => _temp.Dispose();
 
     internal sealed class RecordingLogger : ILogger
@@ -119,7 +119,7 @@ public class JobLeaseHostTests : IDisposable
     {
         await using var app = PackmoatApp.Build(["--urls", "http://127.0.0.1:0"], TestModules.Server, null, o =>
         {
-            o.DatabasePath = DbPath;
+            o.Database = DbPath;
             o.MasterKeyBase64 = _key;
             o.AllowedHosts = "feeds.example.test";
         });

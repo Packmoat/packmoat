@@ -4,8 +4,9 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host;
 
 /// <summary>
-/// The readiness check behind /readyz (#233): the database opens, every migration track (the core's and each module's) has exactly the
-/// versions this build knows, and the master key in use reads the database's key marker. Read only: it records nothing (no key marker, no
+/// The readiness check behind /readyz: the database opens, every migration track (the core's and each module's) has exactly the
+/// versions this build knows (on PostgreSQL, or newer ones past them: a rolling upgrade's next release migrated it), and the master key
+/// in use reads the database's key marker. Read only: it records nothing (no key marker, no
 /// migration, no file).
 /// <para>It answers "ready" or "not ready" and never says why. Only the failure's kind (database, schema or key) is logged, and only when
 /// the answer changes. An answer is kept for <see cref="CacheFor"/>, so a probe cannot make the server read the database on every request.
@@ -29,15 +30,22 @@ public sealed class Readiness
     private readonly Func<CancellationToken, Task<bool>>? _keyMatches;
     private readonly IClock _clock;
     private readonly ILogger _log;
+    private readonly bool _newerSchemaReady;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private (DateTimeOffset At, Failure Result)? _cached;
     private Failure? _logged;
+    private bool _warnedNewerSchema;
 
     /// <param name="tracks">Reads where every migration track stands, read only (the composition root's database, against the tracks the
     /// start migrated); null (no database) is never ready.</param>
     /// <param name="keyMatches">Reads whether the master key in use reads the database's key marker, read only; null is never ready.</param>
-    public Readiness(Func<CancellationToken, Task<IReadOnlyList<TrackVersion>>>? tracks, Func<CancellationToken, Task<bool>>? keyMatches, IClock clock, ILogger log)
+    /// <param name="newerSchemaReady">Whether a schema a newer build migrated past this build's is ready
+    /// (<see cref="TrackVersion.IsCurrentOrMigratedPast"/>): PostgreSQL's, where copies of the previous release keep serving while a
+    /// rolling upgrade replaces them. Where one server runs alone, it is never upgraded under itself, so there it is not ready, as before.</param>
+    public Readiness(Func<CancellationToken, Task<IReadOnlyList<TrackVersion>>>? tracks, Func<CancellationToken, Task<bool>>? keyMatches, IClock clock, ILogger log,
+        bool newerSchemaReady = false)
     {
+        _newerSchemaReady = newerSchemaReady;
         _tracks = tracks;
         _keyMatches = keyMatches;
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
@@ -72,9 +80,17 @@ public sealed class Readiness
         IReadOnlyList<TrackVersion> tracks;
         try { tracks = await _tracks(ct); }
         catch (Exception) { return Failure.Database; }   // fail closed; the exception (which may name the file) is not logged
-        if (tracks.Count == 0 || tracks.Any(t => !t.IsCurrent)) return Failure.Schema;
-        try { return await _keyMatches(ct) ? Failure.None : Failure.Key; }
+        if (tracks.Count == 0 || tracks.Any(t => !(_newerSchemaReady ? t.IsCurrentOrMigratedPast : t.IsCurrent))) return Failure.Schema;
+        Failure result;
+        try { result = await _keyMatches(ct) ? Failure.None : Failure.Key; }
         catch (Exception) { return Failure.Database; }
+        // Ready on a schema a newer release migrated past: the rollout is not finished. Said once per process, not on every probe.
+        if (result == Failure.None && _newerSchemaReady && !_warnedNewerSchema && tracks.Any(t => !t.IsCurrent))
+        {
+            _warnedNewerSchema = true;
+            _log.LogWarning("Readiness: a newer release has migrated the database; finish the rollout");
+        }
+        return result;
     }
 
     /// <summary>GET /readyz: 200 "ready" or 503 "not ready", nothing else.</summary>

@@ -7,7 +7,7 @@ using Packmoat.Host.Web;
 namespace Packmoat.Host.Modules;
 
 /// <summary>
-/// What a module adds to the operator admin site (#193): a section of the tenant page, write actions on a tenant, and the canned
+/// What a module adds to the operator admin site: a section of the tenant page, write actions on a tenant, and the canned
 /// notices those actions redirect with. At most one is registered (more refuses the start); with none, the core registers
 /// <see cref="NoAdminSiteModule"/>, which adds nothing. A verb or notice key the core already uses, or one listed twice, refuses the start.
 /// <para>The core owns every check. A module action is a POST to <c>/tenants/{id}/{verb}</c>; in order: the antiforgery token (400), a

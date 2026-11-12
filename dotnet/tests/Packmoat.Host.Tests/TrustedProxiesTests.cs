@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// PACKMOAT_TRUSTED_PROXIES (#233): loopback is always trusted; the setting adds addresses or networks. Run through the real
+/// PACKMOAT_TRUSTED_PROXIES: loopback is always trusted; the setting adds addresses or networks. Run through the real
 /// forwarded-headers middleware with the options the server builds, so what is tested is what is served.
 /// </summary>
 public class TrustedProxiesTests
@@ -26,7 +26,7 @@ public class TrustedProxiesTests
         return (seen.IsIPv4MappedToIPv6 ? seen.MapToIPv4() : seen).ToString();
     }
 
-    [Theory]   // unset means loopback only, as before #233
+    [Theory]   // unset means loopback only, as before
     [InlineData(null)]
     [InlineData("")]
     [InlineData("  ")]
@@ -71,7 +71,7 @@ public class TrustedProxiesTests
         Assert.Equal("feeds.example", await SeenHost("10.0.0.0/8", "10.0.0.5", "evil.example"));   // no host names: none is applied
     }
 
-    [Fact]   // unset: exactly as before #233 (loopback's X-Forwarded-Host is believed; a stranger's is not)
+    [Fact]   // unset: exactly as before (loopback's X-Forwarded-Host is believed; a stranger's is not)
     public async Task Unset_a_forwarded_host_from_loopback_is_applied_as_before()
     {
         Assert.Equal("evil.example", await SeenHost(null, "127.0.0.1", "evil.example", "feeds.example"));

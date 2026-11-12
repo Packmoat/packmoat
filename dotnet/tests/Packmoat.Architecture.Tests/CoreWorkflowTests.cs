@@ -5,7 +5,7 @@ using YamlDotNet.RepresentationModel;
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// The core's own workflows, core/.github/workflows (#197 E): the public repository runs them with core/ as its root, so they may name only
+/// The core's own workflows, core/.github/workflows: the public repository runs them with core/ as its root, so they may name only
 /// paths inside core/. They cannot run from a subfolder here, so these checks stand in until they do. They also keep the pipeline rules
 /// the private repository's workflows keep: actions pinned to full commit SHAs, a read-only token, no secrets, no untrusted triggers.
 /// </summary>
@@ -32,7 +32,7 @@ public class CoreWorkflowTests
     private static readonly Regex RelativePath = new(@"(?<![\w.$}{/~:-])(?:\./)?([\w.-]+)/[\w./*-]*", RegexOptions.CultureInvariant);
     // A .. segment: two dots with no other dot or name character on either side, so "cd ..;", "..&&", "../x" and "$X/.." are all caught.
     private static readonly Regex ParentSegment = new(@"(?<![\w.-])\.\.(?![\w.-])", RegexOptions.CultureInvariant);
-    // First segments that name no folder in core-image.yml, and only there (#266): a registry host (ghcr.io/x/y, docker.io/x/y), a
+    // First segments that name no folder in core-image.yml, and only there: a registry host (ghcr.io/x/y, docker.io/x/y), a
     // platform (linux/amd64), a git ref (refs/heads/main) and the repository its guard names (Packmoat/packmoat, pinned by PublisherProblems).
     private static readonly string[] PublisherNotFolders = ["docker.io", "ghcr.io", "linux", "refs", "Packmoat"];
     private static readonly Regex PathKey = new(@"^\s*-?\s*(working-directory|global-json-file|cache-dependency-path|path):\s*['""]?([^'""\s]+)", RegexOptions.CultureInvariant);
@@ -40,7 +40,7 @@ public class CoreWorkflowTests
     /// <summary>
     /// What a workflow names outside <paramref name="root"/>, one line each: a <c>..</c> segment; a relative path whose first segment is
     /// in neither the root nor one of the workflow's working directories; a working-directory or global-json-file that is not in the root;
-    /// and the word "hosted" anywhere, comments included. Comments are otherwise not read, and neither is an action reference (<c>uses:</c>).
+    /// and the word "hosted" anywhere, comments included. Comments are otherwise not read, and neither is an action reference (<c>uses:</c>) or a service's container image (<c>image:</c>).
     /// A first segment in <paramref name="notFolders"/> is not a path; only <see cref="Publisher"/> is given any (<see cref="PublisherNotFolders"/>).
     /// </summary>
     internal static IReadOnlyList<string> OutsidePaths(string workflow, string root, IReadOnlyCollection<string>? notFolders = null)
@@ -56,7 +56,7 @@ public class CoreWorkflowTests
         {
             if (raw.Contains("hosted", StringComparison.OrdinalIgnoreCase)) found.Add($"line {number}: names the hosted service: {raw.Trim()}");
             var line = Regex.Replace(raw, @"(^|\s)#.*$", "");
-            if (Regex.IsMatch(line, @"^\s*-?\s*uses:")) continue;
+            if (Regex.IsMatch(line, @"^\s*-?\s*(uses|image):")) continue;   // an action or a container image, not a path
             if (ParentSegment.IsMatch(line)) found.Add($"line {number}: a .. segment: {line.Trim()}");
             foreach (Match m in RelativePath.Matches(line))
                 if (m.Groups[1].Value != ".." && !notFolders.Contains(m.Groups[1].Value) &&!bases.Any(b => InCore(Path.Combine(root, b), m.Groups[1].Value))) found.Add($"line {number}: {m.Value} is not in the repository");
@@ -110,7 +110,7 @@ public class CoreWorkflowTests
                         working-directory: ${{ runner.temp }}/x
                 """;
             Assert.Empty(OutsidePaths(inside, root));
-            // #266: in core-image.yml only, an image name, a platform, a git ref and the guard's repository are not paths.
+            // In core-image.yml only, an image name, a platform, a git ref and the guard's repository are not paths.
             const string publisher = """
                         if: github.repository == 'Packmoat/packmoat' && github.ref == 'refs/heads/main'
                         env:
@@ -120,7 +120,10 @@ public class CoreWorkflowTests
                         run: cosign verify --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/x.yml@refs/heads/main"
                 """;
             Assert.Empty(OutsidePaths(publisher, root, PublisherNotFolders));
-            Assert.Equal(7, OutsidePaths(publisher, root).Count);                         // in any other workflow each is a path outside
+            Assert.Equal(6, OutsidePaths(publisher, root).Count);                         // in any other workflow each is a path outside, but the image: line
+            // An image: line names a container image (a service's, or an action's input), never a path.
+            Assert.Empty(OutsidePaths("        image: edoburu/pgbouncer@sha256:8638aa563607256d3c7440437534195f1066a92b68015d89ae9d6b935b444a6d\n", root));
+            Assert.Single(OutsidePaths("        run: docker run edoburu/pgbouncer\n", root));
             Assert.Single(OutsidePaths("        run: dotnet build linux/Packmoat.sln\n", root));
             Assert.Single(OutsidePaths("        if: hashFiles('../x/**') != ''\n", root), o => o.Contains("a .. segment"));   // a condition is read too
             Assert.Single(OutsidePaths("        if: hashFiles('../x/**') != ''\n", root, PublisherNotFolders), o => o.Contains("a .. segment"));
@@ -137,7 +140,7 @@ public class CoreWorkflowTests
             Assert.Single(OutsidePaths("        global-json-file: global.json\n", root));                 // the root's, not dotnet/'s
             Assert.Single(OutsidePaths("        run: docker build -f deploy/Dockerfile .\n", root));
             Assert.Single(OutsidePaths("        run: dotnet test tests/x.csproj\n", root));               // no working directory holds tests/
-            // The private repository's folder name, put together so that this file names no such path itself (CorePathTests, #274).
+            // The private repository's folder name, put together so that this file names no such path itself (CorePathTests).
             Assert.Equal(2, OutsidePaths("        working-directory: " + "core" + "/dotnet\n", root).Count);   // the path, and the working directory
             Assert.Single(OutsidePaths("        run: dotnet build Packmoat.Hosted.sln\n", root));
             Assert.Single(OutsidePaths("        # the hosted image\n", root));
@@ -160,7 +163,7 @@ public class CoreWorkflowTests
     private static readonly string[] AllowedTriggers = ["pull_request", "push", "workflow_dispatch"];
 
     /// <summary>
-    /// The two scanners' extra events (#276), neither of which an outsider can start: <c>schedule</c> runs main's workflow, and
+    /// The two scanners' extra events, neither of which an outsider can start: <c>schedule</c> runs main's workflow, and
     /// <c>branch_protection_rule</c> runs it when an administrator changes a rule. <see cref="ScannerProblems"/> pins each scanner's whole list.
     /// </summary>
     private static readonly Dictionary<string, string[]> ExtraTriggers = new()
@@ -226,7 +229,7 @@ public class CoreWorkflowTests
         return found;
     }
 
-    /// <summary>The one workflow that publishes (#266): the signed core image, only from main in the public repository, never on a pull request.</summary>
+    /// <summary>The one workflow that publishes: the signed core image, only from main in the public repository, never on a pull request.</summary>
     private const string Publisher = "core-image.yml";
 
     /// <summary>
@@ -238,7 +241,7 @@ public class CoreWorkflowTests
         || Regex.IsMatch(problem, @"^line \d+: a secret or token: password: \$\{\{ secrets\.GITHUB_TOKEN \}\}$", RegexOptions.CultureInvariant);
 
     /// <summary>
-    /// The workflows that may write anything, each with the one job that may and that job's whole permissions block, exactly (#276): the
+    /// The workflows that may write anything, each with the one job that may and that job's whole permissions block, exactly: the
     /// publisher (packages for the image, an identity token to sign, attestations for its SBOM and provenance); CodeQL (security events, to
     /// upload its findings); and Scorecard (security events, and an identity token to publish its results). See <see cref="WriterProblems"/>.
     /// </summary>
@@ -286,7 +289,7 @@ public class CoreWorkflowTests
         Writers.TryGetValue(name, out var w)
         && (problem == "says : write" || (problem == "says id-token" && w.Permissions.Contains("id-token: write")) || (name == Publisher && PublisherMayHave(problem)));
 
-    [Fact]   // mutations (#276): attestations: write in codeql.yml; contents: write in scorecard.yml; id-token: write in codeql.yml
+    [Fact]   // mutations: attestations: write in codeql.yml; contents: write in scorecard.yml; id-token: write in codeql.yml
     public void Only_the_publisher_and_the_scanners_may_write_and_each_exactly_what_its_one_job_needs() =>
         Assert.All(Workflows(), w => Assert.True(WriterProblems(w.Name, w.Text).Count == 0, $"{w.Name}:\n" + string.Join("\n", WriterProblems(w.Name, w.Text))));
 
@@ -321,7 +324,7 @@ public class CoreWorkflowTests
     }
 
     [Fact]   // mutations, each in a copy of dotnet.yml: issue_comment; the PR title in a run step; ${{ env.TITLE }} in a run step; secrets['NPM_TOKEN']; github.token; cache: npm
-             // (#266): packages: write in dotnet.yml; secrets.NPM_TOKEN in core-image.yml
+             // and packages: write in dotnet.yml; secrets.NPM_TOKEN in core-image.yml
     public void The_core_workflows_are_safe_for_outside_pull_requests()
     {
         var offenders = Workflows().SelectMany(w => HygieneProblems(w.Name, w.Text).Where(p => !MayHave(w.Name, p))
@@ -374,7 +377,7 @@ public class CoreWorkflowTests
         static void Catches(string from, string to, string expect) => CatchesIn(w => HygieneProblems("x.yml", w), Safe, from, to, expect);
         Catches("  workflow_dispatch:\n", "  workflow_dispatch:\n  issue_comment:\n", "trigger issue_comment");
         Catches("  pull_request:\n", "  pull_request_target:\n", "trigger pull_request_target");
-        // #225: a run line may hold only runner.temp, github.ref, github.sha and github.repository (#236: not matrix.<name>).
+        // A run line may hold only runner.temp, github.ref, github.sha and github.repository (not matrix.<name>).
         const string Run = "echo ${{ github.ref }}", InRun = "in a run: value";
         Catches(Run, "echo \"${{ github.event.pull_request.title }}\"", InRun);
         Catches(Run, "git checkout ${{ github.head_ref }}", InRun);
@@ -437,7 +440,7 @@ public class CoreWorkflowTests
     /// by hand, never on a pull request; one job, under the one guard <see cref="PublishGuard"/>; a read-only token at the top and only
     /// contents read, packages write, id-token write and attestations write on the job; the built-in token only as the registry login's
     /// password; one image name, <see cref="CoreImage"/>; nothing tagged by the build or pushed by tag, and nothing that lets a failed
-    /// command pass; each platform's SBOM attested to that platform's digest and the build provenance to the index digest (#276), with
+    /// command pass; each platform's SBOM attested to that platform's digest and the build provenance to the index digest, with
     /// nothing more pushed to the registry; and the steps in order: push by digest, pull that image, smoke it, check PORT, sign, verify as
     /// <see cref="SignerTemplate"/>, the SBOMs, the attestations, then tag. The attestations come before the tags, as the signature does,
     /// so a tag never names an image without its SBOM and provenance; a failure there leaves the image untagged, as a failed signature does.
@@ -465,7 +468,7 @@ public class CoreWorkflowTests
         Require(Regex.Matches(text, "packages: write").Count == 1 && Regex.Matches(text, "id-token").Count == 1 && Regex.Matches(text, "attestations").Count == 1,
             "packages: write, id-token or attestations is said more than once");
 
-        // #276: two SBOMs (syft), one per platform, each attested to its platform's digest; one build provenance, attested to the index digest
+        // Two SBOMs (syft), one per platform, each attested to its platform's digest; one build provenance, attested to the index digest
         // the tags name. The attestations are kept by GitHub, not pushed to the registry.
         Require(Regex.Matches(code, @"uses: anchore/sbom-action@").Count == 2 && Regex.Matches(code, @"uses: actions/attest@").Count == 3,
             "not exactly two SBOM steps and three attest steps");
@@ -563,7 +566,7 @@ public class CoreWorkflowTests
             "the steps are not in order");
         Catches("core-image.yml@refs/heads/main\" \\\n", "cd.yml@refs/heads/main\" \\\n", "the verify does not demand");
         Catches("jobs:\n", "jobs:\n  second:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi\n", "not exactly one job");
-        // #268 review: the image name overridden in a step, a second signature or push, the issuer as a pattern, credentials kept.
+        // The image name overridden in a step, a second signature or push, the issuer as a pattern, credentials kept.
         const string Sign = "          cosign sign --yes --recursive \"${IMAGE}@${DIGEST}\"\n";
         Catches("        env:\n          DIGEST: ${{ steps.build.outputs.digest }}\n        run: |\n          cosign sign",
             "        env:\n          IMAGE: docker.io/evil/core\n          DIGEST: ${{ steps.build.outputs.digest }}\n        run: |\n          cosign sign", "IMAGE is set more than once");
@@ -580,7 +583,7 @@ public class CoreWorkflowTests
         Catches(Pull, Pull + "          oras copy x y\n", "another registry tool");
         Catches(Pull, Pull + "          docker buildx imagetools create --tag \"${IMAGE}:early\" \"${IMAGE}@${DIGEST}\"\n", "imagetools create more than once");
         Catches("          persist-credentials: false\n", "", "the checkout keeps its credentials");
-        // #276: the SBOMs and the provenance, each to the right digest, kept by GitHub, between the signature's check and the tags.
+        // The SBOMs and the provenance, each to the right digest, kept by GitHub, between the signature's check and the tags.
         Catches("      attestations: write\n", "", "the job's permissions");
         Catches("          sbom-path: ${{ runner.temp }}/sbom-arm64.spdx.json\n", "          sbom-path: ${{ runner.temp }}/sbom-arm64.spdx.json\n          push-to-registry: true\n",
             "pushed to the registry");
@@ -626,7 +629,7 @@ public class CoreWorkflowTests
             Assert.All(Images(File.ReadAllText(Path.Combine(CoreRoot(), file))), i => Assert.True(i == CoreImage, $"{file} names {i}, not {CoreImage}"));
     }
 
-    [Fact]   // mutations: --strict dropped; --redact dropped; fetch-depth: 0 removed; (#268 review) || true after the hash check; set -- in the script;
+    [Fact]   // mutations: --strict dropped; --redact dropped; fetch-depth: 0 removed; || true after the hash check; set -- in the script;
              // continue-on-error in gitleaks.yml
     public void The_secret_scan_runs_a_pinned_checked_release_over_the_whole_history_and_never_prints_a_secret()
     {
@@ -649,7 +652,7 @@ public class CoreWorkflowTests
         Assert.DoesNotMatch(@"\|\||set\s+\+e", code);
     }
 
-    /// <summary>The actions each scanner may use (#276). Scorecard publishes its results only from a workflow whose job uses its approved
+    /// <summary>The actions each scanner may use. Scorecard publishes its results only from a workflow whose job uses its approved
     /// actions, and neither scanner needs more.</summary>
     private static readonly Dictionary<string, string[]> ScannerActions = new()
     {
@@ -658,7 +661,7 @@ public class CoreWorkflowTests
     };
 
     /// <summary>
-    /// What a scanner (#276) does beyond scanning, one line each. CodeQL: on a pull request, a push to main, weekly and by hand; C# read
+    /// What a scanner does beyond scanning, one line each. CodeQL: on a pull request, a push to main, weekly and by hand; C# read
     /// without a build (build-mode none); no cache (TRAP or dependency). Scorecard: on a push to main, weekly and on a branch rule change,
     /// never a pull request; publishes its results; no env: or defaults: at the top or in its job, no container or service (Scorecard's
     /// own rules for publishing). Both: one job, the checkout keeps no credentials, only the actions in <see cref="ScannerActions"/>, and
@@ -702,7 +705,7 @@ public class CoreWorkflowTests
         return found;
     }
 
-    [Fact]   // mutations (#276): scorecard on pull_request; codeql with build-mode autobuild; an unpinned github/codeql-action/upload-sarif@v4
+    [Fact]   // mutations: scorecard on pull_request; codeql with build-mode autobuild; an unpinned github/codeql-action/upload-sarif@v4
     public void The_scanners_scan_and_do_nothing_more() =>
         Assert.All(ScannerActions.Keys, n => Assert.Empty(ScannerProblems(n, Workflows().Single(w => w.Name == n).Text)));
 
@@ -735,12 +738,12 @@ public class CoreWorkflowTests
         Catches("scorecard.yml", scorecard, "    runs-on: ubuntu-24.04\n", "    runs-on: windows-2025\n", "Ubuntu");
     }
 
-    /// <summary>The ecosystems Dependabot keeps up to date (#276), each with its folder: the workflows' actions, the .NET packages, the
+    /// <summary>The ecosystems Dependabot keeps up to date, each with its folder: the workflows' actions, the .NET packages, the
     /// schema check's npm packages, and the Dockerfile's base images (pinned by digest).</summary>
     private static readonly string[] DependabotEcosystems = ["github-actions /", "nuget /dotnet", "npm /spec/check", "docker /dotnet"];
 
     /// <summary>
-    /// The one cooldown exception (#276 review): Microsoft's .NET base images, whose rebuilds carry the OS and runtime security fixes and
+    /// The one cooldown exception: Microsoft's .NET base images, whose rebuilds carry the OS and runtime security fixes and
     /// which Dependabot has no security advisories for, so a cooldown would only hold those fixes back. Dependabot names a Docker image by
     /// its repository; the docs do not say whether the registry host is part of the name, so both forms are listed. Nothing else is excluded.
     /// </summary>
@@ -792,7 +795,7 @@ public class CoreWorkflowTests
 
     private static string DependabotFile => Path.Combine(CoreRoot(), ".github", "dependabot.yml");
 
-    [Fact]   // mutations (#276): the docker entry dropped; a cooldown removed; a pip entry added; the npm folder misspelt
+    [Fact]   // mutations: the docker entry dropped; a cooldown removed; a pip entry added; the npm folder misspelt
     public void Dependabot_updates_the_four_ecosystems_weekly_after_a_cooldown()
     {
         Assert.True(File.Exists(DependabotFile), ".github/dependabot.yml is missing");
@@ -836,7 +839,7 @@ public class CoreWorkflowTests
         Catches("updates:", "updates: [", "not YAML");
     }
 
-    // The review cases for #228, #230, #234 and #236 (b, c, n, r, p), each a job header or a step added to dotnet.yml, as the reviews'
+    // The review cases (b, c, n, r, p), each a job header or a step added to dotnet.yml, as the reviews'
     // generator built them. The b, n and r cases each got an outsider's text into code past an earlier version of the check; the c cases
     // are the controls. A case that must fail names what the check must say, so it is caught for the right reason; one with nothing must pass.
     private const string T = "github.event.pull_request.title";
@@ -862,7 +865,6 @@ public class CoreWorkflowTests
     [InlineData("c08b_job_env_route", $"    env:\n      TITLE: ${{{{ {T} }}}}\n", "      - run: echo \"$TITLE\"\n")]
     [InlineData("c09_unicode_dollar", "", $"      - run: echo \uff04{{{{ {T} }}}}\n")]
     [InlineData("c09b_spaced", "", $"      - run: echo $ {{{{ {T} }}}}\n")]
-    // #228 review.
     [InlineData("b01_yaml_escape_x24", "", $"      - run: \"echo \\x24{{{{ {T} }}}}\"\n", InRun, Escape)]
     [InlineData("b02_yaml_escape_u0024", "", $"      - run: \"echo \\u0024{{{{ {T} }}}}\"\n", InRun, Escape)]
     [InlineData("b02b_yaml_escape_U00000024", "", $"      - run: \"echo \\U00000024{{{{ {T} }}}}\"\n", InRun, Escape)]
@@ -885,19 +887,17 @@ public class CoreWorkflowTests
     [InlineData("b15_with_anchor", "", GithubScript + "        with: &w\n          script: return \"${{ env.TITLE }}\"\n", InScript, Anchor)]
     [InlineData("b16_container_image", "    container:\n      image: ${{ github.head_ref }}\n    services:\n      s:\n        image: ${{ github.event.pull_request.title }}\n", "",
                 "(jobs.dotnet.container.image): an outsider's text in a image: value", "(jobs.dotnet.services.s.image): an outsider's text in a image: value")]
-    // #230.
     [InlineData("n1_flow_sequence_steps", "", $"  second:\n    runs-on: ubuntu-24.04\n    steps: [ {{ run: \"echo ${{{{ {T} }}}}\" }} ]\n", InRun)]
     [InlineData("n2_flow_mapping_quoted_key", "", $"      - {{ name: x, \"run\": \"echo ${{{{ {T} }}}}\" }}\n", InRun)]
     [InlineData("n3_with_comment_first", "", GithubScript + "        with:\n              # an over-indented comment sets the key indent\n          script: |\n            return \"${{ env.TITLE }}\"\n", InScript)]
     [InlineData("n3b_with_comment_first_event", "", GithubScript + "        with:\n              # an over-indented comment sets the key indent\n          script: |\n            return \"${{ steps.x.outputs.title }}\"\n", InScript)]
     [InlineData("n4_flow_seq_with", "", "  third:\n    runs-on: ubuntu-24.04\n    steps:\n" + GithubScript + "        with: {script: \"return '${{ env.TITLE }}'\"}\n", InScript)]
-    // #234 review.
     [InlineData("r1_multiline_flow_run_after_comma", "", $"      - {{\n          name: x, run: \"echo ${{{{ {T} }}}}\"\n        }}\n", InRun)]
     [InlineData("r2_multiline_flow_with_script", "", GithubScript + "        with:\n          {\n            script: \"return '${{ env.TITLE }}'\"\n          }\n", InScript)]
     [InlineData("r3_multiline_flow_seq", "", $"  second:\n    runs-on: ubuntu-24.04\n    steps: [\n      {{\n        name: x, run: \"echo ${{{{ {T} }}}}\"\n      }}\n    ]\n", InRun)]
     [InlineData("r4_with_blank_comment", "", GithubScript + "        with:\n\n              # comment\n          script: |\n            return \"${{ env.TITLE }}\"\n", InScript)]
     [InlineData("r5_comment_between_inputs", "", GithubScript + "        with:\n          result-encoding: string\n              # comment\n          script: |\n            return \"${{ env.TITLE }}\"\n", InScript)]
-    // #236: what the parser itself must refuse, or walk into.
+    // What the parser itself must refuse, or walk into.
     [InlineData("p1_parse_error", "", $"      - run: \"echo ${{{{ {T} }}}}\n", NotYaml)]
     [InlineData("p2_duplicate_key", "", $"      - run: echo hi\n        run: echo ${{{{ {T} }}}}\n", NotYaml)]
     [InlineData("p3_with_not_a_mapping", "", GithubScript + "        with: x\n", "with: is not a mapping of inputs")]
@@ -906,7 +906,7 @@ public class CoreWorkflowTests
                 "(jobs.dotnet.defaults.run.shell): ${{ env.SHELL_LINE }} in a shell: value is not one of")]
     [InlineData("p6_input_name_case", "", GithubScript + "        with:\n          Script: return \"${{ env.TITLE }}\"\n", "in the with: input Script is not one of")]
     [InlineData("p7_merge_key", "", "      - <<: { run: \"echo ${{ env.TITLE }}\" }\n        name: x\n", ".<<.run): ${{ env.TITLE }} in a run: value is not one of")]
-    // #236 review: env:, if: and concurrency: are exempt only where Actions reads them as settings.
+    // Env:, if: and concurrency: are exempt only where Actions reads them as settings.
     [InlineData("q1_job_id_env", "", $"  env:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo \"${{{{ {T} }}}}\"\n", "(jobs.env.steps[0].run): ${{ " + T + " }} in a run: value is not one of")]
     [InlineData("q1b_job_id_if", "", $"  if:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo \"${{{{ {T} }}}}\"\n", "(jobs.if.steps[0].run): ${{ " + T + " }} in a run: value is not one of")]
     [InlineData("q1c_job_id_concurrency", "", $"  concurrency:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo \"${{{{ {T} }}}}\"\n",
@@ -927,7 +927,7 @@ public class CoreWorkflowTests
     public void The_expression_check_catches_each_review_case_for_the_right_reason(string name, string job, string step, params string[] expected)
     {
         const string JobLine = "    timeout-minutes: 30\n";
-        // Without the postgres service (#288): some cases add a services: of their own, and a job may have only one.
+        // Without the postgres service: some cases add a services: of their own, and a job may have only one.
         var dotnet = PostgresService.WithoutServices(Workflows().Single(w => w.Name == "dotnet.yml").Text);
         Assert.Contains(JobLine, dotnet);
         var problems = WorkflowExpressions.Problems(dotnet.Replace(JobLine, JobLine + job) + step);
@@ -936,9 +936,11 @@ public class CoreWorkflowTests
             Assert.True(problems.Any(p => p.Contains(e, StringComparison.Ordinal)), $"{name}: expected \"{e}\", got:\n" + string.Join("\n", problems));
     }
 
-    // ---- #288: the PostgreSQL service the test job runs beside, and dotnet/tools/postgres-tests.sh, on one image.
+    // ---- The PostgreSQL service the test job runs beside, and dotnet/tools/postgres-tests.sh, on one image.
 
     private static string Script() => File.ReadAllText(Path.Combine(CoreRoot(), "dotnet", "tools", "postgres-tests.sh")).Replace("\r\n", "\n");
+
+    private static string BouncerScript() => File.ReadAllText(Path.Combine(CoreRoot(), "dotnet", "tools", "pgbouncer-tests.sh")).Replace("\r\n", "\n");
 
     // mutations: the digest dropped from dotnet.yml's image; PACKMOAT_TEST_POSTGRES removed from its test step; the script on another digest
     [Fact]
@@ -949,6 +951,11 @@ public class CoreWorkflowTests
         var (image, problems) = PostgresService.Check(dotnet, "dotnet");
         Assert.True(problems.Count == 0, string.Join("\n", problems));
         Assert.Equal(image, PostgresService.ScriptImage(Script()));
+        // The PgBouncer beside it runs the image dotnet/tools/pgbouncer-tests.sh runs, and that script runs the same postgres.
+        var bouncer = PostgresService.BouncerImage(dotnet, "dotnet");
+        Assert.Matches(PostgresService.PinnedBouncerImage, bouncer);
+        Assert.Equal(bouncer, PostgresService.ScriptBouncerImage(BouncerScript()));
+        Assert.Contains($"\npg_image=\"{image}\"\n", BouncerScript());
         // No other core workflow runs a whole solution's tests, so none needs the service.
         Assert.All(Workflows().Where(w => w.Name != "dotnet.yml"), w => Assert.Empty(PostgresService.TestJobs(w.Text)));
     }
@@ -972,6 +979,17 @@ public class CoreWorkflowTests
         Catches("          PACKMOAT_TEST_POSTGRES: ", "          PACKMOAT_TEST_POSTGRESQL: ", "does not set PACKMOAT_TEST_POSTGRES");
         Catches("pm-ci-throwaway   # gitleaks:allow\n", "pm-ci-throwaway\n", "a password without gitleaks:allow");
         Catches("    services:\n      postgres:\n", "    services:\n      pg:\n", "no postgres service");
+        // The PgBouncer service and its variable.
+        var bouncer = PostgresService.BouncerImage(dotnet, "dotnet")!;
+        Catches("      pgbouncer:\n", "      bouncer:\n", "no pgbouncer service");
+        Catches($"image: {bouncer}", $"image: {bouncer[..bouncer.IndexOf('@')]}:latest", "not edoburu/pgbouncer pinned by digest");
+        Catches("          POOL_MODE: transaction\n", "          POOL_MODE: session\n", "not in transaction mode");
+        Catches("          DB_HOST: postgres\n", "          DB_HOST: localhost\n", "does not stand in front of the postgres service");
+        Catches("--health-cmd \"pg_isready -h 127.0.0.1 -p 5432", "--health-cmd \"true", "the pgbouncer service has no pg_isready health check");
+        Catches("          - 6432:5432\n", "          - 6433:5432\n", "does not publish port 6432");
+        Catches("          PACKMOAT_TEST_PGBOUNCER: ", "          PACKMOAT_TEST_BOUNCER: ", "does not set PACKMOAT_TEST_PGBOUNCER");
+        Catches("          DB_PASSWORD: pm-ci-throwaway   # gitleaks:allow\n", "          DB_PASSWORD: pm-ci-throwaway\n", "a password without gitleaks:allow");
+        Assert.Equal("edoburu/pgbouncer@sha256:x", PostgresService.ScriptBouncerImage("# x\nbouncer_image=\"edoburu/pgbouncer@sha256:x\"\n"));
         Assert.Null(PostgresService.ScriptImage("image=postgres:17\n"));
         Assert.Equal("postgres:17.1@sha256:x", PostgresService.ScriptImage("# x\nimage=\"postgres:17.1@sha256:x\"\n"));
     }
@@ -992,5 +1010,33 @@ public class CoreWorkflowTests
         Assert.Contains("\n\"${DOTNET:-dotnet}\" test \"$dotnet_dir/Packmoat.sln\" --filter Category=Postgres \"$@\"\n", script);
         Assert.All(script.Split('\n').Where(l => l.Contains("password=\"", StringComparison.Ordinal) || l.Contains("Password=", StringComparison.Ordinal)),
             l => Assert.Contains("gitleaks:allow", l));
+    }
+
+    // ---- The image's PostgreSQL smoke, on the services' image, run where the image is built and where it is published.
+
+    private static string SmokeScript() =>
+        File.ReadAllText(Path.Combine(CoreRoot(), ".github", "scripts", "image-postgres-smoke.sh")).Replace("\r\n", "\n");
+
+    // mutations: the smoke on another digest; its step dropped from dotnet.yml or core-image.yml; the trap that removes its containers removed;
+    // the superuser refusal or the app role's grants left out
+    [Fact]
+    public void The_image_postgres_smoke_runs_the_services_image_where_the_image_is_built_and_published()
+    {
+        var script = SmokeScript();
+        var dotnet = Workflows().Single(w => w.Name == "dotnet.yml").Text.Replace("\r\n", "\n");
+        var service = PostgresService.Check(dotnet, "dotnet").Image!;
+        Assert.Equal(service, Regex.Match(script, @"(?m)^postgres=""([^""]+)""").Groups[1].Value);
+        Assert.StartsWith("#!/usr/bin/env bash\n", script);
+        Assert.Contains("\nset -euo pipefail\n", script);
+        Assert.Contains("docker rm -f \"${server}\" \"${db}\"", script[..script.IndexOf("docker run", StringComparison.Ordinal)]);   // the trap, before any container
+        Assert.Contains("admin pm_owner db migrate --grant-to pm_app", script);
+        Assert.Contains("run_server pm_app", script);
+        Assert.Contains("run_server postgres", script);
+        Assert.Contains("is not safe to serve from. Refusing to start", script);
+        Assert.Contains("run: .github/scripts/image-postgres-smoke.sh packmoat-core:ci\n", dotnet);
+        var publisher = Workflows().Single(w => w.Name == Publisher).Text.Replace("\r\n", "\n");
+        var smoke = publisher.IndexOf("image-postgres-smoke.sh packmoat-core:smoke", StringComparison.Ordinal);
+        Assert.True(smoke > publisher.IndexOf("port-smoke.sh packmoat-core:smoke", StringComparison.Ordinal) && smoke < publisher.IndexOf("cosign sign", StringComparison.Ordinal),
+            "the published image's PostgreSQL smoke must run after the PORT smoke and before the image is signed");
     }
 }

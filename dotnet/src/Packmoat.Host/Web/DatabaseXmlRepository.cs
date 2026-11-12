@@ -5,7 +5,7 @@ using Packmoat.Application;
 namespace Packmoat.Host.Web;
 
 /// <summary>
-/// The data protection key ring's storage on the database (#232 B1, PACKMOAT_COOKIE_KEYS=database): each key is one row of the cookie
+/// The data protection key ring's storage on the database (PACKMOAT_COOKIE_KEYS=database): each key is one row of the cookie
 /// key store, encrypted there with the master key. Never logs a key's XML.
 /// </summary>
 internal sealed class DatabaseXmlRepository(ICookieKeyStore store) : IXmlRepository

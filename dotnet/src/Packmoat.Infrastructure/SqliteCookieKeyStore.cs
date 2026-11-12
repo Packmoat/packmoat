@@ -8,7 +8,7 @@ using Packmoat.Domain;
 namespace Packmoat.Infrastructure;
 
 /// <summary>
-/// The cookie protection keys on SQLite (migration 23, cookie_keys; #232 B1). Each row's XML is encrypted with the master key under its
+/// The cookie protection keys on SQLite (migration 23, cookie_keys). Each row's XML is encrypted with the master key under its
 /// own context, "cookie-key:" and the row's id, so a blob copied onto another row does not decrypt. A row that does not decrypt (another
 /// master key, a tampered or copied blob) makes <see cref="GetAllAsync"/> throw: a key is never skipped.
 /// </summary>
@@ -33,6 +33,12 @@ public sealed class SqliteCookieKeyStore : ICookieKeyStore
         await using var c = await _db.OpenAsync(ct);
         await using var cmd = c.CreateCommand();
         cmd.CommandText = "SELECT id, friendly_name, xml_encrypted FROM cookie_keys ORDER BY created, id";
+        return await ReadAsync(cmd, ct);
+    }
+
+    /// <summary>Every row <paramref name="cmd"/> selects (id, friendly_name, xml_encrypted), decrypted; one that does not decrypt throws.</summary>
+    private async Task<List<CookieKey>> ReadAsync(SqliteCommand cmd, CancellationToken ct)
+    {
         var keys = new List<CookieKey>();
         await using var r = await cmd.ExecuteReaderAsync(ct);
         while (await r.ReadAsync(ct))
@@ -79,6 +85,23 @@ public sealed class SqliteCookieKeyStore : ICookieKeyStore
         }
         await tx.CommitAsync(ct);
         return keys.Count;
+    }
+
+    public async Task<bool> AddUnlessAnyAsync(CookieKey key, Func<CookieKey, bool> usable, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        ArgumentNullException.ThrowIfNull(usable);
+        await using var c = await _db.OpenAsync(ct);
+        // BEGIN IMMEDIATE, as the import: the read and the insert happen under the write lock, so of two servers at once one adds its key.
+        await using var tx = c.BeginTransaction(IsolationLevel.Serializable, deferred: false);
+        await using var cmd = c.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "SELECT id, friendly_name, xml_encrypted FROM cookie_keys ORDER BY created, id";
+        if ((await ReadAsync(cmd, ct)).Any(usable)) return false;   // disposing the transaction rolls it back: nothing is written
+        cmd.Parameters.Clear();
+        await InsertAsync(cmd, key, Now(), ct);
+        await tx.CommitAsync(ct);
+        return true;
     }
 
     private string Now() => _clock.UtcNow.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);

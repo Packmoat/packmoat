@@ -7,7 +7,7 @@ using Packmoat.Host.Modules;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The developer step-up's not-linked race (#251 item 6): the session was still linked when the callback read it, and the directory was
+/// The developer step-up's not-linked race: the session was still linked when the callback read it, and the directory was
 /// unlinked before the step-up's own sign-in was decided. The page is the customer-site module's not-linked card, the same one sign-in shows.
 /// </summary>
 public partial class AzureSetupSiteTests

@@ -9,7 +9,7 @@ using static Packmoat.Host.Tests.ProxyFixture;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// Observe only (#125): when a token's one-minute window closes above half the ceiling, one Information line records
+/// Observe only: when a token's one-minute window closes above half the ceiling, one Information line records
 /// the peak, so production can show how close real build farms come to the ceiling. Enforcement is unchanged.
 /// </summary>
 public class TokenPeakLogTests

@@ -4,8 +4,8 @@ using Packmoat.Application;
 namespace Packmoat.Infrastructure.Postgres;
 
 /// <summary>
-/// The master-key check on PostgreSQL (#288 P2): the marker (<see cref="MasterKeyMarker"/>) is the meta row key_check, as on SQLite.
-/// Nothing selects it yet: PACKMOAT_DB_ENGINE=postgres is refused.
+/// The master-key check on PostgreSQL: the marker (<see cref="MasterKeyMarker"/>) is the meta row key_check, as on SQLite.
+/// PACKMOAT_DB_ENGINE=postgres selects it.
 /// <para>Unstable: may change in any release before 1.0.</para>
 /// </summary>
 public sealed class PostgresMasterKeyCheck : IMasterKeyCheck

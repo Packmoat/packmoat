@@ -77,11 +77,11 @@ public partial class CustomerSiteTests
 
     // The approved sentences, as the pages encode them.
     public static readonly string SignedOutText = AppHtml.E("You're signed out of Packmoat.");
-    /// <summary>The core's not-linked card (#192). The hosted module's card, which offers sign-up or early access, is the hosted tests' (#197).</summary>
+    /// <summary>The core's not-linked card. The hosted module's card, which offers sign-up or early access, is the hosted tests'.</summary>
     public static readonly string NotLinkedText = AppHtml.E(NoCustomerSiteModule.NotLinkedSentence);
     public static readonly string PersonalText = AppHtml.E("Personal Microsoft accounts can't sign in. Choose your work or school account.");
     public static readonly string NoRoleText = AppHtml.E("Your organisation only lets in people with a Packmoat role. Ask your administrator to give you the Packmoat Developer role.");
-    /// <summary>A person with no role and no acct claim (as here) has an unknown member status while auto-join is on (#80): the #79 no-role wording.</summary>
+    /// <summary>A person with no role and no acct claim (as here) has an unknown member status while auto-join is on: the no-role wording.</summary>
     public static readonly string MemberUnknownText = AppHtml.E("Your account has no Packmoat role. Ask your administrator to assign Packmoat.Admin or Packmoat.Developer.");
     public static readonly string CancelledText = AppHtml.E("Sign-in was cancelled, or your organisation hasn't approved Packmoat yet.");
     public static readonly string FailedText = AppHtml.E("Sign-in couldn't be completed. If it keeps happening, email support@contoso.example.");
@@ -155,8 +155,8 @@ public partial class CustomerSiteTests
     [Fact]
     public void No_customer_page_sends_people_to_an_unnamed_packmoat_contact()
     {
-        // self-service or support@: never "contact Packmoat", "your Packmoat contact" or "Ask Packmoat" (#135)
-        // The core's dotnet folder (Packmoat.sln), so the scan runs in core/ alone too (#197).
+        // self-service or support@: never "contact Packmoat", "your Packmoat contact" or "Ask Packmoat"
+        // The core's dotnet folder (Packmoat.sln), so the scan runs in core/ alone too.
         var dir = AppContext.BaseDirectory;
         while (dir is not null && !File.Exists(Path.Combine(dir, "Packmoat.sln"))) dir = Path.GetDirectoryName(dir);
         Assert.NotNull(dir);
@@ -300,7 +300,7 @@ public partial class CustomerSiteTests
         string all;
         lock (logs.Lines) all = string.Join("\n", logs.Lines);
         Assert.Contains("DirectoryNotLinked", all);
-        Assert.Contains("MemberStatusUnknown", all);   // no role and no acct claim, with auto-join on (#80)
+        Assert.Contains("MemberStatusUnknown", all);   // no role and no acct claim, with auto-join on
         foreach (var leak in new[] { "contoso", "Secretname", DirX, DirA, Oid }) Assert.DoesNotContain(leak, all, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -461,7 +461,7 @@ public partial class CustomerSiteTests
 
     // ---- the real Microsoft settings (no network: options and events only)
 
-    /// <summary>A key and certificate in <paramref name="path"/>, in a folder of its own that the caller disposes (#292).</summary>
+    /// <summary>A key and certificate in <paramref name="path"/>, in a folder of its own that the caller disposes.</summary>
     private static TempDir WritePem(out string path, out X509Certificate2 cert, DateTimeOffset? notAfter = null)
     {
         var dir = TempDir.Create("packmoat-app-");
@@ -634,7 +634,7 @@ public partial class CustomerSiteTests
         var (status, body, _) = await b.GetTextAsync("/home");
         Assert.Equal(403, status);
         Assert.Contains(TestOperator.Name + " has paused this account, so feeds and tokens are off.", body);
-        Assert.Contains(AppHtml.E("Email " + TestOperator.SupportEmail + " to restore access.") + "</p>", body);   // no module: no note (#197 C3)
+        Assert.Contains(AppHtml.E("Email " + TestOperator.SupportEmail + " to restore access.") + "</p>", body);   // no module: no note
         Assert.Contains($"<a class=\"btn\" href=\"mailto:{TestOperator.SupportEmail}\">Email {TestOperator.Name} support</a>", body);
         Assert.DoesNotContain("Acme", body);
         Assert.DoesNotContain("Active developers", body);
@@ -836,7 +836,7 @@ public partial class CustomerSiteTests
         Assert.NotEqual(AdminHtml.OperatorFaviconSvg, favicon);
     }
 
-    // ---- direct sign-in: no sign-in page, straight to Microsoft (#79)
+    // ---- direct sign-in: no sign-in page, straight to Microsoft
 
     private static string? SetCookie(AdminBrowser b, string name) => b.SetCookieLog.LastOrDefault(c => c.StartsWith(name + "=", StringComparison.Ordinal));
 
@@ -894,7 +894,7 @@ public partial class CustomerSiteTests
 
     [Theory]
     [InlineData("/tokens", "/tokens", "Create my token")]
-    [InlineData("/team", "/team", "Create an automation token")]   // the section, shown with or without its form (#200)
+    [InlineData("/team", "/team", "Create an automation token")]   // the section, shown with or without its form
     [InlineData("/nothing-here", "/home", "Active developers, last 30 days")]
     public async Task A_deep_link_survives_the_round_trip_through_microsoft(string path, string landsOn, string text)
     {
@@ -1078,7 +1078,7 @@ public partial class CustomerSiteTests
         Assert.Equal(403, denied.Response.StatusCode);
         var deniedBody = Body(denied);
         Assert.Contains("</h1><p>" + CancelledText + "</p>", deniedBody);
-        // #118: no directory is known here, so the approval link is Microsoft's "organizations" one
+        // No directory is known here, so the approval link is Microsoft's "organizations" one
         Assert.Contains($"<p>{AppHtml.E(AppSite.CancelledNeedAdminSentence)}</p><pre class=\"snippet\">{AppHtml.E(AzureSetupSiteTests.PackmoatConsentUrl("organizations"))}</pre>", deniedBody);
         Assert.Contains(SignInAgain, deniedBody);
         Assert.DoesNotContain("ECHO-ME", deniedBody);
@@ -1086,7 +1086,7 @@ public partial class CustomerSiteTests
 
         for (var i = 0; i < 4; i++)
         {
-            var failed = Http("server_error", codeReceived: true);   // not a decline (#143: a decline reaching this event shows the cancelled card)
+            var failed = Http("server_error", codeReceived: true);   // not a decline (a decline reaching this event shows the cancelled card)
             var failCtx = new RemoteFailureContext(failed, scheme, o, new InvalidOperationException("ECHO-ME <script>alert(1)</script>"));
             await o.Events.RemoteFailure(failCtx);
             Assert.True(failCtx.Result?.Handled);
@@ -1098,7 +1098,7 @@ public partial class CustomerSiteTests
             Assert.DoesNotContain("<script", failedBody);
             Assert.False(failed.Response.Headers.ContainsKey("Location"));
         }
-        // one cancelled and four failed after a code: the decline does not count (#145), so the limiter waits for a fifth failure
+        // one cancelled and four failed after a code: the decline does not count, so the limiter waits for a fifth failure
         Assert.Null(limiter.RetryAfterSeconds(Http()));
         await o.Events.RemoteFailure(new RemoteFailureContext(Http("server_error", codeReceived: true), scheme, o, new InvalidOperationException("x")));
         Assert.NotNull(limiter.RetryAfterSeconds(Http()));
@@ -1123,7 +1123,7 @@ public partial class CustomerSiteTests
         for (var i = 0; i < 4; i++) await o.Events.RemoteFailure(new RemoteFailureContext(Http(codeReceived: true), scheme, o, new InvalidOperationException("x")));
         Assert.Null(limiter.RetryAfterSeconds(Http()));
         for (var i = 0; i < 5; i++) await o.Events.AccessDenied(new AccessDeniedContext(Http(), scheme, o));
-        Assert.Null(limiter.RetryAfterSeconds(Http()));   // #145: a decline is not a guess
+        Assert.Null(limiter.RetryAfterSeconds(Http()));   // A decline is not a guess
         for (var i = 0; i < 5; i++) await o.Events.RemoteFailure(new RemoteFailureContext(Http(), scheme, o, new InvalidOperationException("x")));
         Assert.Null(limiter.RetryAfterSeconds(Http()));   // nor is a failure before Microsoft issued a code
         await o.Events.RemoteFailure(new RemoteFailureContext(Http(codeReceived: true), scheme, o, new InvalidOperationException("x")));
@@ -1175,7 +1175,7 @@ public partial class CustomerSiteTests
         }
     }
 
-    // ---- security review follow-ups (#88)
+    // ---- security review follow-ups
 
     private static void SameOrigin(HttpRequestMessage r) => r.Headers.TryAddWithoutValidation("Sec-Fetch-Site", "same-origin");
     private static Action<HttpRequestMessage> Fetch(string? mode, string accept) => r =>
@@ -1370,7 +1370,7 @@ public partial class CustomerSiteTests
         await o.Events.AccessDenied(new AccessDeniedContext(Http(), scheme, o) { Properties = props, ReturnUrl = "/SECRET-RETURN", AccessDeniedPath = "/SECRET-PATH" });
         string all;
         lock (logs.Lines) all = string.Join("\n", logs.Lines);
-        Assert.Contains("Customer sign-in failed (InvalidOperationException, error other, token none)", all);   // an unknown error code is "other" (#143)
+        Assert.Contains("Customer sign-in failed (InvalidOperationException, error other, token none)", all);   // an unknown error code is "other"
         Assert.Contains("Customer sign-in cancelled or not approved", all);
         foreach (var leak in new[] { "SECRET", DirA }) Assert.DoesNotContain(leak, all);
     }

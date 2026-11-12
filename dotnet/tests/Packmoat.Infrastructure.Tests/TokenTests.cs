@@ -1,9 +1,10 @@
 using Packmoat.Application;
 using Packmoat.Domain;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
-/// <summary><see cref="TokenContract"/> on SQLite, and the tests only SQLite has (#232 S1).</summary>
+/// <summary><see cref="TokenContract"/> on SQLite, and the tests only SQLite has.</summary>
 [Collection("sqlite-pools")]
 public class TokenTests : TokenContract
 {
@@ -21,6 +22,26 @@ public class TokenTests : TokenContract
 
         Assert.False(Bytes.Contains(disk, issued.Plaintext), "plaintext token found on disk");
         Assert.True(Bytes.Contains(disk, TokenHasher.Hash(issued.Plaintext)), "hash should be stored");
+    }
+}
+
+/// <summary><see cref="TokenContract"/> on PostgreSQL, each test on a database of its own.</summary>
+[Collection(PostgresCollection.Name)]
+[Trait("Category", PostgresTestServer.Category)]
+public class PostgresTokenTests : TokenContract
+{
+    protected override IStoreEngine Engine => PostgresStoreEngine.Instance;
+
+    [PostgresFact]   // mutation: the plaintext stored in token_hash or the label
+    public async Task Only_a_hash_is_stored_never_the_token()
+    {
+        await using var t = await Engine.CreateAsync();
+        await AddTenantAsync(t);
+        var issued = await Engine.Tokens(t).IssueAsync("acme", "ci", default);
+        await Engine.Tokens(t).AuthenticateAsync(issued.Plaintext, default);
+
+        Assert.Equal([TokenHasher.Hash(issued.Plaintext)], await Engine.ColumnAsync(t, "SELECT token_hash FROM tokens"));
+        Assert.Equal(0L, await Engine.ScalarAsync(t, $"SELECT COUNT(*) FROM tokens WHERE strpos(tokens::text, '{issued.Plaintext}') > 0"));
     }
 }
 

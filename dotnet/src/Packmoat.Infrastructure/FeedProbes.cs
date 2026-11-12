@@ -9,7 +9,7 @@ using Packmoat.Application;
 namespace Packmoat.Infrastructure;
 
 /// <summary>
-/// The shared app probe's guard (#64 I2): refuses, before it leaves the process, any request that is not https on the default port to
+/// The shared app probe's guard: refuses, before it leaves the process, any request that is not https on the default port to
 /// <c>pkgs.dev.azure.com</c> for a feed index URL built from GUIDs (<see cref="GuidIndexUrls"/>). Packmoat's own token can go nowhere else.
 /// </summary>
 public sealed class SharedAppProbeHostsHandler : DelegatingHandler
@@ -25,7 +25,7 @@ public sealed class SharedAppProbeHostsHandler : DelegatingHandler
 }
 
 /// <summary>
-/// The developer probe's guard (#64 I2): only https on the default port to <c>feeds.dev.azure.com</c>, or to <c>pkgs.dev.azure.com</c>
+/// The developer probe's guard: only https on the default port to <c>feeds.dev.azure.com</c>, or to <c>pkgs.dev.azure.com</c>
 /// for exactly a feed index URL Connect could use (<see cref="ConnectRules.UrlsFor"/>: GUIDs, the tight prefix, no query). The developer's
 /// token can go nowhere else (not vssps, not dev.azure.com, not another package path).
 /// </summary>
@@ -150,7 +150,7 @@ public sealed class SharedAppFeedProbe : ISharedAppFeedProbe
 }
 
 /// <summary>
-/// <see cref="IDeveloperFeedProbe"/> (#64 I2). (a) Packmoat's identity GETs the index (<see cref="ISharedAppFeedProbe"/>): 200 needed.
+/// <see cref="IDeveloperFeedProbe"/>. (a) Packmoat's identity GETs the index (<see cref="ISharedAppFeedProbe"/>): 200 needed.
 /// (b) The developer's token lists the organisation's feeds (<c>feeds.dev.azure.com/{org}/_apis/packaging/feeds</c>): 200 with a feed
 /// list needed, and the public-only feed in it is a FAIL. (c) The developer's token GETs the GUID index, redirects never followed: the
 /// verdict is <see cref="DeveloperProbeVerdict"/>. (d) The bypass advisory from (b)'s list. The token lives only in this call's locals and
@@ -169,7 +169,7 @@ public sealed class DeveloperFeedProbe : IDeveloperFeedProbe
         _shared = shared;
     }
 
-    /// <summary>The site's result: the verdict's status, with the site's own sentence for the finding (#119; the CLI keeps the verdict's text).</summary>
+    /// <summary>The site's result: the verdict's status, with the site's own sentence for the finding (the CLI keeps the verdict's text).</summary>
     private static DeveloperProbeRun Run(DeveloperProbeDecision d, CheckResult bypass) =>
         new(new[] { new CheckResult(DeveloperProbeVerdict.Id, DeveloperProbeVerdict.Title, d.Status, DeveloperProbeVerdict.SiteDetail(d.Finding)), bypass }, d.Finding);
 

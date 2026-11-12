@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// Architecture test 6's scanner (#278 step 0): which source files write to the local disk. A copy of the server behind a load balancer
+/// Architecture test 6's scanner: which source files write to the local disk. A copy of the server behind a load balancer
 /// does not share its disk with the others, so a file write is state only that copy has; each one is declared on an allowlist. Comments
 /// are stripped first by the C# comment reader (<see cref="CSharpSource"/>), so a write named in a comment does not count. Shared with the
 /// hosted twin (linked into Packmoat.Hosted.Architecture.Tests).

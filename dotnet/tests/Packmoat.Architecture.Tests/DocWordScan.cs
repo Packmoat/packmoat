@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// Architecture test 9's scanner (#278 step 0, A6): how many times a file's doc comments (<c>///</c>) name a storage mechanism instead of
+/// Architecture test 9's scanner: how many times a file's doc comments (<c>///</c>) name a storage mechanism instead of
 /// the guarantee it gives: SQLite or a <c>Sqlite*</c> type, IMMEDIATE, WAL, PRAGMA, rowid, a trigger, a write lock (or write-locked), an
 /// exclusive lock, the journal, a savepoint, busy_timeout. Both kinds of doc comment are read: <c>///</c> and <c>/** … */</c>. A port's doc says what
 /// a caller can rely on ("no other writer can change it between the check and the write"); how one engine does it belongs to the adapter.

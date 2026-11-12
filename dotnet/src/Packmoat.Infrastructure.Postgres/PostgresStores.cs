@@ -5,10 +5,8 @@ using Packmoat.Infrastructure.Lifecycle;
 namespace Packmoat.Infrastructure.Postgres;
 
 /// <summary>
-/// The PostgreSQL adapters, and how each is built, in one list (#303 P3): the twin of <see cref="SqliteStores"/>, member for member. Only
-/// the tests use it: PACKMOAT_DB_ENGINE=postgres is refused until P5, and no project in src/ references this one. A store not built yet
-/// throws <see cref="NotSupportedException"/> naming the pull request that brings it; each P3 pull request replaces its stores' throws
-/// with the adapter, and the tests' pinned PendingStores list shrinks with it. A member's type is the port until its adapter lands.
+/// The PostgreSQL adapters, and how each is built, in one list: the twin of <see cref="SqliteStores"/>, member for member. The
+/// composition roots build from it when PACKMOAT_DB_ENGINE=postgres: the server (AddPostgresStores) and the command line. Every store has its adapter here, and a test holds every port <see cref="SqliteStores"/> gives to be given here too.
 /// <para>Unstable: may change in any release before 1.0.</para>
 /// </summary>
 public sealed class PostgresStores
@@ -27,50 +25,85 @@ public sealed class PostgresStores
     /// <summary>The database every store here is over.</summary>
     public PostgresDatabase Database { get; }
 
-    /// <summary>The schema's migrations and the readiness check's read of them: the database itself.</summary>
-    public ISchemaMigrator Migrator => Database;
+    /// <summary>
+    /// The schema port the server's start and readiness check use: on PostgreSQL it never migrates, only reads, and refuses
+    /// a schema not at this build's version (<see cref="PostgresServerSchema"/>). The owner role migrates, with
+    /// <see cref="PostgresDatabase.MigrateAndGrantAsync(IReadOnlyList{MigrationTrack}, string, CancellationToken)"/>.
+    /// </summary>
+    public ISchemaMigrator Migrator => new PostgresServerSchema(Database);
 
-    /// <summary>The master-key check (#288 P2, PR 5).</summary>
+    /// <summary>The master-key check.</summary>
     public IMasterKeyCheck MasterKeyCheck => new PostgresMasterKeyCheck(Database, _protector);
 
-    /// <summary>The audit store. PR 3 makes it one adapter with the batch, retention and query ports too, as SQLite's.</summary>
-    public IAuditLog Audit => throw Pending(nameof(Audit), 3);
+    /// <summary>The audit store: one adapter with the batch, retention and query ports too, as SQLite's.</summary>
+    public PostgresAuditLog Audit => new(Database);
 
-    public IDecisionRecordLog Decisions => throw Pending(nameof(Decisions), 4);
+    /// <summary>The per-version decision record.</summary>
+    public PostgresDecisionRecordLog Decisions => new(Database);
 
-    public IDecisionRecordQuery DecisionQuery => throw Pending(nameof(DecisionQuery), 4);
+    /// <summary>The decision record's read port, for the support view.</summary>
+    public PostgresDecisionRecordQuery DecisionQuery => new(Database);
 
-    public IAdminActionLog AdminActions => throw Pending(nameof(AdminActions), 2);
+    /// <summary>The record of admin writes, with its retention prune.</summary>
+    public PostgresAdminActionLog AdminActions => new(Database);
 
-    public ISignInDirectoryStore SignInDirectory => throw Pending(nameof(SignInDirectory), 2);
+    /// <summary>The customer directory to tenant links.</summary>
+    public PostgresSignInDirectoryStore SignInDirectory => new(Database);
 
-    public IMemberStore Members => throw Pending(nameof(Members), 2);
+    /// <summary>The people who signed in on the customer site.</summary>
+    public PostgresMemberStore Members => new(Database);
 
-    public IAutoJoinSettingStore AutoJoin => throw Pending(nameof(AutoJoin), 2);
+    /// <summary>The auto-join setting.</summary>
+    public PostgresAutoJoinSettingStore AutoJoin => new(Database);
 
-    public IFeedCheckStore FeedChecks => throw Pending(nameof(FeedChecks), 5);
+    /// <summary>The wizard's feed checks and their 30-day redaction.</summary>
+    public PostgresFeedCheckStore FeedChecks => new(Database);
 
-    public ISelfServiceFeedStore SelfServiceFeeds => throw Pending(nameof(SelfServiceFeeds), 5);
+    /// <summary>The self-service feed writes: Connect and Withdraw.</summary>
+    public PostgresSelfServiceFeedStore SelfServiceFeeds => new(Database);
 
-    public ITenantStore Tenants(IClock clock, TenantLifecycle lifecycle) => throw Pending(nameof(Tenants), 1);
+    /// <summary>The tenant store, with <paramref name="lifecycle"/>'s creation participants.</summary>
+    public PostgresTenantStore Tenants(IClock clock, TenantLifecycle lifecycle)
+    {
+        ArgumentNullException.ThrowIfNull(lifecycle);
+        return new(Database, clock, _protector, lifecycle.Participants);
+    }
 
-    /// <summary>The token service over <paramref name="tenants"/>. PR 1 makes it the authenticator too, as SQLite's.</summary>
-    public ITokenService TokenService(ITenantStore tenants, IClock clock, IServingGate gate) => throw Pending(nameof(TokenService), 1);
+    /// <summary>The token service over <paramref name="tenants"/>, and the authenticator, as SQLite's.</summary>
+    public PostgresTokenService TokenService(PostgresTenantStore tenants, IClock clock, IServingGate gate) => new(Database, tenants, clock, gate);
 
-    /// <summary>The token activity log. PR 3 makes it the active-developer query and the retention too, as SQLite's.</summary>
-    public ITokenActivityLog TokenActivity(IClock clock) => throw Pending(nameof(TokenActivity), 3);
+    /// <summary>The token activity log, the active-developer query and the retention, timed by <paramref name="clock"/>, as SQLite's.</summary>
+    public PostgresTokenActivity TokenActivity(IClock clock) => new(Database, clock);
 
-    public IJobLease JobLease(IClock clock) => throw Pending(nameof(JobLease), 2);
+    /// <summary>The scheduled jobs' lease, timed by <paramref name="clock"/>.</summary>
+    public PostgresJobLease JobLease(IClock clock) => new(Database, clock);
 
-    public ISharedAppCredentialStore SharedAppCredentials(IClock clock) => throw Pending(nameof(SharedAppCredentials), 5);
+    /// <summary>The shared rate counter, timed by <paramref name="clock"/>, as SQLite's.</summary>
+    public PostgresRateCounter RateCounter(IClock clock) => new(Database, clock);
 
-    public ITenantPurgeStore PurgeStore(TenantLifecycle lifecycle) => throw Pending(nameof(PurgeStore), 6);
+    /// <summary>The form nonces, timed by <paramref name="clock"/>, as SQLite's.</summary>
+    public PostgresFormNonceStore FormNonces(IClock clock) => new(Database, clock);
 
-    public ICookieKeyStore CookieKeys(IClock clock) => throw Pending(nameof(CookieKeys), 2);
+    /// <summary>The feed setup scratch, timed by <paramref name="clock"/>, as SQLite's.</summary>
+    public PostgresFeedSetupScratch FeedSetupScratch(IClock clock) => new(Database, clock);
 
-    public IOrganisationStore Organisations(TenantLifecycle lifecycle) => throw Pending(nameof(Organisations), 6);
+    /// <summary>The shared app's credential slots and the operator's verification records, timed by <paramref name="clock"/>.</summary>
+    public PostgresSharedAppCredentialStore SharedAppCredentials(IClock clock) => new(Database, clock, _protector);
 
-    /// <summary>The refusal of a store not built yet, naming the pull request of #303 that brings it.</summary>
-    private static NotSupportedException Pending(string store, int pullRequest) =>
-        new($"PostgreSQL's {store} store is not built yet: it arrives in #303 P3, PR {pullRequest}.");
+    /// <summary>The purge store, with the lifecycle's eligibility (made now) and purge contributors, as SQLite's.</summary>
+    public PostgresTenantPurgeStore PurgeStore(TenantLifecycle lifecycle)
+    {
+        ArgumentNullException.ThrowIfNull(lifecycle);
+        return new(Database, lifecycle.Eligibility?.Invoke(), lifecycle.Contributors);
+    }
+
+    /// <summary>The signed-in sites' cookie keys, encrypted with the master key.</summary>
+    public PostgresCookieKeyStore CookieKeys(IClock clock) => new(Database, clock, _protector);
+
+    /// <summary>The organisation store, with the lifecycle's creation participants, as SQLite's.</summary>
+    public PostgresOrganisationStore Organisations(TenantLifecycle lifecycle)
+    {
+        ArgumentNullException.ThrowIfNull(lifecycle);
+        return new(Database, lifecycle.Participants);
+    }
 }

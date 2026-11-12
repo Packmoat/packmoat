@@ -8,7 +8,7 @@ using Packmoat.Host.Web;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The cookie keys' application name is pinned (#197 PR C): the entry assembly was renamed from Packmoat.Host to Packmoat.Hosted.Host, and
+/// The cookie keys' application name is pinned: the entry assembly was renamed from Packmoat.Host to Packmoat.Hosted.Host, and
 /// the core runs as Packmoat.Server. Data protection must not follow the entry point's name or folder, or every signed-in session and
 /// antiforgery token issued before a deploy would stop decrypting after it.
 /// </summary>
@@ -17,7 +17,7 @@ public class DataProtectionNameTests
     [Fact]   // mutation: drop .SetApplicationName("packmoat-admin") or change the name in SignedInSite.AddShared
     public void The_signed_in_sites_share_the_application_name_packmoat_admin()
     {
-        // A key folder of its own (#278 step 0, D11): with none, folder mode refuses instead of keeping the keys in memory.
+        // A key folder of its own: with none, folder mode refuses instead of keeping the keys in memory.
         using var temp = TempDir.Create("pm-dp-");
         var keys = temp.File("keys");   // not made yet: the site makes it
         var services = new ServiceCollection();

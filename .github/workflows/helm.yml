@@ -1,4 +1,4 @@
-# The Helm chart (deploy/helm/packmoat, #249): helm lint and the chart's own tests (helm template, with what it must render and what it
+# The Helm chart (deploy/helm/packmoat): helm lint and the chart's own tests (helm template, with what it must render and what it
 # must refuse), then an install into a throwaway kind cluster with an image built here, and a smoke test that it serves.
 # helm and kind are pinned releases, checked by sha256 (.github/scripts/install-helm-kind.sh). The image is built in the job and loaded
 # into the cluster, never pulled. Nothing is pushed or published. No secrets, a read-only token. Actions are pinned to full commit SHAs.

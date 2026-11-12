@@ -5,7 +5,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The 'private' check's limits (#64 I2 review): its own time budget, bounded concurrency, the probe limit's edge, views with no
+/// The 'private' check's limits: its own time budget, bounded concurrency, the probe limit's edge, views with no
 /// visibility, and the "url" field Azure DevOps returns, which is never followed nor used for the organisation.
 /// </summary>
 public partial class DelegatedFeedCheckTests
@@ -98,7 +98,7 @@ public partial class DelegatedFeedCheckTests
     }
 }
 
-/// <summary>The developer probe never uses the "url" Azure DevOps returns either (#64 I2 review).</summary>
+/// <summary>The developer probe never uses the "url" Azure DevOps returns either.</summary>
 public class DeveloperFeedProbeUrlTests
 {
     [Fact]

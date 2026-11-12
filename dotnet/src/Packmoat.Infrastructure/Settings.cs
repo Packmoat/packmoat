@@ -1,7 +1,7 @@
 namespace Packmoat.Infrastructure;
 
 /// <summary>
-/// The one place the core reads its PACKMOAT_* settings (#233). A setting comes from the variable itself, or else from a file named by the
+/// The one place the core reads its PACKMOAT_* settings. A setting comes from the variable itself, or else from a file named by the
 /// same variable with <c>_FILE</c> added (a container secret, for example), with one trailing newline (<c>\n</c> or <c>\r\n</c>) removed. With no file variable the
 /// value is exactly what the environment gives, unset included.
 /// <para>It stops the start, naming the variable but never its value or the file's path, when both are set, when the file is missing or
@@ -56,10 +56,10 @@ public sealed class Settings
     }
 }
 
-/// <summary>A setting or its file that stops the start (#233). The message names the variable, never its value or the file's path.</summary>
+/// <summary>A setting or its file that stops the start. The message names the variable, never its value or the file's path.</summary>
 public sealed class SettingsException(string message) : InvalidOperationException(message)
 {
-    /// <summary>True when the setting is simply not set (neither the variable nor its file), so a caller that can do without it may (#238).</summary>
+    /// <summary>True when the setting is simply not set (neither the variable nor its file), so a caller that can do without it may.</summary>
     public bool NotSet { get; private init; }
 
     /// <summary>"NAME is not set.", marked <see cref="NotSet"/>.</summary>

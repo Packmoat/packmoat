@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Data.Sqlite;
 using Packmoat.Application;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
@@ -13,7 +14,65 @@ public class CookieKeyStoreTests : CookieKeyStoreContract
 }
 
 /// <summary>
-/// The SQLite cookie key store's encryption (#232 B1): what is on disk is master-key ciphertext bound to its own row, and a row that does
+/// <see cref="CookieKeyStoreContract"/> on PostgreSQL, each test on a database of its own, and the PostgreSQL store's
+/// encryption, as <see cref="SqliteCookieKeyStoreTests"/> checks SQLite's. The contract's race test is the import's two-writer race: it
+/// fails without the <see cref="Packmoat.Infrastructure.Postgres.PostgresLock.CookieKeys"/> lock.
+/// </summary>
+[Collection(PostgresCollection.Name)]
+[Trait("Category", PostgresTestServer.Category)]
+public class PostgresCookieKeyStoreTests : CookieKeyStoreContract
+{
+    private const string Xml = "<key id=\"11111111-2222-4333-8444-555555555555\" version=\"1\"><descriptor><masterKey>c2VjcmV0LWtleS1ieXRlcw==</masterKey></descriptor></key>";
+
+    protected override IStoreEngine Engine => PostgresStoreEngine.Instance;
+
+    private async Task<List<(string Id, byte[] Blob)>> RowsAsync(IEngineDb t)
+    {
+        var rows = new List<(string, byte[])>();
+        foreach (var line in await Engine.ColumnAsync(t, $"SELECT id || '|' || {Engine.HexSql("xml_encrypted")} FROM cookie_keys ORDER BY created, id"))
+        {
+            var parts = line.Split('|');
+            rows.Add((parts[0], Convert.FromHexString(parts[1])));
+        }
+        return rows;
+    }
+
+    [PostgresFact]   // mutations: store the XML as plain text; a fixed context ("cookie-key"); the friendly name as the context
+    public async Task Each_row_holds_none_of_the_xml_and_decrypts_under_cookie_key_and_its_own_id_only()
+    {
+        await using var t = await Engine.CreateAsync();
+        await Engine.CookieKeys(t).AddAsync("key-1", Xml, default);
+        var (id, blob) = Assert.Single(await RowsAsync(t));
+        Assert.True(Guid.TryParse(id, out _));
+        Assert.True(blob.AsSpan().IndexOf(Encoding.UTF8.GetBytes("masterKey")) < 0);
+        Assert.Equal(Xml, t.Protector.Unprotect(blob, "cookie-key:" + id));
+        Assert.ThrowsAny<CryptographicException>(() => t.Protector.Unprotect(blob, "cookie-key"));
+        Assert.ThrowsAny<CryptographicException>(() => t.Protector.Unprotect(blob, "cookie-key:key-1"));
+    }
+
+    [PostgresFact]   // mutations: a fixed context; skip (or swallow) a row that does not decrypt
+    public async Task A_blob_copied_onto_another_row_or_another_master_key_stops_the_read()
+    {
+        await using var t = await Engine.CreateAsync();
+        var store = Engine.CookieKeys(t);
+        await store.AddAsync("key-1", Xml, default);
+        t.Clock.Advance(TimeSpan.FromMinutes(1));
+        await store.AddAsync("key-2", Xml.Replace("11111111", "99999999"), default);
+        Assert.Equal(2, (await store.GetAllAsync(default)).Count);
+
+        var other = new Packmoat.Infrastructure.Postgres.PostgresCookieKeyStore(((PostgresTestDb)t).Db, t.Clock, AesGcmSecretProtector.FromBase64(AesGcmSecretProtector.GenerateKeyBase64()));
+        await Assert.ThrowsAsync<CryptographicException>(() => other.GetAllAsync(default));
+
+        var rows = await RowsAsync(t);
+        await Engine.ExecAsync(t, $"UPDATE cookie_keys SET xml_encrypted = (SELECT xml_encrypted FROM cookie_keys WHERE id='{rows[0].Id}') WHERE id='{rows[1].Id}'");
+        var ex = await Assert.ThrowsAsync<CryptographicException>(() => store.GetAllAsync(default));
+        Assert.Contains(rows[1].Id, ex.Message);
+        Assert.DoesNotContain("<key", ex.ToString());
+    }
+}
+
+/// <summary>
+/// The SQLite cookie key store's encryption: what is on disk is master-key ciphertext bound to its own row, and a row that does
 /// not decrypt stops the read instead of being skipped.
 /// </summary>
 [Collection("sqlite-pools")]
@@ -51,6 +110,38 @@ public class SqliteCookieKeyStoreTests
             await stream.CopyToAsync(copy);
             Assert.False(Contains(copy.ToArray(), "masterKey"));
         }
+    }
+
+    /// <summary>
+    /// The add-unless-any runs under the write lock from its first statement (BEGIN IMMEDIATE), so of two servers at once the second
+    /// reads what the first wrote. A deferred transaction reads first and takes the write lock at its insert: if another writer commits
+    /// in between, the insert fails on the stale read (SQLITE_BUSY_SNAPSHOT) instead of the add returning false.
+    /// </summary>
+    [Fact]   // mutation: the transaction deferred (BEGIN, not BEGIN IMMEDIATE)
+    public async Task Add_unless_any_waits_for_a_writer_then_reads_what_it_wrote()
+    {
+        await using var t = await TestDb.CreateAsync();
+        var store = new SqliteCookieKeyStore(t.Db, t.Clock, t.Protector);
+        await using var writer = await t.Db.OpenAsync();
+        await using var tx = writer.BeginTransaction(System.Data.IsolationLevel.Serializable, deferred: false);   // the other server's write lock
+        await using (var insert = writer.CreateCommand())
+        {
+            var id = Guid.NewGuid().ToString("D");
+            insert.Transaction = tx;
+            insert.CommandText = "INSERT INTO cookie_keys(id, friendly_name, created, xml_encrypted) VALUES(@id, 'theirs', @created, @xml)";
+            insert.Parameters.AddWithValue("@id", id);
+            insert.Parameters.AddWithValue("@created", t.Clock.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+            insert.Parameters.AddWithValue("@xml", t.Protector.Protect(Xml, "cookie-key:" + id));
+            await insert.ExecuteNonQueryAsync();
+        }
+
+        var add = Task.Run(() => store.AddUnlessAnyAsync(new CookieKey("mine", Xml), _ => true, default));
+        await Task.Delay(500);   // it is waiting for the lock (immediate), or has read the empty table and waits to insert (deferred)
+        Assert.False(add.IsCompleted);
+        await tx.CommitAsync();
+
+        Assert.False(await add.WaitAsync(TimeSpan.FromSeconds(10)));   // it saw the other's key and added nothing
+        Assert.Single(await RowsAsync(t));
     }
 
     [Fact]   // mutations: a fixed context ("cookie-key"); the friendly name as the context

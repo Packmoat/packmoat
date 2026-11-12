@@ -196,7 +196,7 @@ public sealed class SqliteTokenService : ITokenService, ITenantAuthenticator
             touch.Parameters.AddWithValue("@cutoff", Format(_clock.UtcNow.AddMinutes(-1)));
             await touch.ExecuteNonQueryAsync(ct);
         }
-        // A gate's known end (#174) is exact: the result says so, so the cache in front never serves it past then.
+        // A gate's known end is exact: the result says so, so the cache in front never serves it past then.
         return new AuthResult(tenant, tokenId, expiresAt, answer.Until);
     }
 

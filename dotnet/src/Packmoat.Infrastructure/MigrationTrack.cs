@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace Packmoat.Infrastructure;
 
 /// <summary>
-/// A list of migrations with its own version table (#196). The core's track is named <see cref="CoreName"/> (table
+/// A list of migrations with its own version table. The core's track is named <see cref="CoreName"/> (table
 /// schema_migrations); a module's is named by the module and kept in <c>{name}_schema_migrations</c>. The core runs first, then each
 /// module's track in order; each track refuses a database its own table says is newer than it knows.
 /// <para>Unstable: may change in any release before 1.0.</para>
@@ -30,7 +30,7 @@ public sealed partial class MigrationTrack
     }
 
     /// <summary>
-    /// A track with statements per engine (#278 step 0, B7). Every engine has the same versions (the same number of migrations, version
+    /// A track with statements per engine. Every engine has the same versions (the same number of migrations, version
     /// = index + 1), so a track's version table means the same on any engine.
     /// </summary>
     /// <param name="name">Lower-case letters and digits, starting with a letter: it becomes part of a table name.</param>
@@ -89,17 +89,24 @@ public sealed partial class MigrationTrack
 }
 
 /// <summary>
-/// Where one track stands in a database (#233: the readiness check): this build's <see cref="Latest"/> version, the <see cref="Newest"/>
+/// Where one track stands in a database (the readiness check): this build's <see cref="Latest"/> version, the <see cref="Newest"/>
 /// recorded (null when the track has no table) and how many of versions 1 to <see cref="Latest"/> are <see cref="Recorded"/>.
 /// </summary>
 public sealed record TrackVersion(string Track, int Latest, int? Newest, int Recorded)
 {
     /// <summary>Every version this build knows is recorded, and none newer.</summary>
     public bool IsCurrent => Newest == Latest && Recorded == Latest;
+
+    /// <summary>
+    /// Every version this build knows is recorded, and newer ones too: a newer build migrated the database while this one runs (a
+    /// rolling upgrade of several copies). Migrations are expand-only for one release, so the previous release keeps working on the
+    /// schema its successor made; the readiness check on PostgreSQL takes this as ready. The start still refuses it.
+    /// </summary>
+    public bool IsCurrentOrMigratedPast => IsCurrent || (Newest > Latest && Recorded == Latest);
 }
 
 /// <summary>
-/// How a module's track takes over a database an older build made when the track's statements were part of the core's track (#196).
+/// How a module's track takes over a database an older build made when the track's statements were part of the core's track.
 /// That build ran them at core versions <see cref="FirstCoreVersion"/> to <see cref="CoreVersion"/>, so a database without the track's
 /// table is judged by its core version before anything runs, then by structure (never by SQL text: the text an older build stored may
 /// differ in whitespace):
@@ -121,5 +128,5 @@ public sealed record TrackOutcome(string Name, int? Before, int After, bool Adop
 /// with no statements for the database's engine). Nothing was written.</summary>
 public sealed class SchemaTrackException(string message) : InvalidOperationException(message);
 
-/// <summary>A database an older build made cannot be taken over by a track's baseline (#196). Nothing was written.</summary>
+/// <summary>A database an older build made cannot be taken over by a track's baseline. Nothing was written.</summary>
 public sealed class SchemaBaselineException(string message) : InvalidOperationException(message);

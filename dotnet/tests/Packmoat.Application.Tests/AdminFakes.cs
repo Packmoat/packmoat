@@ -76,7 +76,7 @@ internal sealed class FakeStore : ITenantStore, ITokenService, IAuditQuery, IAct
         return Task.CompletedTask;
     }
     public Task<UpstreamBinding?> GetUpstreamBindingAsync(string tenantId, CancellationToken ct) { Reads.Add("binding " + tenantId); return Task.FromResult(Bindings.GetValueOrDefault(tenantId)); }
-    /// <summary>Each tenant's origin and feed setup (#207); a tenant with no entry reads operator-made, operator-set.</summary>
+    /// <summary>Each tenant's origin and feed setup; a tenant with no entry reads operator-made, operator-set.</summary>
     public Dictionary<string, TenantSetup> Setups { get; } = new();
     public Task<TenantSetup?> GetSetupAsync(string tenantId, CancellationToken ct)
     {

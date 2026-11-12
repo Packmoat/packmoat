@@ -28,7 +28,7 @@ public static class ClientAddress
     public static string Key(HttpContext context) => Key(context.Connection.RemoteIpAddress);
 
     /// <summary>
-    /// The wider network an address belongs to, which <see cref="TokenGuessLimiter"/> counts by only once its address map is full (#153).
+    /// The wider network an address belongs to, which <see cref="TokenGuessLimiter"/> counts by only once its address map is full.
     /// An IPv4 address, mapped or not, becomes its /24; any other IPv6 address its /48, the usual size of one site's allocation, with any
     /// scope id dropped. A missing address is <c>"unknown"</c>.
     /// </summary>
@@ -49,7 +49,7 @@ public static class ClientAddress
 
 /// <summary>
 /// What <see cref="TokenGuessLimiter"/> counts a client by: its <see cref="ClientAddress.Key(IPAddress?)"/>, and the
-/// <see cref="ClientAddress.NetworkKey"/> it falls back to when the address map is full (#153).
+/// <see cref="ClientAddress.NetworkKey"/> it falls back to when the address map is full.
 /// </summary>
 public readonly record struct ClientKey(string Address, string Network)
 {

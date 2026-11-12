@@ -1,10 +1,138 @@
 using Microsoft.Data.Sqlite;
+using Npgsql;
 using Packmoat.Application;
 using Packmoat.Domain;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
-/// <summary><see cref="SelfServiceFeedStoreContract"/> on SQLite, and the tests only SQLite has (#232 S1).</summary>
+/// <summary>
+/// <see cref="SelfServiceFeedStoreContract"/> on PostgreSQL, each test on a database of its own, for a self-made tenant, and
+/// what only PostgreSQL has: Connect's lock on the tenant's row (the directory claim's lock), taken before it reads anything that decides it.
+/// </summary>
+[Collection(PostgresCollection.Name)]
+[Trait("Category", PostgresTestServer.Category)]
+public class PostgresSelfServiceFeedStoreTests : SelfServiceFeedStoreContract
+{
+    protected override IStoreEngine Engine => PostgresStoreEngine.Instance;
+
+    private static Infrastructure.Postgres.PostgresDatabase Db(IEngineDb t) => ((PostgresTestDb)t).Db;
+
+    /// <summary>
+    /// Connect reads the tenant's row FOR NO KEY UPDATE before its checks: another session holds that row and, in its
+    /// transaction, binds the tenant to the shared app in another directory. Connect waits; once the holder commits, it sees that binding
+    /// and refuses (DirectoryTaken), writing nothing. A Connect that checked first and locked later (or never) would pass its checks on the
+    /// rows as they were, wait only at its own write, and then overwrite that binding. The holder takes only FOR SHARE (as PR
+    /// 2's M13): that conflicts with Connect's FOR NO KEY UPDATE, but not with a Connect weakened to FOR SHARE, which would share the row
+    /// with the holder, pass its checks and overwrite the binding too.
+    /// </summary>
+    [PostgresFact]   // mutations: the tenant-row lock dropped from Connect, or weakened to FOR SHARE
+    public async Task Connect_waits_for_whoever_holds_the_tenants_row_and_then_decides_on_what_it_wrote()
+    {
+        await using var s = await StartAsync();
+        await using var holder = await Db(s.T).OpenAsync();
+        await using var holding = await holder.BeginTransactionAsync();
+        await using (var bind = new NpgsqlCommand(
+            "SELECT 1 FROM tenants WHERE id='selfco' FOR SHARE; " +
+            $"INSERT INTO upstream_identities(tenant_id, kind, azure_tenant_id, client_id, cert_encrypted, updated_at) VALUES('selfco','shared','{OtherDir}',NULL,NULL,now())",
+            holder, holding)) await bind.ExecuteNonQueryAsync();
+        var actionsBefore = (long)(await ScalarAsync(s.T, "SELECT COUNT(*) FROM admin_actions"))!;
+
+        var connect = Task.Run(() => s.Store.ConnectSelfServiceFeedAsync(Request(s), default));
+
+        await PostgresLockProbe.WaitUntilAsync(holder, holding, "SELECT COUNT(DISTINCT l.pid) FROM pg_catalog.pg_locks l WHERE NOT l.granted AND " + PostgresLockProbe.Others, 1, connect);
+        Assert.False(connect.IsCompleted, "Connect finished while another session held the tenant's row");
+        await holding.CommitAsync();
+        Assert.Equal(ConnectResult.DirectoryTaken, await connect.WaitAsync(TimeSpan.FromSeconds(30)));
+        Assert.Equal(new UpstreamBinding(IdentityKind.Shared, OtherDir, null), await Engine.Tenants(s.T).GetUpstreamBindingAsync("selfco", default));
+        Assert.Null(await s.Shared.GetVerificationAsync("selfco", default));
+        Assert.Equal(actionsBefore, await ScalarAsync(s.T, "SELECT COUNT(*) FROM admin_actions"));
+    }
+
+    /// <summary>
+    /// The race: another tenant's shared binding of this directory, made by the operator's bind
+    /// and not yet committed, holds no row Connect locks and is invisible to its check, which passes. Connect writes the tenant's URLs and
+    /// then waits at its own binding's insert on the uncommitted entry of ux_shared_directory (pg_locks). Once the bind commits, Connect
+    /// meets the index (23505) and is answered DirectoryTaken, with nothing of it written; once the bind rolls back, Connect is Connected.
+    /// </summary>
+    // mutation: the 23505 not mapped (Connect then throws a PostgresException, a 500 to the browser)
+    [PostgresTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_Connect_that_loses_the_directory_to_an_operator_bind_at_its_binding_is_DirectoryTaken(bool bindCommits)
+    {
+        await using var s = await StartAsync();
+        await AddTenantAsync(s.T, "e2e-shared");
+        var before = await Snapshot(s.T);
+        await using var bind = await Db(s.T).OpenAsync();
+        await using var binding = await bind.BeginTransactionAsync();
+        await using (var insert = new NpgsqlCommand(
+            $"INSERT INTO upstream_identities(tenant_id, kind, azure_tenant_id, client_id, cert_encrypted, updated_at) VALUES('e2e-shared','shared','{Dir}',NULL,NULL,now())",
+            bind, binding)) await insert.ExecuteNonQueryAsync();
+        var bound = await Snapshot(s.T);   // read by another session: the bind's row is not in it yet
+
+        var connect = Task.Run(() => s.Store.ConnectSelfServiceFeedAsync(Request(s), default));
+        try
+        {
+            await using (var probe = await Db(s.T).OpenAsync())
+                await PostgresLockProbe.WaitUntilAsync(probe, null, "SELECT COUNT(DISTINCT l.pid) FROM pg_catalog.pg_locks l WHERE NOT l.granted AND l.locktype = 'transactionid' AND " +
+                    PostgresLockProbe.Others, 1, connect);
+            Assert.False(connect.IsCompleted, "Connect finished while the bind's row was uncommitted");
+            Assert.Equal(before, bound);
+
+            if (bindCommits)
+            {
+                await binding.CommitAsync();
+                Assert.Equal(ConnectResult.DirectoryTaken, await connect.WaitAsync(TimeSpan.FromSeconds(30)));
+                Assert.Null(await Engine.Tenants(s.T).GetUpstreamBindingAsync("selfco", default));
+                Assert.Null(await s.Shared.GetVerificationAsync("selfco", default));
+                Assert.Equal(new UpstreamBinding(IdentityKind.Shared, Dir, null), await Engine.Tenants(s.T).GetUpstreamBindingAsync("e2e-shared", default));
+                Assert.Equal(before.Split('\n').Where(l => !l.StartsWith("e2e-shared", StringComparison.Ordinal)),
+                    (await Snapshot(s.T)).Split('\n').Where(l => !l.StartsWith("e2e-shared", StringComparison.Ordinal)));   // the bind's row, and nothing of Connect's
+            }
+            else
+            {
+                await binding.RollbackAsync();
+                Assert.Equal(ConnectResult.Connected, await connect.WaitAsync(TimeSpan.FromSeconds(30)));
+                Assert.Equal(new UpstreamBinding(IdentityKind.Shared, Dir, null), await Engine.Tenants(s.T).GetUpstreamBindingAsync("selfco", default));
+            }
+        }
+        finally
+        {
+            await binding.DisposeAsync();   // rolls back if the test failed while it held the row, so Connect can end
+            await Task.WhenAny(connect, Task.Delay(TimeSpan.FromSeconds(30)));
+        }
+    }
+
+    /// <summary>
+    /// Only ux_shared_directory is DirectoryTaken: a unique violation on any other constraint in Connect (here raised by a
+    /// trigger of the test's own on the verification's insert, naming another constraint) is thrown as it is, and nothing is written.
+    /// </summary>
+    // mutation: 23505 mapped for any constraint
+    [PostgresFact]
+    public async Task A_unique_violation_on_another_constraint_is_thrown_not_DirectoryTaken()
+    {
+        await using var s = await StartAsync();
+        await ExecAsync(s.T, "CREATE FUNCTION test_unique() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN " +
+            "RAISE unique_violation USING MESSAGE = 'injected', CONSTRAINT = 'shared_app_verifications_pkey'; END $$");
+        await ExecAsync(s.T, "CREATE TRIGGER test_unique BEFORE INSERT ON shared_app_verifications FOR EACH ROW EXECUTE FUNCTION test_unique()");
+        var before = await Snapshot(s.T);
+
+        var refused = Assert.IsType<PostgresException>(await RefusedAsync(() => s.Store.ConnectSelfServiceFeedAsync(Request(s), default)));
+        Assert.Equal((PostgresErrorCodes.UniqueViolation, "shared_app_verifications_pkey"), (refused.SqlState, refused.ConstraintName));
+        Assert.Equal(before, await Snapshot(s.T));
+    }
+}
+
+/// <summary>On PostgreSQL: the whole contract, and the lock test, for a flagged operator-made tenant.</summary>
+[Collection(PostgresCollection.Name)]
+[Trait("Category", PostgresTestServer.Category)]
+public class PostgresFlaggedOperatorSelfServiceFeedStoreTests : PostgresSelfServiceFeedStoreTests
+{
+    protected override bool Flagged => true;
+}
+
+/// <summary><see cref="SelfServiceFeedStoreContract"/> on SQLite, and the tests only SQLite has.</summary>
 [Collection("sqlite-pools")]
 public class SelfServiceFeedStoreTests : SelfServiceFeedStoreContract
 {
@@ -67,7 +195,7 @@ public class SelfServiceFeedStoreTests : SelfServiceFeedStoreContract
 }
 
 /// <summary>
-/// #207: the whole Connect suite above for an operator-made tenant made for its customer to connect (feed_setup 'customer'), plus the
+/// The whole Connect suite above for an operator-made tenant made for its customer to connect (feed_setup 'customer'), plus the
 /// operator's takeover: any operator write of the upstream or identity sets feed_setup back to 'operator' in its own transaction, and a
 /// later Connect is refused.
 /// </summary>
@@ -106,7 +234,7 @@ public class FlaggedOperatorSelfServiceFeedStoreTests : SelfServiceFeedStoreTest
         }
         catch
         {
-            await t.DisposeAsync();   // #292: a failed set-up leaves no folder behind
+            await t.DisposeAsync();   // A failed set-up leaves no folder behind
             throw;
         }
     }

@@ -5,7 +5,7 @@ using Packmoat.Host.Web;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The operator's name, support address and website (#186): parsed strictly at start, never echoed when refused, and rendered as links
+/// The operator's name, support address and website: parsed strictly at start, never echoed when refused, and rendered as links
 /// only when set. With none set, the footer and the sentences use neutral words and never another operator's address.
 /// </summary>
 public class OperatorLinksTests

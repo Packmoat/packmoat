@@ -305,13 +305,13 @@ public class AzureSetupTests
         public World(string flag = "on", TenantOrigin origin = TenantOrigin.Self, UpstreamBinding? upstream = null, bool shared = true, TimeSpan? deadline = null,
             FeedSetup feedSetup = FeedSetup.Operator)
         {
-            State = new AzureSetupState(Clock);
+            State = SetupStates.New(Clock);
             Tenants.Tenants.Add(new Tenant("selfco", "Selfco", "", "", "", new TenantPolicy(14)));
             Directories.Rows[Dir] = new DirectoryBinding(Dir, "selfco", Clock.UtcNow, "self-signup");
             Tenants.Setups["selfco"] = new TenantSetup(origin, feedSetup);
             if (upstream is not null) Tenants.Bindings["selfco"] = upstream;
             if (shared) Shared.Slots[SharedAppSlot.Active] = new SharedAppCredential(Client, "PEM");
-            Commands = new AzureSetupCommands(Tenants, Directories, Shared, Checks, Check, State, AzureSetupSettings.Parse(flag), Clock, deadline);
+            Commands = new AzureSetupCommands(Tenants, Directories, Shared, Checks, Check, State, AzureSetupSettings.Parse(flag), Clock, new InProcessRateCounter(Clock), deadline);
         }
 
         public CustomerActor Admin => new("selfco", Oid, CustomerRole.Admin, "Ada Lovelace", Dir, Clock.UtcNow);
@@ -333,8 +333,8 @@ public class AzureSetupTests
         Assert.Equal(Token, w.Check.LastToken);
         // the 30-day blanking runs first, every time
         Assert.Equal(new[] { "blank " + (w.Clock.UtcNow - TimeSpan.FromDays(30)).ToString("O"), "record" }, w.Checks.Calls);
-        Assert.Same(held, w.State.Get("selfco", Oid));
-        Assert.Null(w.State.Get("othertenant", Oid));   // held per tenant and person, never per person only
+        SetupStates.SameCheck(held, await w.State.GetAsync("selfco", Oid));
+        Assert.Null(await w.State.GetAsync("othertenant", Oid));   // held per tenant and person, never per person only
         // nothing else is written: no tenant URL, no binding, no verification (part I)
         Assert.DoesNotContain(w.Tenants.Calls, c => c.StartsWith("bind", StringComparison.Ordinal) || c.StartsWith("identity-set", StringComparison.Ordinal));
         Assert.DoesNotContain(w.Shared.Calls, c => c.StartsWith("verify", StringComparison.Ordinal));
@@ -352,7 +352,7 @@ public class AzureSetupTests
         Assert.Empty(w.Checks.Rows);
         Assert.Empty(w.Checks.Calls);
         Assert.Equal(new[] { "stored selfco" }, w.Check.Calls);
-        Assert.Same(held, w.State.Get("selfco", Oid));
+        SetupStates.SameCheck(held, await w.State.GetAsync("selfco", Oid));
     }
 
     [Theory]
@@ -443,12 +443,15 @@ public class AzureSetupTests
     public async Task One_check_at_a_time_per_tenant_and_the_slot_is_freed_afterwards()
     {
         var w = new World();
-        Assert.True(w.State.TryBegin("selfco"));
+        var other = await w.State.TryBeginAsync("selfco");
+        Assert.NotNull(other);
         Assert.Equal(AzureSetupRefusal.CheckRunning, (await Assert.ThrowsAsync<AzureSetupRefusedException>(() => w.Commands.RunAsync(w.Admin, w.Names, Token, default))).Reason);
         Assert.Empty(w.Check.Calls);
-        w.State.End("selfco");
+        await w.State.EndAsync("selfco", other!);
+        w.Clock.UtcNow += TimeSpan.FromTicks(1);   // a released lease is free once time has moved past its end
         await w.Commands.RunAsync(w.Admin, w.Names, Token, default);
-        Assert.True(w.State.TryBegin("selfco"));   // freed after a run
+        w.Clock.UtcNow += TimeSpan.FromTicks(1);
+        Assert.NotNull(await w.State.TryBeginAsync("selfco"));   // freed after a run
     }
 
     [Fact(Timeout = 10_000)]   // the fake hangs until cancelled: never let a broken deadline hang the run
@@ -460,7 +463,8 @@ public class AzureSetupTests
         Assert.Equal(FeedCheckOutcome.Incomplete, held.Outcome);
         Assert.Equal(AzureSetupCommands.OutOfTime, Assert.Single(held.Results).Detail);
         Assert.Equal(FeedCheckOutcome.Incomplete, Assert.Single(w.Checks.Rows).Outcome);
-        Assert.True(w.State.TryBegin("selfco"));
+        w.Clock.UtcNow += TimeSpan.FromTicks(1);
+        Assert.NotNull(await w.State.TryBeginAsync("selfco"));
         Assert.Equal(60, AzureSetupRules.Deadline.TotalSeconds);
         Assert.Equal((1, 5.0), (AzureSetupRules.MaxRetries, AzureSetupRules.RetryWaitCap.TotalSeconds));
     }
@@ -482,6 +486,7 @@ public class AzureSetupTests
         Assert.Equal(FeedCheckOutcome.Incomplete, held.Outcome);
         Assert.Equal(FeedCheckOutcome.Incomplete, Assert.Single(w.Checks.Rows).Outcome);
         // a real failure is still a failure
+        w.Clock.UtcNow += TimeSpan.FromSeconds(1);   // the next check, a moment later: the first one's lease is over
         w.Check.Run = w.Check.Run with { Results = AllPass().Select(r => r.Id == "views" ? r with { Status = CheckStatus.Fail, Detail = "set to specific people: Local is 'organization'" } : r).ToList() };
         Assert.Equal(FeedCheckOutcome.Failed, (await w.Commands.RunAsync(w.Admin, w.Names, Token, default)).Outcome);
     }
@@ -515,6 +520,7 @@ public class AzureSetupTests
         await w.Commands.RunAsync(w.Admin, w.Names, Token, default);
         var request = await w.Commands.StartAsync(w.Admin, "contoso", null, "public-packages", confirmAdmins: true, default);
         Assert.Equal(new[] { "desc-ada" }, request.ConfirmedAdmins);
+        w.Clock.UtcNow += TimeSpan.FromSeconds(1);   // the step-up's return, a moment later: the first check's lease is over
         w.Check.Run = w.Check.Run with { Results = AllPass() };
         await w.Commands.RunAsync(w.Admin, request, Token, default);
         Assert.Equal(new[] { "desc-ada" }, w.Check.LastRequest!.ConfirmedAdmins);
@@ -529,9 +535,9 @@ public class AzureSetupTests
     {
         var w = new World();
         await w.Commands.RunAsync(w.Admin, w.Names, Token, default);
-        Assert.Null(w.State.Get("selfco", Guid.NewGuid()));
+        Assert.Null(await w.State.GetAsync("selfco", Guid.NewGuid()));
         w.Clock.UtcNow += AzureSetupState.HoldFor;
-        Assert.Null(w.State.Get("selfco", Oid));
+        Assert.Null(await w.State.GetAsync("selfco", Oid));
     }
 
     [Fact]
@@ -545,7 +551,7 @@ public class AzureSetupTests
         Assert.False(await set.Commands.ShowConnectCardAsync(set.Admin, default));   // set up (not yet verified): not "no feed"
     }
 
-    // ---- who sets up the feed (#207): origin x flag x upstream x active
+    // ---- who sets up the feed: origin x flag x upstream x active
 
     public static TheoryData<TenantOrigin, FeedSetup, string, bool, AzureSetupKind> SetupKinds => new()
     {
@@ -563,7 +569,7 @@ public class AzureSetupTests
         { TenantOrigin.Operator, FeedSetup.Customer, "own", true, AzureSetupKind.ReadOnly },
         { TenantOrigin.Operator, FeedSetup.Customer, "none", false, AzureSetupKind.ReadOnly },
         { TenantOrigin.Operator, FeedSetup.Customer, "shared-here", false, AzureSetupKind.ReadOnly },
-        // operator-made, operator-set (every tenant before #207): as before
+        // operator-made, operator-set (every tenant made before customers could connect their own feed): as before
         { TenantOrigin.Operator, FeedSetup.Operator, "none", true, AzureSetupKind.ReadOnly },
         { TenantOrigin.Operator, FeedSetup.Operator, "shared-here", true, AzureSetupKind.CheckOnly },
         { TenantOrigin.Operator, FeedSetup.Operator, "shared-elsewhere", true, AzureSetupKind.ReadOnly },

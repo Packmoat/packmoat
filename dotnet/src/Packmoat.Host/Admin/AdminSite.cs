@@ -93,9 +93,9 @@ public static class AdminSite
         services.TryAddSingleton(allow);   // TryAdd: a test may register its own
         services.AddSingleton<AdminSignInLimiter>(sp => new AdminSignInLimiter(sp.GetRequiredService<IClock>(), log: sp.GetRequiredService<ILogger<AdminSignInLimiter>>()));
         services.TryAddSingleton(sp => new AdminCommands(sp.GetRequiredService<ITenantStore>(), sp.GetRequiredService<ITokenService>(), sp.GetRequiredService<IClock>(),
-            alerts: sp.GetService<IOpsAlerts>()));
-        services.TryAddSingleton(sp => new AdminFormNonces(sp.GetRequiredService<IClock>()));
-        services.TryAddSingleton(sp => new AdminWriteLimiter(sp.GetRequiredService<IClock>()));
+            sp.GetRequiredService<IRateCounter>(), alerts: sp.GetService<IOpsAlerts>()));
+        services.TryAddSingleton(sp => new AdminFormNonces(sp.GetRequiredService<IFormNonceStore>(), sp.GetService<ILoggerFactory>()));
+        services.TryAddSingleton(sp => new AdminWriteLimiter(sp.GetRequiredService<IRateCounter>()));
         services.TryAddSingleton(sp => new AdminQueries(sp.GetRequiredService<ITenantStore>(), sp.GetRequiredService<IAuditQuery>(),
             sp.GetRequiredService<ITokenService>(), sp.GetRequiredService<IActiveDeveloperQuery>(), decisions: sp.GetService<IDecisionRecordQuery>()));
 
@@ -293,7 +293,7 @@ public static class AdminSite
         // The binding only: which app and which directory. It reads no key column and decrypts nothing.
         var binding = await q.GetUpstreamBindingAsync(op, id, ct);
         var lastDay = active.Tokens.ToDictionary(a => a.TokenId, a => a.LastActiveDay);
-        // The serving gate's answer, for the admin-site module's section (#193): its line for the operator and its own forms. A gate that
+        // The serving gate's answer, for the admin-site module's section: its line for the operator and its own forms. A gate that
         // throws costs the page (the site's error page), as before.
         var serving = await ctx.RequestServices.GetRequiredService<IServingGate>().AskAsync(t.Id, ct);
         var af = AntiforgeryToken(ctx);
@@ -308,6 +308,7 @@ public static class AdminSite
             AdminWrites.PostForm(Act(verb), af, string.Concat(hidden.Select(h => Hidden(h.Name, h.Value))), label, "inline");
         string Del(string verb, string label, string field, string value) => $"<td>{One(verb, label, (field, value))}</td>";
 
+        var issueNonce = await ctx.RequestServices.GetRequiredService<AdminFormNonces>().IssueAsync(t.Id, ctx.RequestAborted);
         var body = AdminWrites.Notice(ctx, ctx.Request.Query["r"].ToString()) +
             $"<h1>{E(t.Name)} <span class=\"muted\">({E(t.Id)})</span></h1>" +
             $"<p>Status: <strong>{(t.Active ? "Active" : "Suspended")}</strong>. Cooldown: {t.Policy.CooldownDays} days. Policy revision {t.Policy.Revision}. <a href=\"/audit?tenant={E(Uri.EscapeDataString(t.Id))}\">Audit trail</a> <a href=\"#decisions\">Decisions</a></p>" +
@@ -333,7 +334,7 @@ public static class AdminSite
                     $"{Cell(Time(k.CreatedAt))}{Cell(k.ExpiresAt is { } x ? Time(x) : "never")}{Cell(k.RevokedAt is { } r ? Time(r) + (k.RevokedBy is { } by ? " by " + by : "") : "")}{Cell(lastDay.TryGetValue(k.TokenId, out var day) ? day.ToString("yyyy-MM-dd") : "")}" +
                     (k.RevokedAt is null ? Del("token-revoke", "Revoke", "token", k.TokenId) : "<td></td>") + "</tr>")) +
             AdminWrites.PostForm(Act("token-issue"), af,
-                Hidden("nonce", ctx.RequestServices.GetRequiredService<AdminFormNonces>().Issue(t.Id)) +
+                Hidden("nonce", issueNonce) +
                 AdminWrites.Field("label", "Label", AdminInput.MaxLabel, hint: "by role or machine, not a person's name where you can") +
                 "<label>Kind <select name=\"kind\"><option value=\"developer\">developer</option><option value=\"automation\">automation</option></select></label>", "Issue token") +
             "<p class=\"muted\">The token is shown once, on the next page. It cannot be shown again. Upstream identity and certificates are set with the command line only.</p>" +
@@ -342,7 +343,7 @@ public static class AdminSite
     }
 
     /// <summary>
-    /// The read-only "Decisions" panel (#123): the tenant's decision record, newest last seen first, at most <see cref="DecisionsLimit"/>
+    /// The read-only "Decisions" panel: the tenant's decision record, newest last seen first, at most <see cref="DecisionsLimit"/>
     /// rows, searched by package (exact, or a prefix) and version with a GET form on the tenant page. Read through AdminQueries as the
     /// operator, never from the database here. Package ids and versions are whatever clients asked for: every value is encoded, and a
     /// refused search shows a fixed message, never the error text.

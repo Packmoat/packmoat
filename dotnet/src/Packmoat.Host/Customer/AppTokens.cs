@@ -17,10 +17,13 @@ namespace Packmoat.Host.Customer;
 /// body of the POST response that created it (Cache-Control: no-store, as every site response). Never in a URL, a redirect, a cookie,
 /// a log line or admin_actions.
 /// </summary>
-/// <summary>The customer site's own single-use form nonces, keyed by person. Separate from the admin site's, so neither can evict the other's.</summary>
+/// <summary>
+/// The customer site's own single-use form nonces, keyed by person, in the app scope of the store. Separate from the admin site's, so
+/// neither can evict or use the other's.
+/// </summary>
 public sealed class AppFormNonces : FormNonces
 {
-    public AppFormNonces(IClock clock) : base(clock) { }
+    public AppFormNonces(IFormNonceStore store, ILoggerFactory? logs = null) : base(store, FormNonceScopes.App, logs) { }
 }
 
 internal static class AppTokens
@@ -61,7 +64,8 @@ internal static class AppTokens
     private static string NonceKey(CustomerActor a) => $"{a.DirectoryId}/{a.ObjectId:D}";
 
     /// <summary>A fresh single-use nonce for a create form: issued only when the form is shown.</summary>
-    private static string Nonce(HttpContext ctx, CustomerActor actor) => ctx.RequestServices.GetRequiredService<AppFormNonces>().Issue(NonceKey(actor));
+    private static Task<string> NonceAsync(HttpContext ctx, CustomerActor actor) =>
+        ctx.RequestServices.GetRequiredService<AppFormNonces>().IssueAsync(NonceKey(actor), ctx.RequestAborted);
 
     private static CustomerTokenCommands Commands(HttpContext ctx) => ctx.RequestServices.GetRequiredService<CustomerTokenCommands>();
     private static CustomerTokenQueries Queries(HttpContext ctx) => ctx.RequestServices.GetRequiredService<CustomerTokenQueries>();
@@ -98,7 +102,7 @@ internal static class AppTokens
     }
 
     /// <summary>
-    /// What a token page shows in place of its create form when issuing would be refused (#200): the same words as <see cref="Refused"/>,
+    /// What a token page shows in place of its create form when issuing would be refused: the same words as <see cref="Refused"/>,
     /// so a person learns why before filling in a form the POST would refuse. The page still lists the tokens, so they can be revoked.
     /// </summary>
     private static string Blocked(HttpContext ctx, CustomerTokenBlocker blocker)
@@ -208,6 +212,7 @@ internal static class AppTokens
             $"<tr>{Cell(t.Label)}{Cell(Day(t.CreatedAt))}{Cell(t.LastUsedAt is { } u ? Day(u) : "Never")}{Cell(t.ExpiresAt is { } x ? Day(x) : "Never")}{StatusCell(t, now)}" +
             (Status(t, now).Css == "active" ? $"<td><a href=\"/tokens/revoke?token={E(Uri.EscapeDataString(t.TokenId))}\">Revoke</a></td>" : "<td></td>") + "</tr>");
         var full = active >= CustomerTokenRules.MaxActiveTokensPerMember;
+        var nonce = blocker is null && !full ? await NonceAsync(ctx, actor) : null;   // issued only when the form is shown
         var body =
             "<section class=\"card wide\" aria-labelledby=\"tokens-h\"><p class=\"eyebrow\">Your feed tokens</p><h1 id=\"tokens-h\">Your feed tokens</h1>" +
             $"<p class=\"lede\">A token lets NuGet on your machine read your organisation's packages through Packmoat. Each one lasts {CustomerTokenRules.DeveloperTokenDays} days.</p>" +
@@ -217,7 +222,7 @@ internal static class AppTokens
             (blocker is not null ? Blocked(ctx, blocker)
                 : full
                 ? $"<p class=\"next\"><strong>You have {CustomerTokenRules.MaxActiveTokensPerMember} active tokens</strong>Revoke one you no longer use to create another.</p>"
-                : $"<form method=\"post\" action=\"/tokens/create\" class=\"create\">{Af(ctx)}{Hidden("nonce", Nonce(ctx, actor))}" +
+                : $"<form method=\"post\" action=\"/tokens/create\" class=\"create\">{Af(ctx)}{Hidden("nonce", nonce!)}" +
                   $"<label for=\"label\">Name</label><input id=\"label\" name=\"label\" type=\"text\" maxlength=\"{CustomerTokenRules.MaxLabel}\" required autocomplete=\"off\" placeholder=\"for example: work laptop\">" +
                   "<button type=\"submit\" class=\"btn\">Create my token</button></form>" +
                   $"<p class=\"fine\">Name it after the machine you'll use it on. You can hold up to {CustomerTokenRules.MaxActiveTokensPerMember} active tokens; the token is shown once.</p>") +
@@ -228,7 +233,7 @@ internal static class AppTokens
     private static async Task CreateMine(HttpContext ctx, CustomerActor actor)
     {
         var form = await ctx.Request.ReadFormAsync(ctx.RequestAborted);
-        if (!ctx.RequestServices.GetRequiredService<AppFormNonces>().Consume(Form(form, "nonce"), NonceKey(actor)))
+        if (!await ctx.RequestServices.GetRequiredService<AppFormNonces>().ConsumeAsync(Form(form, "nonce"), NonceKey(actor), ctx.RequestAborted))
         {
             await Show(ctx, 409, "Open the form again", ErrorCard(ctx, "Open the form again", "This form was already used, or it is too old.",
                 "Go back to your tokens and create the token from a freshly loaded page.", "<a class=\"btn\" href=\"/tokens\">Back to your tokens</a>"));
@@ -304,7 +309,8 @@ internal static class AppTokens
             create = Blocked(ctx, blocker);
         else if (fresh)
         {
-            create = $"<form method=\"post\" action=\"/team/create\" class=\"create\">{Af(ctx)}{Hidden("nonce", Nonce(ctx, actor))}" +
+            var nonce = await NonceAsync(ctx, actor);
+            create = $"<form method=\"post\" action=\"/team/create\" class=\"create\">{Af(ctx)}{Hidden("nonce", nonce)}" +
                      $"<label for=\"label\">Name</label><input id=\"label\" name=\"label\" type=\"text\" maxlength=\"{CustomerTokenRules.MaxLabel}\" required autocomplete=\"off\" placeholder=\"for example: main build agents\">" +
                      $"<label for=\"days\">Expires after (days)</label><input id=\"days\" name=\"days\" type=\"number\" min=\"{CustomerTokenRules.MinAutomationDays}\" max=\"{CustomerTokenRules.MaxAutomationDays}\" value=\"90\" required>" +
                      "<button type=\"submit\" class=\"btn\">Create automation token</button></form>" +
@@ -328,11 +334,11 @@ internal static class AppTokens
         await Show(ctx, 200, "Team tokens", body);
     }
 
-    // ---------------------------------------------------------------- /team: who can join (auto-join, #80)
+    // ---------------------------------------------------------------- /team: who can join (auto-join)
 
-    // The wording of #80.
+    // The wording of the auto-join pages.
     /// <summary>
-    /// The core's words when the serving gate refuses a tenant and the customer site's module has none for its notice (#197). A module whose
+    /// The core's words when the serving gate refuses a tenant and the customer site's module has none for its notice. A module whose
     /// gate refuses with its own notice words it (<see cref="ICustomerSiteModule.ServingRefused"/>); these are for any other gate.
     /// </summary>
     internal const string NotServingTitle = "Not serving";
@@ -379,7 +385,7 @@ internal static class AppTokens
         // The role and the fresh sign-in are checked by the command; checked here first too, so a stale form is not spent on a refusal.
         if (actor.Role != CustomerRole.Admin) throw new CustomerTokenRefusedException(CustomerTokenRefusal.AdminOnly);
         if (!CustomerTokenRules.IsFresh(actor.SignedInAt, Now(ctx))) throw new CustomerTokenRefusedException(CustomerTokenRefusal.FreshSignInRequired);
-        if (!ctx.RequestServices.GetRequiredService<AppFormNonces>().Consume(Form(form, "nonce"), NonceKey(actor)))
+        if (!await ctx.RequestServices.GetRequiredService<AppFormNonces>().ConsumeAsync(Form(form, "nonce"), NonceKey(actor), ctx.RequestAborted))
         {
             await Show(ctx, 409, "Open the form again", ErrorCard(ctx, "Open the form again", "This form was already used, or it is too old.",
                 "Go back to team tokens and create the token from a freshly loaded page.", "<a class=\"btn\" href=\"/team\">Back to team tokens</a>"));

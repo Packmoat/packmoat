@@ -23,7 +23,7 @@ public class SqliteHostTests
 
         Assert.True(ok.Succeeded, ok.Output);
         Assert.False(refused.Succeeded);
-        // The refused restore stops at the listing, which is not audited (#136): the hidden download is fetched directly.
+        // The refused restore stops at the listing, which is not audited: the hidden download is fetched directly.
         using (var http = new HttpClient { BaseAddress = new Uri(f.BaseUrl) })
         {
             http.DefaultRequestHeaders.Authorization = new("Bearer", token.Plaintext);
@@ -89,7 +89,7 @@ public class SqliteHostTests
         await using var f = await SqliteHostFixture.StartAsync();
         using var http = new HttpClient { BaseAddress = new Uri(f.BaseUrl) };
 
-        // Distinct wrong tokens: the same wrong token repeated is a stale secret, not guessing, and is not blocked so soon (#124).
+        // Distinct wrong tokens: the same wrong token repeated is a stale secret, not guessing, and is not blocked so soon.
         var codes = new List<HttpStatusCode>();
         for (var i = 0; i < 22; i++)
         {

@@ -13,7 +13,7 @@ namespace Packmoat.Host.Tests;
 /// NuGet sends every request once without credentials, gets 401, then retries with them (NuGet/Home#12517). Those
 /// challenges are not guesses: only a token that was presented and is wrong counts, and only distinct wrong tokens
 /// per address count towards the block (a stale CI secret repeated is not guessing), with a higher backstop on all
-/// wrong attempts to protect the token store (#124).
+/// wrong attempts to protect the token store.
 /// </summary>
 public class TokenGuessLimitTests
 {

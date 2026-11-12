@@ -20,6 +20,7 @@ public class CustomerTokenTests
     private readonly FakeDirectories _directories = new();
     private readonly FakeActionLog _log = new();
     private readonly FakeSharedStore _shared = new();
+    private readonly InProcessRateCounter _rates;
     private readonly CustomerTokenCommands _commands;
     private readonly CustomerTokenQueries _queries;
 
@@ -31,6 +32,7 @@ public class CustomerTokenTests
     public CustomerTokenTests()
     {
         _tokens = new FakeTokens(_clock);
+        _rates = new InProcessRateCounter(_clock);
         foreach (var (id, dir) in new[] { ("acme", AcmeDir), ("globex", GlobexDir) })
         {
             _tenants.Tenants.Add(new Tenant(id, id.ToUpperInvariant(), "https://pkgs.dev.azure.com/", id + "/", $"https://pkgs.dev.azure.com/{id}/_packaging/f/nuget/v3/index.json", new TenantPolicy(14)));
@@ -38,7 +40,7 @@ public class CustomerTokenTests
         }
         _directories.Rows[AcmeDir] = new DirectoryBinding(AcmeDir, "acme", _clock.UtcNow, "op");
         _directories.Rows[GlobexDir] = new DirectoryBinding(GlobexDir, "globex", _clock.UtcNow, "op");
-        _commands = new CustomerTokenCommands(_tenants, _tokens, _members, _directories, _log, _clock, _shared, ServeAllGate.Instance);
+        _commands = new CustomerTokenCommands(_tenants, _tokens, _members, _directories, _log, _clock, _shared, ServeAllGate.Instance, _rates);
         _queries = new CustomerTokenQueries(_tenants, _tokens, _directories, _shared, ServeAllGate.Instance);
     }
 
@@ -51,7 +53,7 @@ public class CustomerTokenTests
         _tenants.Tenants[i] = _tenants.Tenants[i] with { Active = false };
     }
 
-    // ---- whether issuing would be refused (#200: the token pages hide the create form)
+    // ---- whether issuing would be refused (the token pages hide the create form)
 
     private sealed record TestNotice : ServingNotice;
 
@@ -66,7 +68,7 @@ public class CustomerTokenTests
         Assert.Null(await _queries.IssueBlockerAsync(Ada, Ct));   // set up, served: the form shows
         var notice = new TestNotice();
         var refusing = new CustomerTokenQueries(_tenants, _tokens, _directories, _shared, new RefusingGate(notice));
-        var refusingCommands = new CustomerTokenCommands(_tenants, _tokens, _members, _directories, _log, _clock, _shared, new RefusingGate(notice));
+        var refusingCommands = new CustomerTokenCommands(_tenants, _tokens, _members, _directories, _log, _clock, _shared, new RefusingGate(notice), _rates);
         Assert.Equal(new CustomerTokenBlocker(CustomerTokenRefusal.ServingRefused, notice), await refusing.IssueBlockerAsync(Ada, Ct));
         var e = await Assert.ThrowsAsync<CustomerTokenRefusedException>(() => refusingCommands.IssueDeveloperTokenAsync(Ada, "laptop", Ct));
         Assert.Equal((CustomerTokenRefusal.ServingRefused, (ServingNotice?)notice), (e.Reason, e.Notice));
@@ -142,7 +144,7 @@ public class CustomerTokenTests
         // Simulates a concurrent issue winning the last place between the quick check and the insert.
         for (var i = 0; i < 5; i++)
             _tokens.Rows.Add(new TokenInfo($"tok_race{i}", "acme", "p", "x", _clock.UtcNow, null, null, TokenKind.Developer, AcmeDir, AdaOid.ToString("D"), null, _clock.UtcNow.AddDays(1), TokenIssuer.Self));
-        var racing = new CustomerTokenCommands(_tenants, new CapOnlyInStore(_tokens), _members, _directories, _log, _clock, _shared, ServeAllGate.Instance);
+        var racing = new CustomerTokenCommands(_tenants, new CapOnlyInStore(_tokens), _members, _directories, _log, _clock, _shared, ServeAllGate.Instance, _rates);
         Assert.Equal(CustomerTokenRefusal.TooManyTokens, await Refused(() => racing.IssueDeveloperTokenAsync(Ada, "late", Ct)));
         Assert.Equal(new[] { "token.issue", "token.issue.failed" }, _log.Rows.Select(r => r.Action));
     }
@@ -349,7 +351,7 @@ public class CustomerTokenTests
     public async Task A_shared_app_tenant_with_no_shared_store_fails_closed()
     {
         _tenants.Bindings["acme"] = new UpstreamBinding(IdentityKind.Shared, AcmeDir, null);
-        var noShared = new CustomerTokenCommands(_tenants, _tokens, _members, _directories, _log, _clock, null, ServeAllGate.Instance);
+        var noShared = new CustomerTokenCommands(_tenants, _tokens, _members, _directories, _log, _clock, null, ServeAllGate.Instance, _rates);
         Assert.Equal(CustomerTokenRefusal.TenantNotVerified, await Refused(() => noShared.IssueDeveloperTokenAsync(Ada, "x", Ct)));
     }
 

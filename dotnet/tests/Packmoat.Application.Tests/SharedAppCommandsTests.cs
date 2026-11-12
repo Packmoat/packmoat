@@ -18,7 +18,7 @@ public class SharedAppCommandsTests
 
     public SharedAppCommandsTests()
     {
-        _commands = new AdminCommands(_store, _store, new FixedClock(), _shared, new FakeInspector());
+        _commands = new AdminCommands(_store, _store, new FixedClock(), new InProcessRateCounter(new FixedClock()), _shared, new FakeInspector());
         _queries = new AdminQueries(_store, _store, _store, _store, _shared);
         _store.Tenants.Add(Tenant("acme", "acme-org/"));
         _store.Tenants.Add(Tenant("other", "other-org/"));
@@ -262,7 +262,7 @@ public class SharedAppCommandsTests
     [Fact]
     public async Task Without_an_inspector_shared_credentials_cannot_be_set_or_promoted()
     {
-        var bare = new AdminCommands(_store, _store, new FixedClock(), _shared);
+        var bare = new AdminCommands(_store, _store, new FixedClock(), new InProcessRateCounter(new FixedClock()), _shared);
         await Assert.ThrowsAsync<InvalidOperationException>(() => bare.SetSharedAppCredentialAsync(Op, SharedAppSlot.Active, new SharedAppCredential(AppId, "pem"), Ct));
         await Assert.ThrowsAsync<InvalidOperationException>(() => bare.PromoteSharedAppCredentialAsync(Op, Ct));
         Assert.Empty(_shared.Slots);

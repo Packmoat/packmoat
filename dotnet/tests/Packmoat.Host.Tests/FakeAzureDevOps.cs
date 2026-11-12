@@ -17,14 +17,14 @@ namespace Packmoat.Host.Tests;
 
 /// <summary>
 /// Stands in for Azure DevOps' API hosts (feeds, vssps, dev.azure.com) for a delegated (bearer) token, in process: Get Feed by name or
-/// id, feed settings, paged permissions and service principals, the identities API and Projects - Get. Shapes as seen live in #63 S0
+/// id, feed settings, paged permissions and service principals, the identities API and Projects - Get. Shapes as seen live
 /// (a test organisation). Anything but "Bearer <see cref="Token"/>" is 401. Every request is recorded with its Authorization header.
 /// </summary>
 public sealed class FakeAzureDevOps : HttpMessageHandler
 {
     /// <summary>The Admin's delegated token (the settings check).</summary>
     public const string Token = "SENTINEL-ADO-TOKEN-a9c3f1e07b5d4e2f";
-    /// <summary>A developer's delegated token (the developer proof, #64 I2).</summary>
+    /// <summary>A developer's delegated token (the developer proof).</summary>
     public const string DeveloperToken = "SENTINEL-DEV-TOKEN-5b1e9c04d7a2";
     /// <summary>Packmoat's own identity's token (the shared app in the customer's directory), sent as the Basic password like the proxy's.</summary>
     public const string PackmoatToken = "SENTINEL-PACKMOAT-TOKEN-0c4f2a";
@@ -51,9 +51,9 @@ public sealed class FakeAzureDevOps : HttpMessageHandler
     public int? GetFeedStatus { get; set; }
     /// <summary>A named administrator (the feed's creator) on the feed, on the permissions list's second page.</summary>
     public bool NamedAdmin { get; set; }
-    /// <summary>False: Packmoat's service principal is not in the organisation's list (#119).</summary>
+    /// <summary>False: Packmoat's service principal is not in the organisation's list.</summary>
     public bool SharedAppListed { get; set; } = true;
-    /// <summary>When set, the feed's permissions list answers this status instead (#119: a check that errors).</summary>
+    /// <summary>When set, the feed's permissions list answers this status instead (a check that errors).</summary>
     public int? PermissionsStatus { get; set; }
     public JsonArray Upstreams { get; set; } = new(new JsonObject { ["name"] = "nuget.org", ["protocol"] = "nuget", ["location"] = "https://api.nuget.org/v3/index.json" });
     /// <summary>More entries on the permissions list's first page (a broad group with a role, say).</summary>
@@ -70,7 +70,7 @@ public sealed class FakeAzureDevOps : HttpMessageHandler
     public string? CancelOnPath { get; set; }
     public ConcurrentQueue<(Uri Url, string? Authorization)> Seen { get; } = new();
 
-    /// <summary>Another feed of the organisation (#64 I2): what Packmoat's identity gets on its index, its views and its upstreams.</summary>
+    /// <summary>Another feed of the organisation: what Packmoat's identity gets on its index, its views and its upstreams.</summary>
     public sealed class OtherFeed
     {
         public Guid Id { get; init; } = Guid.NewGuid();

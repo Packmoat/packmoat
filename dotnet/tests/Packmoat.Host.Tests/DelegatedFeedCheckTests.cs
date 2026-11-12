@@ -16,9 +16,9 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The delegated sign-in check (#63 H2) against a fake Azure DevOps: Get Feed resolves the typed names to GUIDs (its "url" ignored, the
+/// The delegated sign-in check against a fake Azure DevOps: Get Feed resolves the typed names to GUIDs (its "url" ignored, the
 /// name checked), the URLs are built from the GUIDs under the tight prefix, and the settings checks run with the person's bearer token,
-/// which goes only to Azure DevOps' API hosts. The 'private' check (#64 I2) lists feeds and views with that token, then probes them with
+/// which goes only to Azure DevOps' API hosts. The 'private' check lists feeds and views with that token, then probes them with
 /// Packmoat's own identity, which goes only to the package host.
 /// </summary>
 public partial class DelegatedFeedCheckTests
@@ -262,7 +262,7 @@ public partial class DelegatedFeedCheckTests
     }
 
     /// <summary>
-    /// The tight prefix (#63 S0): the live index lists VssBaseUrl (https://pkgs.dev.azure.com/{org}/, metadata) outside
+    /// The tight prefix: the live index lists VssBaseUrl (https://pkgs.dev.azure.com/{org}/, metadata) outside
     /// {org}/{projectId}/_packaging/{feedId}/. The proxy never follows it: the rewriter keeps only PackageBaseAddress and
     /// RegistrationsBaseUrl, and the proxy builds no upstream URL outside the prefix. The live index writes the organisation in lower case.
     /// </summary>

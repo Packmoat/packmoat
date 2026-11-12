@@ -7,7 +7,7 @@ using Packmoat.Infrastructure.Lifecycle;
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// The command line opens the database in one order (#278 step 0, PR 2): migrate, then the module's lifecycle, then the tenant store
+/// The command line opens the database in one order: migrate, then the module's lifecycle, then the tenant store
 /// (which takes the lifecycle's participants), then the master-key check, then the module's serving gate. A module asked for its
 /// lifecycle sees a migrated database with no key marker yet; one asked for its gate sees the marker the key check recorded. The master
 /// key is read only after the migration and the backup (which needs none), and the token service asks the module's gate.
@@ -117,8 +117,7 @@ public class AdminCliOrderTests
     }
 
     /// <summary>The gate a token service asks (its private field, read as StoreIdentityTests reads the server's).</summary>
-    private static IServingGate GateOf(SqliteTokenService tokens) => (IServingGate)typeof(SqliteTokenService)
-        .GetFields(BindingFlags.Instance | BindingFlags.NonPublic).Single(f => f.FieldType == typeof(IServingGate)).GetValue(tokens)!;
+    private static IServingGate GateOf(ITokenService tokens) => FieldOf<IServingGate>(Assert.IsType<SqliteTokenService>(tokens));
 
     private static async Task WithMigrated(Func<SqliteDatabase, CliEnvironment, Task> body)
     {
@@ -139,10 +138,11 @@ public class AdminCliOrderTests
     public Task The_token_service_asks_the_module_s_gate_or_the_core_s_when_there_is_none() => WithMigrated((db, env) =>
     {
         var stores = new SqliteStores(db, env.Protector());
-        var tenants = stores.Tenants(env.Clock, TenantLifecycle.None);
+        var store = stores.Tenants(env.Clock, TenantLifecycle.None);
+        var tenants = new AdminCli.CliTenantPorts(store, g => stores.TokenService(store, env.Clock, g));
         var gate = new TestGate();
-        Assert.Same(gate, GateOf(AdminCli.TokenServiceFor(stores, tenants, env.Clock, [gate])));
-        Assert.Same(ServeAllGate.Instance, GateOf(AdminCli.TokenServiceFor(stores, tenants, env.Clock, [])));
+        Assert.Same(gate, GateOf(AdminCli.TokenServiceFor(tenants, [gate])));
+        Assert.Same(ServeAllGate.Instance, GateOf(AdminCli.TokenServiceFor(tenants, [])));
         return Task.CompletedTask;
     });
 
@@ -158,6 +158,32 @@ public class AdminCliOrderTests
         Assert.NotNull(none);
         Assert.Same(ServeAllGate.Instance, GateOf(none.Tokens));
     });
+
+    [Fact]   // mutation: a second tenant store made for the command line's token service
+    public Task The_command_line_s_token_service_checks_the_tenant_store_its_commands_use() => WithMigrated(async (db, env) =>
+    {
+        var opened = await AdminCli.OpenStoresAsync(db, env, [], new StringWriter());
+        Assert.NotNull(opened);
+        Assert.Same(opened.Tenants, FieldOf<SqliteTenantStore>(opened.Tokens));
+    });
+
+    // mutations: the audit query, or a face of the token activity, given its own adapter
+    [Fact]
+    public Task The_command_line_s_ports_share_one_audit_log_and_one_token_activity() => WithMigrated(async (db, env) =>
+    {
+        var opened = await AdminCli.OpenStoresAsync(db, env, [], new StringWriter());
+        Assert.NotNull(opened);
+        Assert.IsType<SqliteAuditLog>(opened.Stores.AuditQuery);
+        Assert.Same(opened.Stores.AuditQuery, opened.Stores.AuditRetention);
+        var (query, retention) = opened.Stores.TokenActivity(env.Clock);
+        Assert.IsType<SqliteTokenActivity>(query);
+        Assert.Same(query, retention);
+        Assert.Same(db, opened.Stores.Database);
+    });
+
+    /// <summary>The one private field of type <typeparamref name="T"/> that <paramref name="owner"/> holds.</summary>
+    private static T FieldOf<T>(object owner) => (T)owner.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic)
+        .Single(f => f.FieldType == typeof(T)).GetValue(owner)!;
 
     [Fact]   // two gates still stop the tool, with the same line
     public Task Two_modules_gates_open_nothing() => WithMigrated(async (db, env) =>

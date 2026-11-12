@@ -4,7 +4,7 @@ using Packmoat.Infrastructure.Tests.Postgres;
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// The master-key check behind its port (#278 step 0, A4; #288 P2 on every engine): <see cref="IMasterKeyCheck.EnsureAsync"/> records the
+/// The master-key check behind its port (on every engine): <see cref="IMasterKeyCheck.EnsureAsync"/> records the
 /// marker on a fresh database, keeps it, and refuses a wrong key with the start's exact message; <see cref="IMasterKeyCheck.MatchesAsync"/>
 /// only reads. Fixtures: MasterKeyCheckTests (SQLite) and PostgresMasterKeyCheckTests.
 /// </summary>
@@ -61,7 +61,7 @@ public abstract class MasterKeyCheckContract : SqlContract<IMasterKeyEngine>
     }
 
     /// <summary>
-    /// #295 (review F4): two first starts at once on a new database with different keys. Exactly one passes, the other stops with the
+    /// Two first starts at once on a new database with different keys. Exactly one passes, the other stops with the
     /// start's message, and one marker is kept: the first writer's. The rival start is made deterministic by
     /// <see cref="IMasterKeyEngine.ArrangeRivalMarkerAsync"/>: its marker, under key B, lands after this start (key A) has found no marker
     /// and before its own write, so A must read the marker back and stop.

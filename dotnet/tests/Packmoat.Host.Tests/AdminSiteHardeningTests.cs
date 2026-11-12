@@ -103,7 +103,7 @@ public class AdminSiteHardeningTests
         using var hf = TempDir.Create("packmoat-hf-");   // declared first, so deleted after the site has stopped
         await using var f = await StartAsync(o =>
         {
-            o.DatabasePath = hf.File("packmoat.db");
+            o.Database = hf.File("packmoat.db");
             o.MasterKeyBase64 = AesGcmSecretProtector.GenerateKeyBase64();
             o.AllowedHosts = "feeds.packmoat.test";      // the admin host is NOT listed here; the app adds it
         });

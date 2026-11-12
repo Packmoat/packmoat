@@ -2,6 +2,7 @@ using Packmoat.Application;
 using Packmoat.Domain;
 using Packmoat.Infrastructure;
 using Packmoat.Infrastructure.Lifecycle;
+using Packmoat.Infrastructure.Postgres;
 
 namespace Packmoat.Admin;
 
@@ -16,9 +17,16 @@ public sealed record CliEnvironment(string DbPath, Func<AesGcmSecretProtector> P
     /// <summary>Tests only: adjusts the onboarding options after they are read from the command line (for example shorter retry waits).</summary>
     public Action<OnboardingOptions>? TuneOnboarding { get; init; }
 
-    /// <summary>The database engine (PACKMOAT_DB_ENGINE, #232 P1). Only <see cref="DatabaseEngine.Sqlite"/> runs: any other stops every
-    /// command that needs the environment, and backup, verify and restore point to the engine's own tools.</summary>
+    /// <summary>The database engine (PACKMOAT_DB_ENGINE): SQLite, or PostgreSQL, where <see cref="DbPath"/> is a
+    /// connection string, the <c>db</c> group is PostgreSQL's own (<see cref="PostgresDbCommands"/>), every other command only checks the
+    /// schema (it never migrates), and backup, verify and restore point to the engine's own tools.</summary>
     public DatabaseEngine Engine { get; init; } = DatabaseEngine.Sqlite;
+
+    /// <summary>
+    /// PostgreSQL only (PACKMOAT_DB_SINGLE_ROLE=on): the command line's role may own the tables, as the server's may, which
+    /// the start's checks then only warn about. Read, strictly, only when <see cref="Engine"/> is PostgreSQL; off otherwise.
+    /// </summary>
+    public bool SingleRole { get; init; }
 
     public static CliEnvironment FromProcess() => FromSettings(Settings.Get);
 
@@ -26,12 +34,15 @@ public sealed record CliEnvironment(string DbPath, Func<AesGcmSecretProtector> P
     public static CliEnvironment FromSettings(Func<string, string?> setting)
     {
         ArgumentNullException.ThrowIfNull(setting);
+        var engine = DatabaseEngines.Parse(setting(DatabaseEngines.Variable));
         return new(
             setting("PACKMOAT_DB") ?? "data/packmoat.db",
             () => AesGcmSecretProtector.FromEnvironment(),
             new SystemClock())
         {
-            Engine = DatabaseEngines.Parse(setting(DatabaseEngines.Variable)),
+            Engine = engine,
+            // Strict, as the server reads it, and only on PostgreSQL: on SQLite the setting is not read at all.
+            SingleRole = engine == DatabaseEngine.Postgres && PostgresStartupOptions.ParseSingleRole(setting(PostgresStartupOptions.SingleRoleVariable)),
         };
     }
 }
@@ -94,9 +105,11 @@ public static class AdminCli
           restore <file> [--force]                            replace the database with a verified backup (stop the server first)
           db check-migrations <file>                          before a deploy: run this build's migrations on a temporary copy of a backup
                                                               (never the live database); report each track, row counts and the schema
+          db migrate --grant-to <app role> | --single-role    PostgreSQL only, as the owner role: migrate, then grant the app role its rows
+                                                              (db check-migrations, with no file: the same in a transaction, rolled back)
           jobs run retention                                  the server's daily retention pass, for when PACKMOAT_BACKGROUND_JOBS is off
                                                               (prints each step's count; exit 1 if a step failed; deletes no tenant)
-        Environment: PACKMOAT_DB (default data/packmoat.db), PACKMOAT_DB_ENGINE (sqlite, the default; postgres is not available yet), PACKMOAT_MASTER_KEY (base64, 32 bytes);
+        Environment: PACKMOAT_DB (default data/packmoat.db; with postgres a connection string), PACKMOAT_DB_ENGINE (sqlite, the default, or postgres), PACKMOAT_MASTER_KEY (base64, 32 bytes);
         """;
 
     /// <summary>The core's own commands: a module's group may not be one of them.</summary>
@@ -106,21 +119,28 @@ public static class AdminCli
         "jobs",
     };
 
-    // `jobs` (#233): what `packmoat-admin jobs` with anything but `run retention` prints (the help lists it too).
+    // `jobs`: what `packmoat-admin jobs` with anything but `run retention` prints (the help lists it too).
+    /// <summary>
+    /// The most connections a command's own PostgreSQL pool opens: PACKMOAT_DB's Maximum Pool Size, capped at this. A command
+    /// needs a few connections (a held session lock keeps one while the work runs on another), not the server's whole pool, and the server
+    /// may be running on the same database. A pool under 2 is not raised, so the start's checks still refuse it.
+    /// </summary>
+    public const int PostgresPoolSize = 5;
+
     internal const string JobsUsage = "Usage: packmoat-admin jobs run retention   (the server's daily retention pass, for when PACKMOAT_BACKGROUND_JOBS is off)";
 
     /// <summary>The help: the core's commands, each module's, the core's tail, then each module's Environment lines.</summary>
     internal static string Usage(IReadOnlyList<IAdminCliModule> modules) => string.Join("\n",
         new[] { WithPurgeHelp(UsageHead, modules) }.Concat(modules.Select(m => m.Usage)).Append(UsageTail).Concat(modules.Select(m => m.EnvironmentUsage).Where(e => e.Length > 0)));
 
-    // The tenant purge line's words, where a module's last check before a purge is named (#197 C3).
+    // The tenant purge line's words, where a module's last check before a purge is named.
     private const string PurgeHelp = "(only when due; recorded)";
 
     /// <summary>The modules' purge checks, each in the order given, joined by "; " (empty: none).</summary>
     private static string PurgeChecks(IReadOnlyList<IAdminCliModule> modules, Func<PurgeCheckNote, string> words) =>
         string.Join("; ", modules.Select(m => m.PurgeCheck).OfType<PurgeCheckNote>().Select(words));
 
-    // The tenant purge-due line's words, which a module's DueLines replace (#226), and the help's column for a line's later lines.
+    // The tenant purge-due line's words, which a module's DueLines replace, and the help's column for a line's later lines.
     private const string PurgeDueHelp = "tenants due for purge, and any to check by hand. Deletes nothing.";
     private const int HelpColumn = 54;
 
@@ -135,13 +155,13 @@ public static class AdminCli
         return PurgeChecks(modules, n => n.Help) is { Length: > 0 } checks ? head.Replace(PurgeHelp, "(only when due; " + checks + "; recorded)", StringComparison.Ordinal) : head;
     }
 
-    /// <param name="modules">The command groups beyond the core's (#193; production: Program.cs). Empty: the core's commands only.</param>
+    /// <param name="modules">The command groups beyond the core's (production: Program.cs). Empty: the core's commands only.</param>
     public static Task<int> RunAsync(string[] args, TextWriter output, TextWriter error, CliEnvironment env, IReadOnlyList<IAdminCliModule> modules) =>
         RunAsync(args, output, error, () => env, modules);
 
-    /// <param name="environment">Builds the environment inside the error handling (#238), so a bad setting (a database file that cannot be read, say) is the usual
+    /// <param name="environment">Builds the environment inside the error handling, so a bad setting (a database file that cannot be read, say) is the usual
     /// "error:" line and exit 1, not a crash. Production: <see cref="CliEnvironment.FromProcess"/>. The help and keygen never build it.</param>
-    /// <param name="modules">The command groups beyond the core's (#193; production: Program.cs). Empty: the core's commands only.</param>
+    /// <param name="modules">The command groups beyond the core's (production: Program.cs). Empty: the core's commands only.</param>
     public static async Task<int> RunAsync(string[] args, TextWriter output, TextWriter error, Func<CliEnvironment> environment, IReadOnlyList<IAdminCliModule> modules)
     {
         ArgumentNullException.ThrowIfNull(environment);
@@ -162,16 +182,15 @@ public static class AdminCli
             return 2;
         }
         var usage = Usage(modules);
+        PostgresDatabase? postgres = null;   // The database a PostgreSQL command opened, disposed whatever happens
         try
         {
             if (args.Length == 0 || args[0] is "-h" or "--help") { await output.WriteLineAsync(usage); return args.Length == 0 ? 2 : 0; }
             if (args[0] == "keygen") { await output.WriteLineAsync(AesGcmSecretProtector.GenerateKeyBase64()); return 0; }
             var env = environment();
-            // Only SQLite in this build (#232 P1). Backup, verify and restore are SQLite's own: on another engine, its own tools do that job.
-            if (env.Engine != DatabaseEngine.Sqlite)
-                throw new SettingsException(args[0] is "backup" or "verify" or "restore"
-                    ? $"{args[0]} works on SQLite only, and {DatabaseEngines.Variable} is {DatabaseEngines.Name(env.Engine)}. Use pg_dump to back up a Postgres database, and pg_restore to restore it."
-                    : DatabaseEngines.NotAvailable(env.Engine));
+            // Backup, verify and restore are SQLite's own: on PostgreSQL, its own tools do that job.
+            if (env.Engine != DatabaseEngine.Sqlite && args[0] is "backup" or "verify" or "restore")
+                throw new SettingsException($"{args[0]} works on SQLite only, and {DatabaseEngines.Variable} is {DatabaseEngines.Name(env.Engine)}. Use pg_dump to back up a Postgres database, and pg_restore to restore it.");
 
             if (args[0] is "verify" or "restore")
             {
@@ -188,10 +207,17 @@ public static class AdminCli
                 return 0;
             }
 
-            // The core's migrations, then each module's track (#196). The dry run works on a copy and never opens the live database.
+            // The core's migrations, then each module's track. The dry run works on a copy and never opens the live database.
             var tracks = modules.Select(m => m.Migrations).OfType<MigrationTrack>().ToList();
+            // PostgreSQL's db group: db migrate --grant-to and db check-migrations, as the owner role. The only way a
+            // PostgreSQL schema changes; every other command below only checks it.
+            if (args[0] == "db" && env.Engine == DatabaseEngine.Postgres)
+            {
+                await using var owner = PostgresDatabase.Create(PostgresConnectionString.Parse(env.DbPath).WithPoolAtMost(PostgresPoolSize));
+                return await PostgresDbCommands.RunAsync(args, owner, tracks, output, error);
+            }
             if (args[0] == "db") return await CheckMigrationsAsync(args, env, tracks, output, error);
-            // jobs (#233): exactly `jobs run retention`. Anything more (--dry-run, a word) is refused here, before the database is opened
+            // jobs: exactly `jobs run retention`. Anything more (--dry-run, a word) is refused here, before the database is opened
             // or the arguments are parsed, so it can never run the real pass.
             if (args[0] == "jobs" && args is not ["jobs", "run", "retention"])
             {
@@ -199,30 +225,52 @@ public static class AdminCli
                 return 2;
             }
 
-            var db = new SqliteDatabase(env.DbPath);
-            ISchemaMigrator migrator = db;   // #278 step 0, A4: a local, as in the server
-            await migrator.MigrateAsync(tracks);
-            if (args[0] == "backup")
+            // The engine is picked here and only here. Past the backup, which is SQLite's own, the command line sees the database and its
+            // stores only as ports.
+            IRelationalDatabase db;
+            ISchemaMigrator migrator;   // A local, as in the server
+            if (env.Engine == DatabaseEngine.Sqlite)
             {
-                var done = await SqliteBackup.BackupAsync(db, args.Length > 1 ? args[1] : throw new ArgumentException("A destination file is required."), args.Contains("--force"), default, TryProtector(env));
-                await output.WriteLineAsync("backup written and verified. " + Describe(done));
-                return 0;
+                var sqlite = new SqliteDatabase(env.DbPath);
+                db = sqlite;
+                migrator = sqlite;
+                await migrator.MigrateAsync(tracks);
+                if (args[0] == "backup")
+                {
+                    var done = await SqliteBackup.BackupAsync(sqlite, args.Length > 1 ? args[1] : throw new ArgumentException("A destination file is required."), args.Contains("--force"), default, TryProtector(env));
+                    await output.WriteLineAsync("backup written and verified. " + Describe(done));
+                    return 0;
+                }
+            }
+            else
+            {
+                // PostgreSQL: first the server's own start checks, so the command line refuses whatever the
+                // server refuses (a superuser, session_replication_role off origin, a pooler in transaction mode, a schema not current, ...)
+                // before it writes anything; each warning is one "warning:" line. Then the stores' own schema port, as the server's
+                // (PostgresStores.Migrator), which never migrates: db migrate --grant-to, as the owner role, is the one way the schema
+                // changes, and only the db group above (run as the owner) skips these checks. Never the database's own MigrateAsync, which
+                // would migrate with no grants. The command's own pool is capped, so the checks skip the pool-size warning,
+                // which is about the server's pool, when the cap lowered it; a refusal says the command will not run.
+                db = postgres = PostgresDatabase.Create(PostgresConnectionString.Parse(env.DbPath).WithPoolAtMost(PostgresPoolSize));
+                await PostgresStartupChecks.RequireAsync(postgres, tracks, env.Clock, new PostgresStartupOptions(env.SingleRole) { ForCommand = true },
+                    w => error.WriteLine("warning: " + w));
+                migrator = new PostgresStores(postgres, env.Protector()).Migrator;
+                await migrator.MigrateAsync(tracks);
             }
             // After the migration and the backup (which needs no master key): the stores, opened in the one order.
             if (await OpenStoresAsync(db, env, modules, error) is not { } opened) return 2;
             var (stores, lifecycle, notes, tenants, shared, tokens) = opened;
-            var audit = stores.Audit;
             var a = new AdminCliArgs(args);
             // The CLI is the operator's tool: all tenants. --by or the OS user names the operator. A container uid with no passwd entry
             // has no user name; that must not break every command, so the name falls back to "operator" and only `waiver add` insists on a real one.
             var operatorName = a.Opt("by") ?? env.OperatorName ?? Environment.UserName;
             var actor = ActorScope.OperatorAs(string.IsNullOrWhiteSpace(operatorName) ? "operator" : operatorName);
-            var commands = new AdminCommands(tenants, tokens, env.Clock, shared, new CertificateInspector());
+            var commands = new AdminCommands(tenants, tokens, env.Clock, stores.RateCounter(env.Clock), shared, new CertificateInspector());
             var activity = stores.TokenActivity(env.Clock);
-            var queries = new AdminQueries(tenants, audit, tokens, activity, shared, stores.DecisionQuery);
+            var queries = new AdminQueries(tenants, stores.AuditQuery, tokens, activity.Query, shared, stores.DecisionQuery);
             var ct = CancellationToken.None;
 
-            // A module's group (#193): the collision check above keeps the core's commands the core's.
+            // A module's group: the collision check above keeps the core's commands the core's.
             if (modules.FirstOrDefault(m => m.Group == a.Cmd.Item1) is { } module)
                 return await module.RunAsync(new AdminCliContext(a, actor, db, stores.AdminActions, env, output, error, ct));
 
@@ -230,7 +278,7 @@ public static class AdminCli
             {
                 case ("tenant", "create"):
                 {
-                    // --azure-tenant with NO upstream option: the customer connects their own feed (#207). Any upstream option: all are
+                    // --azure-tenant with NO upstream option: the customer connects their own feed. Any upstream option: all are
                     // required as before (a partial set is refused), and the operator sets up the feed.
                     var upstreamGiven = a.Opt("upstream-base") is not null || a.Opt("path-prefix") is not null || a.Opt("feed") is not null;
                     var tenant = a.Opt("azure-tenant") is not null && !upstreamGiven
@@ -385,7 +433,7 @@ public static class AdminCli
                         if (subject.FeedIndexUrl != tenant.UpstreamFeedIndexUrl) throw new ArgumentException("The tenant's feed URL changed just now; run the check again.");
                         options.SharedAppClientId = subject.ClientId;
                         options.SharedAppDirectoryId = subject.AzureTenantId;
-                        options.ProxyRetryFor = TimeSpan.FromSeconds(150);   // running servers re-read it within 5 s; generous, for builds before #170 (2 minutes)
+                        options.ProxyRetryFor = TimeSpan.FromSeconds(150);   // running servers re-read it within 5 s; generous, for older builds (2 minutes)
                     }
                     env.TuneOnboarding?.Invoke(options);
 
@@ -461,39 +509,114 @@ public static class AdminCli
                     await DecisionAsync(a, actor, queries, output, ct);
                     break;
                 case ("jobs", _):
-                    return await JobsAsync(stores, lifecycle, env, activity, output, error, ct);
+                    return await JobsAsync(stores, lifecycle, env, activity.Retention, output, error, ct);
                 default:
                     await error.WriteLineAsync("Unknown command.\n" + usage);
                     return 2;
             }
             return 0;
         }
-        catch (Exception ex) when (ex is ArgumentException or SettingsException or TenantCreationRefusedException or SchemaTooNewException or SchemaTrackException or SchemaBaselineException or KeyNotFoundException or FormatException or OverflowException or IOException or UnauthorizedAccessException or NotSupportedException or Microsoft.Data.Sqlite.SqliteException or System.Security.Cryptography.CryptographicException or ExternalServiceException)
+        catch (Exception ex) when (ex is ArgumentException or SettingsException or TenantCreationRefusedException or SchemaTooNewException or SchemaTrackException or SchemaBaselineException or SchemaNotMigratedException or PostgresStartupException or KeyNotFoundException or FormatException or OverflowException or IOException or UnauthorizedAccessException or NotSupportedException or System.Data.Common.DbException or System.Security.Cryptography.CryptographicException or ExternalServiceException)
         {
-            await error.WriteLineAsync("error: " + ex.Message); // messages never contain secrets: they name the problem, not the value
+            // messages never contain secrets: they name the problem, not the value. A database error (SQLite's, or PostgreSQL's)
+            // is its own message only: never a parameter's value, and never the connection string or its password.
+            await error.WriteLineAsync("error: " + ex.Message);
             return 1;
+        }
+        finally
+        {
+            if (postgres is not null) await postgres.DisposeAsync();
         }
     }
 
     /// <summary>
-    /// What the core's commands work on (#278 step 0, PR 2), from the one store list (<see cref="SqliteStores"/>). This, <see cref="OpenStoresAsync"/>
-    /// and <see cref="TokenServiceFor"/> are public only so the core's tests can check the order and the gate (no command shows the
-    /// gate, and the command line's tests live in Packmoat.Infrastructure.Tests, which may not read this assembly's internals): they are
-    /// not a module seam.
+    /// What the core's commands work on, from the one store list (<see cref="SqliteStores"/>), as ports.
+    /// This, <see cref="OpenStoresAsync"/> and <see cref="TokenServiceFor"/> are public only so the core's tests can check the order and
+    /// the gate (no command shows the gate, and the command line's tests live in Packmoat.Infrastructure.Tests, which may not read this
+    /// assembly's internals): they are not a module seam.
     /// </summary>
-    public sealed record CliStores(SqliteStores Stores, TenantLifecycle Lifecycle, List<string> Notes, SqliteTenantStore Tenants,
-        SqliteSharedAppCredentialStore Shared, SqliteTokenService Tokens);
+    public sealed record CliStores(CliStorePorts Stores, TenantLifecycle Lifecycle, List<string> Notes, ITenantStore Tenants,
+        ISharedAppCredentialStore Shared, ITokenService Tokens);
+
+    /// <summary>
+    /// The rest of the store list the commands use, as ports, each over the one adapter the list made where the list
+    /// keeps one (the audit log's query and retention are one log). What reads the clock or the lifecycle is made when asked, as before.
+    /// </summary>
+    public sealed record CliStorePorts(
+        IRelationalDatabase Database,
+        IMasterKeyCheck MasterKeyCheck,
+        IAuditQuery AuditQuery,
+        IAuditRetention AuditRetention,
+        IDecisionRecordQuery DecisionQuery,
+        IDecisionRecordLog Decisions,
+        IAdminActionLog AdminActions,
+        ISignInDirectoryStore SignInDirectory,
+        IFeedCheckStore FeedChecks,
+        Func<IClock, TenantLifecycle, CliTenantPorts> Tenants,
+        Func<IClock, ISharedAppCredentialStore> SharedAppCredentials,
+        Func<IClock, (IActiveDeveloperQuery Query, ITokenActivityRetention Retention)> TokenActivity,
+        Func<TenantLifecycle, IPurgeSummaryStore> PurgeStore,
+        Func<TenantLifecycle, IOrganisationStore> Organisations,
+        Func<IClock, IJobLease> JobLease,
+        Func<IClock, IRateCounter> RateCounter,
+        Func<IClock, IFormNonceStore> FormNonces,
+        Func<IClock, IFeedSetupScratch> FeedSetupScratch);
+
+    /// <summary>The tenant store, and the token service over that same store (given the gate it asks).</summary>
+    public sealed record CliTenantPorts(ITenantStore Store, Func<IServingGate, ITokenService> TokenService);
+
+    /// <summary>PostgreSQL's store list as the command line's ports: the twin of SQLite's, port for port.</summary>
+    private static CliStorePorts PortsOf(PostgresStores stores) => new(
+        stores.Database, stores.MasterKeyCheck, stores.Audit, stores.Audit, stores.DecisionQuery, stores.Decisions, stores.AdminActions,
+        stores.SignInDirectory, stores.FeedChecks,
+        (clock, lifecycle) =>
+        {
+            var tenants = stores.Tenants(clock, lifecycle);
+            return new CliTenantPorts(tenants, gate => stores.TokenService(tenants, clock, gate));
+        },
+        stores.SharedAppCredentials,
+        clock =>
+        {
+            var activity = stores.TokenActivity(clock);   // one token activity, both faces
+            return (activity, activity);
+        },
+        stores.PurgeStore, stores.Organisations, stores.JobLease, stores.RateCounter, stores.FormNonces, stores.FeedSetupScratch);
+
+    /// <summary>SQLite's store list as the command line's ports: the one place the command line builds its stores' adapters.</summary>
+    private static CliStorePorts PortsOf(SqliteStores stores) => new(
+        stores.Database, stores.MasterKeyCheck, stores.Audit, stores.Audit, stores.DecisionQuery, stores.Decisions, stores.AdminActions,
+        stores.SignInDirectory, stores.FeedChecks,
+        (clock, lifecycle) =>
+        {
+            var tenants = stores.Tenants(clock, lifecycle);
+            return new CliTenantPorts(tenants, gate => stores.TokenService(tenants, clock, gate));
+        },
+        stores.SharedAppCredentials,
+        clock =>
+        {
+            var activity = stores.TokenActivity(clock);   // one token activity, both faces
+            return (activity, activity);
+        },
+        stores.PurgeStore, stores.Organisations, stores.JobLease, stores.RateCounter, stores.FormNonces, stores.FeedSetupScratch);
 
     /// <summary>
     /// Opens the stores over a migrated database, in the one order: the master key, the module's lifecycle, the tenant store (with the
     /// lifecycle's participants), the master-key check, the module's serving gate and the token service that asks it. Null, after an
     /// error line, when two modules give a lifecycle or a gate.
     /// </summary>
-    public static async Task<CliStores?> OpenStoresAsync(SqliteDatabase db, CliEnvironment env, IReadOnlyList<IAdminCliModule> modules, TextWriter error)
+    public static async Task<CliStores?> OpenStoresAsync(IRelationalDatabase db, CliEnvironment env, IReadOnlyList<IAdminCliModule> modules, TextWriter error)
     {
-        // The stores, from the one list the server and the hosted modules also build from (#278 step 0, A3).
-        var stores = new SqliteStores(db, env.Protector());
-        // The tenant lifecycle (#194): at most one module's (creation participants, purge contributors and eligibility), else the
+        // The stores, from the one list the server and the hosted modules also build from, for the database's own
+        // engine (never a setting's): SQLite's, or PostgreSQL's.
+        ArgumentNullException.ThrowIfNull(db);
+        var stores = db.Engine switch
+        {
+            DatabaseEngine.Sqlite => PortsOf(new SqliteStores(SqliteDatabase.From(db), env.Protector())),
+            DatabaseEngine.Postgres => PortsOf(new PostgresStores(db as PostgresDatabase
+                ?? throw new InvalidOperationException("A postgres database that is not PostgresDatabase was given."), env.Protector())),
+            _ => throw new ArgumentOutOfRangeException(nameof(db)),
+        };
+        // The tenant lifecycle: at most one module's (creation participants, purge contributors and eligibility), else the
         // core's none. Notes are what its payment provider logs; a refused purge prints them.
         var notes = new List<string>();
         var lifecycles = modules.Select(m => m.Lifecycle(db, env, notes.Add)).OfType<TenantLifecycle>().ToList();
@@ -505,7 +628,7 @@ public static class AdminCli
         var lifecycle = lifecycles.SingleOrDefault() ?? TenantLifecycle.None;
         var tenants = stores.Tenants(env.Clock, lifecycle);
         var shared = stores.SharedAppCredentials(env.Clock);
-        IMasterKeyCheck keyCheck = stores.MasterKeyCheck;   // #278 step 0, A4: a local, as in the server
+        IMasterKeyCheck keyCheck = stores.MasterKeyCheck;   // A local, as in the server
         await keyCheck.EnsureAsync(default);
         // The serving gate: at most one module's, else every tenant serves.
         var gates = modules.Select(m => m.Gate(db, env, error.WriteLine)).OfType<IServingGate>().ToList();
@@ -514,28 +637,29 @@ public static class AdminCli
             await error.WriteLineAsync($"{gates.Count} modules give a serving gate. Refusing to run: at most one may decide who is served.");
             return null;
         }
-        return new CliStores(stores, lifecycle, notes, tenants, shared, TokenServiceFor(stores, tenants, env.Clock, gates));
+        return new CliStores(stores, lifecycle, notes, tenants.Store, shared, TokenServiceFor(tenants, gates));
     }
 
     /// <summary>The token service asks the module's gate, or the core's serve-everyone gate when no module gives one.</summary>
-    public static SqliteTokenService TokenServiceFor(SqliteStores stores, SqliteTenantStore tenants, IClock clock, IReadOnlyList<IServingGate> gates) =>
-        stores.TokenService(tenants, clock, gates.SingleOrDefault() ?? ServeAllGate.Instance);
+    public static ITokenService TokenServiceFor(CliTenantPorts tenants, IReadOnlyList<IServingGate> gates) =>
+        tenants.TokenService(gates.SingleOrDefault() ?? ServeAllGate.Instance);
 
     /// <summary>
-    /// jobs run retention (#233): the server's daily retention pass, every step, by hand or from a scheduler (for a server whose
+    /// jobs run retention: the server's daily retention pass, every step, by hand or from a scheduler (for a server whose
     /// PACKMOAT_BACKGROUND_JOBS is off). It prints each step's count, or the kind of its failure only, and exits 1 when any step failed.
     /// It counts the tenants due for purge but never claims the day's nudge nor alerts, so the server's own nudge is unaffected; it deletes
-    /// no tenant. It takes the job lease the server's retention pass takes (#232 M2): while a server copy (or this command elsewhere) is
+    /// no tenant. It takes the job lease the server's retention pass takes: while a server copy (or this command elsewhere) is
     /// running the pass, it changes nothing, says so and exits 0. A pass that runs prints its duration.
     /// </summary>
-    private static async Task<int> JobsAsync(SqliteStores stores, TenantLifecycle lifecycle, CliEnvironment env,
-        SqliteTokenActivity activity, TextWriter output, TextWriter error, CancellationToken ct)
+    private static async Task<int> JobsAsync(CliStorePorts stores, TenantLifecycle lifecycle, CliEnvironment env,
+        ITokenActivityRetention activity, TextWriter output, TextWriter error, CancellationToken ct)
     {
         var pass = new RetentionPass(stores.FeedChecks, env.Clock, stores.PurgeStore(lifecycle),
-            alerts: null, stores.Decisions, stores.AdminActions, stores.Audit, activity);
-        // The server's lease (#232 M2): while a server copy runs its pass, this one is skipped, and the other way round.
+            alerts: null, stores.Decisions, stores.AdminActions, stores.AuditRetention, activity, stores.RateCounter(env.Clock),
+            stores.FormNonces(env.Clock), stores.FeedSetupScratch(env.Clock));
+        // The server's lease: while a server copy runs its pass, this one is skipped, and the other way round.
         IReadOnlyList<RetentionStep> steps = [];
-        var run = await LeasedJob.RunAsync(new SqliteJobLease(stores.Database, env.Clock), JobLeases.Retention, JobLeases.ProcessHolder,
+        var run = await LeasedJob.RunAsync(stores.JobLease(env.Clock), JobLeases.Retention, JobLeases.ProcessHolder,
             async c => steps = await pass.RunAsync(nudge: false, report: null, c), ct);
         if (run.AcquireFailure is { } acquire) throw acquire;
         if (!run.Ran)
@@ -568,11 +692,14 @@ public static class AdminCli
         RetentionStepKind.AdminActionsPruned => "admin action records deleted",
         RetentionStepKind.AuditEventsPruned => "audit events deleted",
         RetentionStepKind.TokenActivityPruned => "per-day activity rows deleted",
+        RetentionStepKind.RateWindowsPruned => "ended rate-limit windows deleted",
+        RetentionStepKind.FormNoncesPruned => "expired form nonces deleted",
+        RetentionStepKind.FeedSetupScratchPruned => "expired feed setup results and drafts deleted",
         _ => kind.ToString(),
     };
 
     /// <summary>
-    /// db check-migrations FILE (#196): the pre-deploy dry run. Never opens PACKMOAT_DB (refuses a file that resolves to it); the runner
+    /// db check-migrations FILE: the pre-deploy dry run. Never opens PACKMOAT_DB (refuses a file that resolves to it); the runner
     /// runs on a temporary copy, which is deleted. Prints names and counts only. Exit 0 only when the runner ran, every table's row count
     /// is unchanged and the schema equals a fresh build's; 1 otherwise (a missing file: an error line, exit 1).
     /// </summary>
@@ -584,7 +711,7 @@ public static class AdminCli
             return 2;
         }
         var file = args.Length > 2 ? args[2] : throw new ArgumentException("A database file (a backup) is required.");
-        // A missing file is a typo, not a refused deploy: nothing was copied or checked (#251 item 24).
+        // A missing file is a typo, not a refused deploy: nothing was copied or checked.
         if (!File.Exists(file)) throw new FileNotFoundException($"{file} was not found. Nothing was checked; give the path of a backup file.");
         var report = await MigrationDryRun.RunAsync(file, env.DbPath, tracks, TryProtector(env));
         await output.WriteLineAsync($"checked a temporary copy of {file} (the file itself is only read; the copy is deleted)");
@@ -612,13 +739,13 @@ public static class AdminCli
     }
 
     /// <summary>
-    /// tenant create ... --azure-tenant GUID (#195): the self-hoster's "add your organisation". The tenant, its directory link and a
+    /// tenant create ... --azure-tenant GUID: the self-hoster's "add your organisation". The tenant, its directory link and a
     /// tenant.create record (site "cli") are written in one transaction through the core's organisation store, with the lifecycle's
     /// participants; a directory already linked writes nothing (exit 1). No member is made: the directory's first Admin to sign in becomes
-    /// one. With no upstream options (#207) the tenant has no URLs and feed_setup 'customer': its Admins connect the feed with the Azure
+    /// one. With no upstream options the tenant has no URLs and feed_setup 'customer': its Admins connect the feed with the Azure
     /// setup wizard, and the record says <c>feed=customer</c> instead of the URLs.
     /// </summary>
-    private static async Task<int> CreateAndLinkAsync(NewTenant tenant, string rawDirectory, ActorScope actor, SqliteStores stores, TenantLifecycle lifecycle, IClock clock,
+    private static async Task<int> CreateAndLinkAsync(NewTenant tenant, string rawDirectory, ActorScope actor, CliStorePorts stores, TenantLifecycle lifecycle, IClock clock,
         TextWriter output, CancellationToken ct)
     {
         AdminCommands.CheckNewTenant(actor, tenant);
@@ -700,9 +827,9 @@ public static class AdminCli
     /// tenant purge-due | tenant purge &lt;id&gt; --confirm &lt;id&gt;. Operator only. purge-due only reads. purge is recorded in admin_actions
     /// (site "cli") before anything happens, and again with ".failed" when it did not complete; the module's eligibility has the last
     /// word (it may ask a payment provider) and then it deletes in one transaction. No operator alerts from here.
-    /// With no module's lifecycle nobody is due and every purge is refused (#194).
+    /// With no module's lifecycle nobody is due and every purge is refused.
     /// </summary>
-    private static async Task<int> PurgeAsync(AdminCliArgs a, ActorScope actor, SqliteStores stores, TenantLifecycle lifecycle, List<string> notes, CliEnvironment env,
+    private static async Task<int> PurgeAsync(AdminCliArgs a, ActorScope actor, CliStorePorts stores, TenantLifecycle lifecycle, List<string> notes, CliEnvironment env,
         string dueCheck, TextWriter output, CancellationToken ct)
     {
         AdminCommands.RequireOperator(actor);
@@ -878,7 +1005,7 @@ public static class AdminCli
     };
 
     /// <summary>The master key, or null only when it is not set at all (neither the variable nor its file). A bad key or an unreadable file
-    /// is an error (#238): it must not silently skip the key check in verify, restore, backup and db check-migrations.</summary>
+    /// is an error: it must not silently skip the key check in verify, restore, backup and db check-migrations.</summary>
     private static AesGcmSecretProtector? TryProtector(CliEnvironment env)
     {
         try { return env.Protector(); }

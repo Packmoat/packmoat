@@ -10,7 +10,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The per-version decision record through the real proxy (#123): listings and downloads are both recorded, coalesced per version and
+/// The per-version decision record through the real proxy: listings and downloads are both recorded, coalesced per version and
 /// decision, and a broken record store changes nothing a client sees.
 /// </summary>
 [Collection("sqlite-pools")]
@@ -146,7 +146,7 @@ public class DecisionRecordHostTests
             var clock = new FakeClock();
             await using var app = PackmoatApp.Build(new[] { "--urls", "http://127.0.0.1:0" }, TestModules.Server, s => s.AddSingleton<IClock>(clock), o =>
             {
-                o.DatabasePath = Path.Combine(dir, "packmoat.db");
+                o.Database = Path.Combine(dir, "packmoat.db");
                 o.MasterKeyBase64 = AesGcmSecretProtector.GenerateKeyBase64();
                 o.AllowedHosts = "feeds.example.test";
             });

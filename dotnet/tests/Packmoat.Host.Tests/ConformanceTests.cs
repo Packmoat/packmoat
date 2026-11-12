@@ -17,7 +17,7 @@ using static Packmoat.Host.Tests.ConformanceVectors;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// The .NET implementation against the shared vectors in spec/vectors (#209): each case runs through the production code that answers
+/// The .NET implementation against the shared vectors in spec/vectors: each case runs through the production code that answers
 /// it on a real request, and its output is compared as JSON with the case's expected output. See spec/README.md.
 /// </summary>
 public class ConformanceTests

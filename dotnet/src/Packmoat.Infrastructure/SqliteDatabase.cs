@@ -9,7 +9,7 @@ public sealed class SchemaTooNewException : InvalidOperationException
         : base($"The database schema is version {found}, newer than this build knows ({known}). Refusing to run: an older build could misread or damage it. " +
                "Run the newer build, or restore a backup taken before the upgrade (packmoat-admin restore).") { }
 
-    /// <summary>A module's track (#196) is newer than this build knows.</summary>
+    /// <summary>A module's track is newer than this build knows.</summary>
     public SchemaTooNewException(string track, int found, int known)
         : base($"The database's {track} schema is version {found}, newer than this build knows ({known}). Refusing to run: an older build could misread or damage it. " +
                "Run the newer build, or restore a backup taken before the upgrade (packmoat-admin restore).") { }
@@ -25,7 +25,7 @@ public sealed class SqliteDatabase : IRelationalDatabase, ISchemaMigrator
     public DatabaseEngine Engine => DatabaseEngine.Sqlite;
 
     /// <summary>
-    /// The one approved way from the module seams' <see cref="IRelationalDatabase"/> back to SQLite's own database (#278 step 0): the same
+    /// The one approved way from the module seams' <see cref="IRelationalDatabase"/> back to SQLite's own database: the same
     /// instance when it is SQLite's. Anything else (another engine, or an object that is not this class) is refused, naming its engine.
     /// </summary>
     public static SqliteDatabase From(IRelationalDatabase database)
@@ -60,7 +60,7 @@ public sealed class SqliteDatabase : IRelationalDatabase, ISchemaMigrator
     }
 
     /// <summary>
-    /// A connection that cannot write (#233: the readiness check). It never creates the file, sets no journal mode, and refuses any write
+    /// A connection that cannot write (the readiness check). It never creates the file, sets no journal mode, and refuses any write
     /// (query_only), so a missing or moved database is an error here, not a new empty one.
     /// </summary>
     internal async Task<SqliteConnection> OpenReadOnlyAsync(CancellationToken cancellationToken = default)
@@ -82,7 +82,7 @@ public sealed class SqliteDatabase : IRelationalDatabase, ISchemaMigrator
     }
 
     /// <summary>
-    /// Where each of the core's and <paramref name="modules"/>' tracks stands, read only (#233: the readiness check). Nothing is created or
+    /// Where each of the core's and <paramref name="modules"/>' tracks stands, read only (the readiness check). Nothing is created or
     /// recorded: a track with no table has <see cref="TrackVersion.Newest"/> null.
     /// </summary>
     public async Task<IReadOnlyList<TrackVersion>> TrackVersionsAsync(IReadOnlyList<MigrationTrack> modules, CancellationToken cancellationToken = default)
@@ -122,7 +122,7 @@ public sealed class SqliteDatabase : IRelationalDatabase, ISchemaMigrator
     public static MigrationTrack Core => CoreSchema.Track;
 
     /// <summary>
-    /// Applies the core's migrations, then each of <paramref name="modules"/>' tracks in order (#196). Before anything is written it
+    /// Applies the core's migrations, then each of <paramref name="modules"/>' tracks in order. Before anything is written it
     /// refuses: a <c>*_schema_migrations</c> table no track here declares, a track declared twice (or a module's named "core"), a track
     /// whose table is newer than this build knows (<see cref="SchemaTooNewException"/>), and a database a module's
     /// <see cref="TrackBaseline"/> cannot take over (<see cref="SchemaBaselineException"/>). Production passes every module's track;
@@ -147,15 +147,15 @@ public sealed class SqliteDatabase : IRelationalDatabase, ISchemaMigrator
     /// <summary>
     /// The runner. Each migration is a list of statements, and each statement runs as its own command inside the migration's one
     /// transaction, so an error from any statement is thrown and rolls the whole migration back (Microsoft.Data.Sqlite does not report an
-    /// error from a statement that follows an ADD COLUMN with a CHECK in the same command text, #162). Public for the tests of a
-    /// module's track (#197): <paramref name="core"/> as the core's track, then <paramref name="modules"/>, with the core only up to
+    /// error from a statement that follows an ADD COLUMN with a CHECK in the same command text). Public for the tests of a
+    /// module's track: <paramref name="core"/> as the core's track, then <paramref name="modules"/>, with the core only up to
     /// <paramref name="coreUpToVersion"/>.
     /// </summary>
     public async Task<IReadOnlyList<TrackOutcome>> MigrateAsync(MigrationTrack core, IReadOnlyList<MigrationTrack> modules, int coreUpToVersion, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(modules);
         TrackRules.RequireDistinct(modules);
-        // Every track has SQLite statements (#278 step 0, B7), checked before the database is opened: a refusal makes no track table.
+        // Every track has SQLite statements, checked before the database is opened: a refusal makes no track table.
         foreach (var track in modules.Prepend(core)) track.StatementsFor(DatabaseEngine.Sqlite);
 
         await using var connection = await OpenAsync(cancellationToken);
@@ -210,7 +210,7 @@ public sealed class SqliteDatabase : IRelationalDatabase, ISchemaMigrator
     /// have adopted it meanwhile) and, when everything is present, records versions 1 to the baseline's as applied without running them.
     /// When nothing is present it writes nothing and the track runs as usual. Returns true when it adopted. The core version judged is the
     /// one the database had before this run (<paramref name="coreBefore"/>), as the class says: the core has run by now, and a core
-    /// migration after the baseline's version (core 22, #207) adds nothing the baseline looks at.
+    /// migration after the baseline's version (core 22) adds nothing the baseline looks at.
     /// </summary>
     private static async Task<bool> AdoptAsync(SqliteConnection connection, MigrationTrack track, int coreBefore, CancellationToken ct)
     {
@@ -330,10 +330,9 @@ public sealed class SqliteDatabase : IRelationalDatabase, ISchemaMigrator
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    // One element per migration (version = index + 1), and one statement per inner element: MigrateAsync runs each as its own command
-    // (#162). A trigger is one statement, BEGIN ... END included. Never put two statements in one element (a test checks).
-    // Never edit an applied migration: each one's text is frozen by hash in MigrationHashTests (#168). Add a new migration instead.
-    // The one deliberate exception (#196): the hosted service's statements in 9, 10, 12, 15 and 21 moved, word for word and in order, to
+    // One element per migration (version = index + 1), and one statement per inner element: MigrateAsync runs each as its own command. A trigger is one statement, BEGIN ... END included. Never put two statements in one element (a test checks).
+    // Never edit an applied migration: each one's text is frozen by hash in MigrationHashTests. Add a new migration instead.
+    // The one deliberate exception: the hosted service's statements in 9, 10, 12, 15 and 21 moved, word for word and in order, to
     // its own track's H1. The slots keep their numbers; an empty one still records its version. No core statement may name a module's
     // table (an architecture test checks).
     internal static readonly string[][] Migrations =
@@ -462,15 +461,15 @@ public sealed class SqliteDatabase : IRelationalDatabase, ISchemaMigrator
             "CREATE INDEX ix_tokens_owner ON tokens(tenant_id, owner_tid, owner_oid);",
         ],
         // 9: tenants learn who made them: every existing row is 'operator' (the default), with no creator oid. (The hosted service's
-        // tables, made here before #196, are its track's H1.)
+        // tables, made here earlier, are its track's H1.)
         [
             "ALTER TABLE tenants ADD COLUMN origin TEXT NOT NULL DEFAULT 'operator' CHECK(origin IN ('operator','self'));",
             "ALTER TABLE tenants ADD COLUMN created_by_oid TEXT NULL;",
         ],
-        // 10: empty since #196 (its statement is the hosted track's H1).
+        // 10: empty here (its statement is the hosted track's H1).
         [
         ],
-        // 11: auto-join (#80). One row per tenant once an admin changes it; NO row means ON, so every existing tenant starts on and nothing
+        // 11: auto-join. One row per tenant once an admin changes it; NO row means ON, so every existing tenant starts on and nothing
         // is inserted here. enabled is 0 or 1 only.
         [
             """
@@ -480,17 +479,17 @@ public sealed class SqliteDatabase : IRelationalDatabase, ISchemaMigrator
                 changed_at TEXT NOT NULL, changed_by TEXT NOT NULL);
             """,
         ],
-        // 12: empty since #196 (its statement is the hosted track's H1).
+        // 12: empty here (its statement is the hosted track's H1).
         [
         ],
-        // 13: the Azure setup wizard (#63 H1). feed_checks: every run of the feed setup check, who ran it and exactly what it checked;
+        // 13: the Azure setup wizard. feed_checks: every run of the feed setup check, who ran it and exactly what it checked;
         // results and confirmed_admins are JSON (confirmed_admins holds display names: personal data, 30-day retention); never a token.
         // shared_app_verifications learns how each record was made: every existing row is 'operator' (the default, the CLI's onboard
         // check, which keeps writing it that way), with no feed check. Nothing that serves reads these columns yet.
         // feed_check_id must name a real feed_checks row (a foreign key; NULL for operator-made records). The key does not check that the
         // feed check is the same tenant's: part I (the wizard writing it) must check feed_checks.tenant_id = the verification's tenant_id.
-        // After 30 days confirmed_admins and checked_by_name are blanked and every result detail is redacted (IFeedCheckStore.BlankPersonalDataAsync, #63 H2,
-        // #107); checked_by_tid and checked_by_oid stay until the tenant purge. Rows are never deleted, as a verification may refer to one.
+        // After 30 days confirmed_admins and checked_by_name are blanked and every result detail is redacted (IFeedCheckStore.BlankPersonalDataAsync);
+        //  checked_by_tid and checked_by_oid stay until the tenant purge. Rows are never deleted, as a verification may refer to one.
         [
             """
             CREATE TABLE feed_checks(
@@ -507,8 +506,8 @@ public sealed class SqliteDatabase : IRelationalDatabase, ISchemaMigrator
             "ALTER TABLE shared_app_verifications ADD COLUMN verified_via TEXT NOT NULL DEFAULT 'operator' CHECK (verified_via IN ('operator','wizard'));",
             "ALTER TABLE shared_app_verifications ADD COLUMN feed_check_id INTEGER NULL REFERENCES feed_checks(id);",
         ],
-        // 14: connecting a checked feed (#64 I1). feed_checks learns what each row is about: every existing row is an Admin's settings check
-        // (the default); 'developer' rows are a developer's proof that they cannot read the feed directly (#64 I2). A wizard-made
+        // 14: connecting a checked feed. feed_checks learns what each row is about: every existing row is an Admin's settings check
+        // (the default); 'developer' rows are a developer's proof that they cannot read the feed directly. A wizard-made
         // verification names both rows it relied on: developer_check_id must name a real feed_checks row (NULL for operator-made records
         // and for every existing row). As with feed_check_id, the key does not check the tenant: ConnectSelfServiceFeedAsync does.
         [
@@ -516,7 +515,7 @@ public sealed class SqliteDatabase : IRelationalDatabase, ISchemaMigrator
             "CREATE INDEX ix_feed_checks_tenant_kind ON feed_checks(tenant_id, kind, checked_at);",
             "ALTER TABLE shared_app_verifications ADD COLUMN developer_check_id INTEGER NULL REFERENCES feed_checks(id);",
         ],
-        // 15: tenant purge (#105, #81). Additive: no existing row changes. (Its first statement is the hosted track's H1 since #196.)
+        // 15: tenant purge. Additive: no existing row changes. (Its first statement is the hosted track's H1.)
         // tenant_purges: one row per purged tenant id, kept forever (no personal fields): makes a second purge a no-op and stops the id
         // being used again (no insert, no rename to it). A row can be added only once the tenant row is gone and only once per id (so
         // INSERT OR REPLACE cannot swap it), never deleted, and changed only by clearing 'purging'.
@@ -563,13 +562,13 @@ public sealed class SqliteDatabase : IRelationalDatabase, ISchemaMigrator
                 BEGIN SELECT RAISE(IGNORE); END;
             """,
         ],
-        // 16: feed names on a check (#119 item 6). Additive and nullable: every existing row reads NULL (no names known, so the pages
+        // 16: feed names on a check. Additive and nullable: every existing row reads NULL (no names known, so the pages
         // show the feed URL as before). A wizard settings check writes the names the Admin typed (organisation, project or none, feed) as
         // JSON; nothing else reads or writes it. Never personal data or a token.
         [
             "ALTER TABLE feed_checks ADD COLUMN feed_names TEXT NULL;",
         ],
-        // 17: the per-version decision record (#123). Additive: a new, empty table; no existing row changes. One row per tenant, ecosystem,
+        // 17: the per-version decision record. Additive: a new, empty table; no existing row changes. One row per tenant, ecosystem,
         // package, version, decision and reason, so it grows with distinct versions, not with requests. It holds no token, person, name
         // or address. Written in batches by RecordingPackageGate's background writer; rows not seen for DecisionRecordPolicy.RetentionDays
         // are pruned daily (ix_decision_records_seen serves that delete across all tenants); a tenant purge deletes them. No foreign
@@ -592,7 +591,7 @@ public sealed class SqliteDatabase : IRelationalDatabase, ISchemaMigrator
                 BEGIN SELECT RAISE(IGNORE); END;
             """,
         ],
-        // 18: admin_actions is kept for 12 months (#117, decision 2026-10-19). No row changes. The no-delete trigger is recreated
+        // 18: admin_actions is kept for 12 months (decision 2026-10-19). No row changes. The no-delete trigger is recreated
         // so it allows deleting a row only once it is more than 365 days old by the database's own clock: no code path (a prune with a
         // clock running ahead, a purge bug) can delete a younger one. A time that cannot be read is never old enough. UPDATE stays refused.
         [
@@ -603,7 +602,7 @@ public sealed class SqliteDatabase : IRelationalDatabase, ISchemaMigrator
                 BEGIN SELECT RAISE(ABORT, 'admin_actions is append-only: a row is deleted only once it is more than 365 days old'); END;
             """,
         ],
-        // 19: audit_events is kept for 90 days (#136; AuditPolicy.RetentionDays, which this floor must never exceed: a test checks).
+        // 19: audit_events is kept for 90 days (AuditPolicy.RetentionDays, which this floor must never exceed: a test checks).
         // No row changes. The no-delete trigger is recreated so it allows a delete while the tenant's purge is running (migration 15's
         // condition, unchanged) or once a row is more than 90 days old by the database's own clock. A time that cannot be read is never
         // old enough, and neither is one not written as a date and time (SQLite reads a bare number such as '12' as a Julian day, which
@@ -620,36 +619,65 @@ public sealed class SqliteDatabase : IRelationalDatabase, ISchemaMigrator
             """,
             "CREATE INDEX ix_audit_time ON audit_events(time);",
         ],
-        // 20: who made a waiver, and who revoked it (#157 self-service waivers). Additive: every existing waiver was made by the operator
+        // 20: who made a waiver, and who revoked it (self-service waivers). Additive: every existing waiver was made by the operator
         // (the CLI or the admin site), so it reads 'operator'; revoked_by is NULL for every existing row, revoked or not (unknown). The
         // customer site writes 'customer' rows, capped per tenant in the insert's transaction (SqliteTenantStore.AddCustomerWaiverAsync).
         // revoked_by holds a person's display name and object id, or the operator's name: personal data, deleted with the tenant's waivers
         // on purge. Applied in one transaction, as every migration is. The column with a CHECK was added LAST because, when this migration was
         // one command, Microsoft.Data.Sqlite did not report an error from a statement after an ADD COLUMN with a CHECK; each statement now
-        // runs as its own command (#162), so order no longer hides an error.
+        // runs as its own command, so order no longer hides an error.
         [
             "ALTER TABLE waivers ADD COLUMN revoked_by TEXT NULL;",
             "ALTER TABLE waivers ADD COLUMN source TEXT NOT NULL DEFAULT 'operator' CHECK(source IN ('operator','customer'));",
         ],
-        // 21: empty since #196 (its statement is the hosted track's H1).
+        // 21: empty here (its statement is the hosted track's H1).
         [
         ],
-        // 22: who sets up a tenant's feed (#207). Additive: every existing row is 'operator' (the default), so nothing changes for any
+        // 22: who sets up a tenant's feed. Additive: every existing row is 'operator' (the default), so nothing changes for any
         // tenant. 'customer' lets an operator-made tenant's own Admins connect their feed with the Azure setup wizard, as a self-made
         // tenant's do (FeedSetupRules.CustomerSetsUpFeed); any operator write of the upstream or identity sets it back to 'operator'.
         [
             "ALTER TABLE tenants ADD COLUMN feed_setup TEXT NOT NULL DEFAULT 'operator' CHECK(feed_setup IN ('operator','customer'));",
         ],
-        // 23: state shared by every copy of the server (#232 M1). Additive: two new, empty tables; no existing row changes. Neither holds
+        // 23: state shared by every copy of the server. Additive: two new, empty tables; no existing row changes. Neither holds
         // tenant data. Every key column is NOT NULL as well (SQLite would otherwise allow a NULL key; Postgres never does).
-        // job_leases: one row per scheduled job, "holder runs job until expires_at" (SqliteJobLease, #232 M2); holder is a random id per
+        // job_leases: one row per scheduled job, "holder runs job until expires_at" (SqliteJobLease); holder is a random id per
         // process, expires_at UTC "O" text. cookie_keys: the cookie protection keys, for a server that keeps them in the database instead
-        // of the admin-keys folder (#232 B1, SqliteCookieKeyStore, with PACKMOAT_COOKIE_KEYS=database only): id a GUID made by the store, friendly_name the name the key
+        // of the admin-keys folder (SqliteCookieKeyStore, with PACKMOAT_COOKIE_KEYS=database only): id a GUID made by the store, friendly_name the name the key
         // ring gives (it repeats, for revocations, so it is not the key), created UTC "O" text, xml_encrypted the key's XML as
         // AesGcmSecretProtector bytes under the master key.
         [
             "CREATE TABLE job_leases(job TEXT NOT NULL PRIMARY KEY, holder TEXT NOT NULL, expires_at TEXT NOT NULL);",
             "CREATE TABLE cookie_keys(id TEXT NOT NULL PRIMARY KEY, friendly_name TEXT NOT NULL, created TEXT NOT NULL, xml_encrypted BLOB NOT NULL);",
+        ],
+        // 24: the shared rate counter (SqliteRateCounter). Additive: one new, empty table and its index; no existing row changes.
+        // One row per (scope, subject): scope names the limit ("token-issue", "admin-write", ...), subject is the hex SHA-256 of the key
+        // (a person's directory and object id, an admin's address or a tenant id: pseudonymous, an unsalted SHA-256), started_at and ends_at UTC
+        // "O" text, hits the attempts counted in the window (capped one above the limit). The index serves the retention pass's prune of
+        // ended windows. Short-lived: deleted within one window plus about a day (the next daily retention pass).
+        [
+            "CREATE TABLE rate_counters(scope TEXT NOT NULL, subject TEXT NOT NULL, started_at TEXT NOT NULL, ends_at TEXT NOT NULL, hits INTEGER NOT NULL CHECK(hits >= 1), PRIMARY KEY(scope, subject));",
+            "CREATE INDEX ix_rate_counters_ends_at ON rate_counters(ends_at);",
+        ],
+        // 25: the form nonces (SqliteFormNonceStore). Additive: one new, empty table and its two indexes; no existing row changes.
+        // One row per (scope, nonce_hash): scope names the site ("admin", "app"), nonce_hash is the hex SHA-256 of the single-use nonce
+        // (never the nonce), subject the hex SHA-256 of the key it was issued for (a tenant id, or a person's directory and object id:
+        // pseudonymous, an unsalted SHA-256), expires_at UTC "O" text. The first index serves an issue's trim of the key's oldest, the
+        // second the retention pass's prune of expired nonces. Short-lived: deleted when used, or within its life plus about a day.
+        [
+            "CREATE TABLE form_nonces(scope TEXT NOT NULL, nonce_hash TEXT NOT NULL, subject TEXT NOT NULL, expires_at TEXT NOT NULL, PRIMARY KEY(scope, nonce_hash));",
+            "CREATE INDEX ix_form_nonces_subject ON form_nonces(scope, subject, expires_at);",
+            "CREATE INDEX ix_form_nonces_expires_at ON form_nonces(expires_at);",
+        ],
+        // 26: the feed setup scratch (SqliteFeedSetupScratch). Additive: one new, empty table and its index; no existing row changes.
+        // One row per (tenant_id, person_oid, kind): what the setup wizard keeps for one person of one tenant between two pages (kind
+        // 'settings': their last check, with the named administrators to confirm; 'developer': their last developer proof; 'draft': the
+        // names typed in step 1), payload the wizard's JSON, expires_at UTC "O" text (30 minutes after it was kept). It may hold personal
+        // data (administrators' names), so the tenant purge deletes a tenant's rows; the index serves the retention pass's prune of
+        // expired rows.
+        [
+            "CREATE TABLE feed_setup_scratch(tenant_id TEXT NOT NULL, person_oid TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL, expires_at TEXT NOT NULL, PRIMARY KEY(tenant_id, person_oid, kind));",
+            "CREATE INDEX ix_feed_setup_scratch_expires_at ON feed_setup_scratch(expires_at);",
         ],
     ];
 }

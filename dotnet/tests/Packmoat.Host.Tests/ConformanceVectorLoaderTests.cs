@@ -5,7 +5,7 @@ using static Packmoat.Host.Tests.ConformanceVectors;
 
 namespace Packmoat.Host.Tests;
 
-/// <summary>The vector loader refuses a file that breaks the format, so a broken vector can never pass by not running (#209).</summary>
+/// <summary>The vector loader refuses a file that breaks the format, so a broken vector can never pass by not running.</summary>
 public class ConformanceVectorLoaderTests
 {
     private const string Good = """
@@ -58,7 +58,7 @@ public class ConformanceVectorLoaderTests
         Assert.Contains("tenant", Refused(TokenCheck, With(GoodToken, c => c["input"]!["tokens"]![0]!.AsObject().Remove("tenant"))));
     }
 
-    /// <summary>The review's probes (#219): each used to load and pass vacuously.</summary>
+    /// <summary>The review's probes: each used to load and pass vacuously.</summary>
     [Fact]
     public void A_misspelled_field_anywhere_is_refused_rather_than_ignored()
     {
@@ -169,7 +169,7 @@ public class ConformanceVectorLoaderTests
     {
         var spec = SpecRoot();
         // The core folder's own name is not checked: it is core/ here, but the public repository's checkout is named after the repository
-        // (#197 E). What matters is that spec/ sits beside dotnet/.
+        // What matters is that spec/ sits beside dotnet/.
         Assert.Equal("spec", Path.GetFileName(spec));
         Assert.True(File.Exists(Path.Combine(spec, "..", "dotnet", "Packmoat.sln")), "the spec sits beside dotnet/");
         var schemas = Directory.GetFiles(SchemaRoot(), "*.json", SearchOption.AllDirectories)

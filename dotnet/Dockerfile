@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1
-# The core image (#197): the core server and command line, no hosted modules. Build it from the repository's root:
+# The core image: the core server and command line, no hosted modules. Build it from the repository's root:
 #   docker build -t packmoat-core:local dotnet
 # Base images are pinned by digest (the tag is kept for people). To take updates, replace each digest with the current one for its tag.
-# Both digests are multi-arch lists (linux/amd64 and linux/arm64), so one Dockerfile builds either (#233 E2):
+# Both digests are multi-arch lists (linux/amd64 and linux/arm64), so one Dockerfile builds either:
 #   docker buildx build --platform linux/arm64 -t packmoat-core:arm64 --load dotnet
 # The build stage runs on the machine's own platform and publishes for the target's, so no .NET build runs under emulation.
 # Running it: docs/deploy/README.md.
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0@sha256:e70cdb7f80b0348f5cb85f19a8f670fca061f033d57eed12fa003d58b0e06317 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0@sha256:212fe4cb74627d5adf9817a4088906ae3edff1bd853bb27565d4b46731efe61e AS build
 WORKDIR /src
 COPY global.json Directory.Build.props ./
 COPY src/ src/
@@ -16,9 +16,15 @@ ARG PACKMOAT_COMMIT=unknown
 ARG TARGETARCH
 RUN dotnet publish src/Packmoat.Server/Packmoat.Server.csproj -c Release -a "$TARGETARCH" -o /out/host  -p:SourceRevisionId="${PACKMOAT_COMMIT}" \
  && dotnet publish src/Packmoat.Cli/Packmoat.Cli.csproj       -c Release -a "$TARGETARCH" -o /out/admin -p:SourceRevisionId="${PACKMOAT_COMMIT}"
+# PostgreSQL is selectable (PACKMOAT_DB_ENGINE=postgres), so the image must carry it: the build fails unless both published
+# entry points hold Npgsql and the PostgreSQL adapter (an image that cannot select PostgreSQL would instead fail the build if either held them). The first
+# two tests keep it from passing on an empty folder. CoreImageTests pins this check and its place, after the publish and before the runtime stage.
+RUN test -f /out/host/Packmoat.Server.dll && test -f /out/admin/Packmoat.Cli.dll \
+ && for d in /out/host /out/admin; do for f in Npgsql.dll Packmoat.Infrastructure.Postgres.dll; do \
+      test -f "$d/$f" || { echo "error: the image would not carry PostgreSQL: $d/$f is missing" >&2; exit 1; }; done; done
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0@sha256:222759b391a1aaf241166672c8f99b2d4ada452e7b5319f3c6e8f265a37b5ad4 AS runtime
-# Unprivileged user. /data is the only writable path and holds the SQLite database and backups.
+FROM mcr.microsoft.com/dotnet/aspnet:10.0@sha256:1a48394b6f29d3a32c79d9edecd4abda0ecbe8776d567dbfc4590ed6979c740c AS runtime
+# Unprivileged user. /data is the only writable path and holds the SQLite database and backups (a PostgreSQL database is elsewhere).
 RUN groupadd --gid 10001 packmoat && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin packmoat \
  && mkdir -p /data/backups && chown -R packmoat:packmoat /data
 COPY --from=build /out/host  /app/host

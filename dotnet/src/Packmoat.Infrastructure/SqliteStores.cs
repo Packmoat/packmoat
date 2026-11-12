@@ -5,7 +5,7 @@ using Packmoat.Infrastructure.Lifecycle;
 namespace Packmoat.Infrastructure;
 
 /// <summary>
-/// The SQLite adapters, and how each is built, in one list (#278 step 0, A3): the server (through <c>AddSqliteStores</c>), the command
+/// The SQLite adapters, and how each is built, in one list: the server (through <c>AddSqliteStores</c>), the command
 /// line and the hosted modules all take theirs from here, so no composition root builds one its own way. The stateless stores are made
 /// once, with the database, and every read gives the same one. The rest need what a composition root has only later (the clock, the
 /// tenant lifecycle, the serving gate), so each is a method that makes a new one: a composition root calls it once and shares the result.
@@ -37,10 +37,10 @@ public sealed class SqliteStores
     /// <summary>The database every store here is over.</summary>
     public SqliteDatabase Database { get; }
 
-    /// <summary>The schema's migrations and the readiness check's read of them (#278 step 0, A4): the database itself.</summary>
+    /// <summary>The schema's migrations and the readiness check's read of them: the database itself.</summary>
     public ISchemaMigrator Migrator => Database;
 
-    /// <summary>The master-key check (#278 step 0, A4): the start's, which records the marker, and the readiness check's read-only one.</summary>
+    /// <summary>The master-key check: the start's, which records the marker, and the readiness check's read-only one.</summary>
     public SqliteMasterKeyCheck MasterKeyCheck { get; }
 
     /// <summary>The audit store: the downloads (written in batches by the server's queue) and their retention and reads.</summary>
@@ -73,8 +73,17 @@ public sealed class SqliteStores
 
     public SqliteTokenActivity TokenActivity(IClock clock) => new(Database, clock);
 
-    /// <summary>The scheduled jobs' lease (#232 M2), timed by <paramref name="clock"/>.</summary>
+    /// <summary>The scheduled jobs' lease, timed by <paramref name="clock"/>.</summary>
     public SqliteJobLease JobLease(IClock clock) => new(Database, clock);
+
+    /// <summary>The shared rate counter, timed by <paramref name="clock"/>.</summary>
+    public SqliteRateCounter RateCounter(IClock clock) => new(Database, clock);
+
+    /// <summary>The form nonces, timed by <paramref name="clock"/>.</summary>
+    public SqliteFormNonceStore FormNonces(IClock clock) => new(Database, clock);
+
+    /// <summary>The feed setup scratch, timed by <paramref name="clock"/>.</summary>
+    public SqliteFeedSetupScratch FeedSetupScratch(IClock clock) => new(Database, clock);
 
     public SqliteSharedAppCredentialStore SharedAppCredentials(IClock clock) => new(Database, clock, _protector);
 

@@ -25,7 +25,7 @@ internal sealed class FakeDeveloperProbe : IDeveloperFeedProbe
 }
 
 /// <summary>
-/// #64 I2 in Application: the developer step-up rule (through <see cref="CustomerSignIn.Decide"/>), the probe verdict shared with the CLI,
+/// The developer step-up rule (through <see cref="CustomerSignIn.Decide"/>), the probe verdict shared with the CLI,
 /// the bypass advisory, the private verdict, the GUID index URLs, and the developer proof's commands (who, when, what is recorded).
 /// </summary>
 public class DeveloperProofTests
@@ -283,13 +283,13 @@ public class DeveloperProofTests
 
         public World(string flag = "on", TenantOrigin origin = TenantOrigin.Self, bool settings = true, TimeSpan? deadline = null, bool probe = true)
         {
-            State = new AzureSetupState(Clock);
+            State = SetupStates.New(Clock);
             Tenants.Tenants.Add(new Tenant("selfco", "Selfco", "", "", "", new TenantPolicy(14)));
             Directories.Rows[Dir] = new DirectoryBinding(Dir, "selfco", Clock.UtcNow, "self-signup");
             Tenants.Setups["selfco"] = new TenantSetup(origin, FeedSetup.Operator);
             Shared.Slots[SharedAppSlot.Active] = new SharedAppCredential(Client, "PEM");
             if (settings) Checks.Rows.Add(SettingsRow());
-            Commands = new AzureSetupCommands(Tenants, Directories, Shared, Checks, Check, State, AzureSetupSettings.Parse(flag), Clock, deadline,
+            Commands = new AzureSetupCommands(Tenants, Directories, Shared, Checks, Check, State, AzureSetupSettings.Parse(flag), Clock, new InProcessRateCounter(Clock), deadline,
                 developerProbe: probe ? Probe : null, autoJoin: AutoJoin);
         }
 
@@ -320,8 +320,8 @@ public class DeveloperProofTests
         Assert.Equal(("selfco", Dir, Grace.ToString("D"), "Grace Hopper", Dir, Feed, Client), (row.TenantId, row.CheckedByTid, row.CheckedByOid, row.CheckedByName, row.AzureTenantId, row.FeedIndexUrl, row.ClientId));
         Assert.Equal(new[] { "developer", "bypass" }, row.Results.Select(r => r.Id));
         Assert.Empty(row.ConfirmedAdmins);
-        Assert.Same(held, w.State.Get("selfco", Grace, FeedCheckKind.Developer));
-        Assert.Null(w.State.Get("selfco", Grace));   // held apart from any settings check
+        SetupStates.SameCheck(held, await w.State.GetAsync("selfco", Grace, FeedCheckKind.Developer));
+        Assert.Null(await w.State.GetAsync("selfco", Grace));   // held apart from any settings check
         // and it is the row Connect needs, with the Admin's settings row
         Assert.Null(ConnectRules.Check(w.Checks.Rows[0], row, w.Clock.UtcNow));
     }
@@ -395,11 +395,14 @@ public class DeveloperProofTests
         var w = new World();
         for (var i = 0; i < AzureSetupRules.MaxChecksPerWindow; i++) await w.Commands.StartDeveloperAsync(w.Developer, default);
         Assert.Equal(AzureSetupRefusal.TooManyRequests, await Refusal(() => w.Commands.StartDeveloperAsync(w.Developer, default)));
-        Assert.True(w.State.TryBegin("selfco"));   // an Admin's check is running
+        var admins = await w.State.TryBeginAsync("selfco");   // an Admin's check is running
+        Assert.NotNull(admins);
         Assert.Equal(AzureSetupRefusal.CheckRunning, await Refusal(() => w.Commands.RunDeveloperAsync(w.Developer, Token, default)));
-        w.State.End("selfco");
+        await w.State.EndAsync("selfco", admins!);
+        w.Clock.UtcNow += TimeSpan.FromTicks(1);   // a released lease is free once time has moved past its end
         await w.Commands.RunDeveloperAsync(w.Developer, Token, default);
-        Assert.True(w.State.TryBegin("selfco"));   // freed afterwards
+        w.Clock.UtcNow += TimeSpan.FromTicks(1);
+        Assert.NotNull(await w.State.TryBeginAsync("selfco"));   // freed afterwards
     }
 
     [Fact]
@@ -428,6 +431,7 @@ public class DeveloperProofTests
         w.Probe.Run = w.Probe.Run with { Results = new[] { new CheckResult("developer", "d", CheckStatus.Fail, "200") }, Finding = DeveloperFinding.CanRead };
         await w.Commands.RunDeveloperAsync(w.Developer, Token, default);
         Assert.True(await w.Commands.ShowDeveloperCardAsync(w.Developer, default));   // a failed proof: still needed
+        w.Clock.UtcNow += TimeSpan.FromSeconds(1);   // the next proof, a moment later: the first one's lease is over
         w.Probe.Run = new FakeDeveloperProbe().Run;
         await w.Commands.RunDeveloperAsync(w.Developer, Token, default);
         Assert.False(await w.Commands.ShowDeveloperCardAsync(w.Developer, default));

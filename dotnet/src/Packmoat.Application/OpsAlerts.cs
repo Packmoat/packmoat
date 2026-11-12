@@ -30,7 +30,7 @@ public sealed record TenantRef
 }
 
 /// <summary>
-/// Something the operator should hear about at once (#194: an open set). Every alert says itself in one line (<see cref="Text"/>); no
+/// Something the operator should hear about at once (an open set). Every alert says itself in one line (<see cref="Text"/>); no
 /// alert has a field that could hold a person's name, an email, a directory id, an organisation name or a card. Tenants are named by
 /// <see cref="TenantRef"/> only. The core raises <see cref="PurgeDue"/> and <see cref="WaiverCapReached"/>; a module may add its own
 /// alerts as further subtypes. A test checks the property types of every subtype.
@@ -42,7 +42,7 @@ public abstract record OpsAlert
     /// <summary>The alert's one line for the operator, without the sandbox prefix (<see cref="OpsAlertText.Format"/> adds it).</summary>
     public abstract string Text { get; }
 
-    /// <summary>The daily retention pass found tenants due for purge (#105). A count only: never a tenant, a name or a date.</summary>
+    /// <summary>The daily retention pass found tenants due for purge. A count only: never a tenant, a name or a date.</summary>
     public sealed record PurgeDue(int Count) : OpsAlert
     {
         public override string Text =>
@@ -50,7 +50,7 @@ public abstract record OpsAlert
     }
 
     /// <summary>
-    /// A tenant's Admins just made its <paramref name="Cap"/>th active customer waiver (#157): raised by the insert that reaches the cap exactly,
+    /// A tenant's Admins just made its <paramref name="Cap"/>th active customer waiver: raised by the insert that reaches the cap exactly,
     /// not by later refusals. A tenant reference and a count only: never a package, a reason or a name.
     /// </summary>
     public sealed record WaiverCapReached(TenantRef Tenant, int Cap) : OpsAlert

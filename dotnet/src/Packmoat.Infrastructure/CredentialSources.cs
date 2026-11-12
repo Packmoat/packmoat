@@ -44,7 +44,7 @@ public static class AppSignInChooser
 /// <summary>
 /// The real thing: an Entra token for the tenant's service principal (own app or shared app), sent as the Basic password.
 /// <para>
-/// Two lifetimes, kept apart (#170). What is stored (the binding, the active shared credential and the passing onboarding check) is read
+/// Two lifetimes, kept apart. What is stored (the binding, the active shared credential and the passing onboarding check) is read
 /// again every <see cref="RecheckInterval"/>, so a withdrawn or deleted verification stops serving within 5 s. The Entra credential
 /// itself lives as long as the sign-in it was built for is unchanged, so its own token cache survives every re-check.
 /// </para>

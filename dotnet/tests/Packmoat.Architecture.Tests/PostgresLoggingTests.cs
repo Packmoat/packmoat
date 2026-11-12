@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// Npgsql logs nothing of ours (#288): it logs only through a logger factory it is given, and parameter values only when told to. No code
+/// Npgsql logs nothing of ours: it logs only through a logger factory it is given, and parameter values only when told to. No code
 /// in the core's src/ gives it one or tells it to, so a password, a token hash or a row's values cannot reach a log through it. The options
 /// a connection string could turn on instead are refused by PostgresConnectionString.Parse (its tests are in Packmoat.Infrastructure.Tests).
 /// </summary>

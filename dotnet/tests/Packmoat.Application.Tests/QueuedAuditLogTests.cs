@@ -4,7 +4,7 @@ using Packmoat.Domain;
 namespace Packmoat.Application.Tests;
 
 /// <summary>
-/// #136: the audit log is off the request path. An append queues and returns; one background writer stores batches. A full queue or a
+/// The audit log is off the request path. An append queues and returns; one background writer stores batches. A full queue or a
 /// failed write loses audit rows (counted, logged without any token, package or version), never a request. Each test that kills one of
 /// the plan's mutations says which.
 /// </summary>

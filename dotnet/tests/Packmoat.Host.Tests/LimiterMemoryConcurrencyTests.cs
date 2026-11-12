@@ -18,7 +18,7 @@ internal static class LimiterKeys
     public static ClientKey Key(string address) => IPAddress.TryParse(address, out var ip) ? ClientKey.Of(ip) : new ClientKey(address, address);
 }
 
-/// <summary>#127: limiter keys are /64 for IPv6, memory is bounded, and parallel guesses cannot overshoot the backstop.</summary>
+/// <summary>Limiter keys are /64 for IPv6, memory is bounded, and parallel guesses cannot overshoot the backstop.</summary>
 public class ClientAddressTests
 {
     [Theory]
@@ -45,7 +45,7 @@ public class ClientAddressTests
         Assert.NotEqual(ClientAddress.Key(IPAddress.Parse("::ffff:203.0.113.7")), ClientAddress.Key(IPAddress.Parse("::ffff:198.51.100.9")));
     }
 
-    // #153: the network an address falls back to when the guess limiter's address map is full.
+    // The network an address falls back to when the guess limiter's address map is full.
     [Theory]
     [InlineData("203.0.113.7", "203.0.113.0/24")]
     [InlineData("203.0.113.255", "203.0.113.0/24")]
@@ -63,7 +63,7 @@ public class ClientAddressTests
         Assert.Equal(new ClientKey("2001:db8:1:2::/64", "2001:db8:1::/48"), ClientKey.Of(IPAddress.Parse("2001:db8:1:2::5")));
 }
 
-/// <summary>#153: once the address map is full, new addresses are held to the same rules by their /48 or /24.</summary>
+/// <summary>Once the address map is full, new addresses are held to the same rules by their /48 or /24.</summary>
 public class TokenGuessLimiterNetworkOverflowTests
 {
     private readonly FakeClock _clock = new();

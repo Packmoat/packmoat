@@ -32,7 +32,7 @@ public class CustomerTokenPagesTests
         var f = await AdminSiteFixture.StartAsync(o =>
         {
             o.AppHost = AppHost;
-            o.AllowedHosts = FeedHost;   // the feed address on the token pages is the proxy's own (#186)
+            o.AllowedHosts = FeedHost;   // the feed address on the token pages is the proxy's own
             o.AppClientId = CustomerSiteTests.AppClient;
             o.AppRemoteSchemeOverride = auth => auth.AddScheme<AuthenticationSchemeOptions, FakeAppEntraHandler>(AppSite.RemoteScheme, null);
         }, services: services);
@@ -97,7 +97,7 @@ public class CustomerTokenPagesTests
     }
 
     /// <summary>
-    /// For a tenant that would refuse the issue (#200): the page answers 200 with the refusal in the create form's place, and a POST made
+    /// For a tenant that would refuse the issue: the page answers 200 with the refusal in the create form's place, and a POST made
     /// anyway (<see cref="HiddenTokenForm"/>) is still refused by the POST's own check. Returns the page, then the POST's answer.
     /// </summary>
     private static async Task<(string Page, HttpResponseMessage Response, string Body, string? Token)> CreateMineAnyway(AdminSiteFixture f, AdminBrowser b,
@@ -107,7 +107,7 @@ public class CustomerTokenPagesTests
         Assert.Equal(200, status);
         Assert.True(HiddenTokenForm.IsBlocked(page), "the create form is hidden");
         Assert.Null(Nonce(page));
-        var r = await PostWith(b, page, "/tokens/create", ("nonce", HiddenTokenForm.StoreNonce(f.App.Services, tid, oid)), ("label", label));
+        var r = await PostWith(b, page, "/tokens/create", ("nonce", await HiddenTokenForm.StoreNonceAsync(f.App.Services, tid, oid)), ("label", label));
         var body = await r.Content.ReadAsStringAsync();
         return (page, r, body, TokenValue.Match(body) is { Success: true } m ? m.Value : null);
     }
@@ -425,14 +425,16 @@ public class CustomerTokenPagesTests
         var app = f.App.Services.GetRequiredService<AppFormNonces>();
         var admin = f.App.Services.GetRequiredService<Packmoat.Host.Admin.AdminFormNonces>();
         Assert.NotSame((object)app, admin);
-        var operatorNonce = admin.Issue("acme");
-        for (var i = 0; i < FormNonces.Max + 500; i++) app.Issue("someone/" + (i % 3));   // customers opening forms over and over
-        Assert.True(admin.Consume(operatorNonce, "acme"));
+        Assert.Equal((Packmoat.Application.FormNonceScopes.App, Packmoat.Application.FormNonceScopes.Admin), (app.Scope, admin.Scope));
+        var operatorNonce = await admin.IssueAsync("acme", default);
+        for (var i = 0; i < 3 * FormNonces.MaxPerKey + 10; i++) await app.IssueAsync("someone/" + (i % 3), default);   // customers opening forms over and over
+        Assert.False(await app.ConsumeAsync(operatorNonce, "acme", default));   // the admin site's nonce is not the customer site's to use
+        Assert.True(await admin.ConsumeAsync(operatorNonce, "acme", default));
 
-        // within one store, a key that opens forms again and again only replaces its own oldest nonces
-        var other = app.Issue("quiet/person");
-        for (var i = 0; i < 5000; i++) app.Issue("busy/person");
-        Assert.True(app.Consume(other, "quiet/person"));
+        // within one site, a key that opens forms again and again only replaces its own oldest nonces
+        var other = await app.IssueAsync("quiet/person", default);
+        for (var i = 0; i < 2 * FormNonces.MaxPerKey + 5; i++) await app.IssueAsync("busy/person", default);
+        Assert.True(await app.ConsumeAsync(other, "quiet/person", default));
     }
 
     // ---- refusals, limits, escaping
@@ -444,7 +446,7 @@ public class CustomerTokenPagesTests
         await f.Tenants.BindSharedIdentityAsync("acme", DirA, default);
         var b = await Developer(f);
         var (page, r, body, token) = await CreateMineAnyway(f, b, DirA, Ada, "laptop");
-        Assert.Contains("<p><strong>Not ready yet</strong></p>", page);   // the page says why, in the refusal's own words (#200)
+        Assert.Contains("<p><strong>Not ready yet</strong></p>", page);   // the page says why, in the refusal's own words
         Assert.Contains("hasn&#x27;t finished checking the connection", page);
         Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
         Assert.Contains("Not ready yet", body);
@@ -471,7 +473,7 @@ public class CustomerTokenPagesTests
         Assert.DoesNotContain(await f.Actions.LatestAsync(50, default), a => a.Action.StartsWith("token.issue", StringComparison.Ordinal));
     }
 
-    [Fact]   // #200 mutations: drop the pages' check (the forms show); check only ServingRefused (the forms show); remove the POST guard (a token is issued)
+    [Fact]   // mutations: drop the pages' check (the forms show); check only ServingRefused (the forms show); remove the POST guard (a token is issued)
     public async Task A_not_set_up_tenants_token_pages_show_why_in_place_of_the_create_forms_and_still_list_tokens_to_revoke()
     {
         await using var f = await StartAsync(setUp: false);
@@ -498,13 +500,13 @@ public class CustomerTokenPagesTests
         Assert.Contains(Words, team);
         Assert.Contains("old ci", team);
         Assert.Contains("/team/revoke?token=", team);
-        var auto = await PostWith(grace, team, "/team/create", ("nonce", HiddenTokenForm.StoreNonce(f.App.Services, DirA, Grace)), ("label", "ci"), ("days", "30"));
+        var auto = await PostWith(grace, team, "/team/create", ("nonce", await HiddenTokenForm.StoreNonceAsync(f.App.Services, DirA, Grace)), ("label", "ci"), ("days", "30"));
         Assert.Equal(HttpStatusCode.Conflict, auto.StatusCode);
         Assert.DoesNotMatch(TokenValue, await auto.Content.ReadAsStringAsync());
         Assert.Equal(2, (await f.Tokens.ListAsync("acme", default)).Count);
     }
 
-    [Fact]   // #200 mutation: show the blocker on /team whatever the sign-in's age (drop `fresh &&`)
+    [Fact]   // mutation: show the blocker on /team whatever the sign-in's age (drop `fresh &&`)
     public async Task A_stale_admin_on_a_blocked_tenant_gets_the_sign_in_again_form_on_team_not_the_refusal()
     {
         await using var f = await StartAsync(setUp: false);
@@ -543,7 +545,7 @@ public class CustomerTokenPagesTests
             : null;
     }
 
-    [Fact]   // #200 mutation: drop E() from the title, the message or the next step in Blocked()
+    [Fact]   // mutation: drop E() from the title, the message or the next step in Blocked()
     public async Task The_refusal_in_place_of_the_create_form_encodes_every_field()
     {
         await using var f = await StartAsync(s =>

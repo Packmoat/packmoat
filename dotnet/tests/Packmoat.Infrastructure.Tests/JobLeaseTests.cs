@@ -1,8 +1,20 @@
 using Packmoat.Application;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
-/// <summary><see cref="JobLeaseContract"/> on SQLite, and migration 23 (#232 M1), which only SQLite has.</summary>
+/// <summary>
+/// <see cref="JobLeaseContract"/> on PostgreSQL, each test on a database of its own. Its race test is the lease's two-writer
+/// race: the one statement's ON CONFLICT lets exactly one of eight holders win.
+/// </summary>
+[Collection(PostgresCollection.Name)]
+[Trait("Category", PostgresTestServer.Category)]
+public class PostgresJobLeaseTests : JobLeaseContract
+{
+    protected override IStoreEngine Engine => PostgresStoreEngine.Instance;
+}
+
+/// <summary><see cref="JobLeaseContract"/> on SQLite, and migration 23, which only SQLite has.</summary>
 [Collection("sqlite-pools")]
 public class JobLeaseTests : JobLeaseContract
 {
@@ -17,7 +29,7 @@ public class JobLeaseTests : JobLeaseContract
         Assert.Equal(0L, await ScalarAsync(t, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('job_leases','cookie_keys')"));
 
         await t.Db.MigrateAsync(TestTracks.Modules);
-        Assert.Equal(23L, await ScalarAsync(t, "SELECT MAX(version) FROM schema_migrations"));
+        Assert.Equal(26L, await ScalarAsync(t, "SELECT MAX(version) FROM schema_migrations"));   // and 24 (the rate counter), 25 (the form nonces), 26 (the feed setup scratch)
         Assert.Equal(0L, await ScalarAsync(t, "SELECT COUNT(*) FROM job_leases"));
         Assert.Equal(0L, await ScalarAsync(t, "SELECT COUNT(*) FROM cookie_keys"));
         Assert.Equal(["job|TEXT|1|1", "holder|TEXT|1|0", "expires_at|TEXT|1|0"],

@@ -14,7 +14,7 @@ using Packmoat.Host.Web;
 namespace Packmoat.Host.Tests;
 
 /// <summary>
-/// #143: what the REAL OpenID Connect handler does with Microsoft's answer when someone declines a consent page. Each test starts a real
+/// What the REAL OpenID Connect handler does with Microsoft's answer when someone declines a consent page. Each test starts a real
 /// challenge (so the state and the correlation cookie are the handler's own), then sends the callback Microsoft would send, as a GET
 /// (response mode query: what the sites ask for) and as a form_post. Only Microsoft's error code picks the page: access_denied and
 /// consent_required are a decline; anything else, in any case, is a failed sign-in.

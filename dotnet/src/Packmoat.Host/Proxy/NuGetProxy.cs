@@ -29,7 +29,7 @@ public sealed class NuGetProxy
     }
 
     /// <summary>
-    /// Records a download (#136: downloads only; listings and metadata are in the decision record). In production the log is a
+    /// Records a download (downloads only; listings and metadata are in the decision record). In production the log is a
     /// <see cref="QueuedAuditLog"/>: this queues and returns, so the audit store can neither slow nor fail the download.
     /// </summary>
     private ValueTask AuditDownload(HttpContext ctx, Tenant tenant, string package, string version, Verdict verdict) =>
@@ -38,9 +38,9 @@ public sealed class NuGetProxy
 
     public static void Map(WebApplication app, Readiness readiness)
     {
-        // "ok <12-char commit>" or "ok unknown" (#166). The health checks only look at the status code, never at this body.
+        // "ok <12-char commit>" or "ok unknown". The health checks only look at the status code, never at this body.
         app.MapGet("/healthz", () => Results.Text("ok " + BuildInfo.Commit));
-        // "ready" or "not ready" (#233): the database, its migrations and the master key, read only. Unauthenticated, like /healthz.
+        // "ready" or "not ready": the database, its migrations and the master key, read only. Unauthenticated, like /healthz.
         Readiness.Map(app, readiness);
         // Authenticated liveness for the deploy health check: proves the token store answers and a token verifies. No upstream is contacted.
         app.MapGet("/v3/ping", () => Results.NoContent());

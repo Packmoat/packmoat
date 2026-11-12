@@ -1,17 +1,20 @@
 using System.Reflection;
+using Packmoat.Application;
 using Packmoat.Infrastructure.Postgres;
 
 namespace Packmoat.Infrastructure.Tests.Postgres;
 
 /// <summary>
-/// The PostgreSQL store engine's pending stores (#303 P3, PR 0), with no server: a store's adapter is only made, never used, so a handle
-/// over a database that is never connected to is enough. A store member throws if and only if it is on the pinned list.
+/// The PostgreSQL stores as a whole, with no server: a store's adapter is only made, never used, so a handle over a database that
+/// is never connected to is enough. P3 is closed: no store is pending any more, every engine member and every
+/// <see cref="PostgresStores"/> member builds its adapter, and every port <see cref="SqliteStores"/> gives, <see cref="PostgresStores"/>
+/// gives too, member for member.
 /// </summary>
 public class PostgresStoreEngineTests
 {
     /// <summary>
-    /// Each store member of <see cref="IStoreEngine"/> and the <see cref="PostgresStores"/> member it is built from. Pinned with the list:
-    /// a store added to the engine is added here too (<see cref="Every_store_member_of_the_engine_is_mapped"/>).
+    /// Each store member of <see cref="IStoreEngine"/> and the <see cref="PostgresStores"/> member it is built from. Pinned: a store added
+    /// to the engine is added here too (<see cref="Every_store_member_of_the_engine_is_mapped"/>).
     /// </summary>
     internal static readonly Dictionary<string, string> BuiltFrom = new(StringComparer.Ordinal)
     {
@@ -26,6 +29,9 @@ public class PostgresStoreEngineTests
         ["DecisionRecords"] = "Decisions",
         ["FeedChecks"] = "FeedChecks",
         ["JobLease"] = "JobLease",
+        ["RateCounter"] = "RateCounter",
+        ["FormNonces"] = "FormNonces",
+        ["FeedSetupScratch"] = "FeedSetupScratch",
         ["Members"] = "Members",
         ["Organisations"] = "Organisations",
         ["Purge"] = "PurgeStore",
@@ -33,6 +39,7 @@ public class PostgresStoreEngineTests
         ["SharedApp"] = "SharedAppCredentials",
         ["SignInDirectory"] = "SignInDirectory",
         ["Tenants"] = "Tenants",
+        ["TenantsWith"] = "Tenants",
         ["TokenActivity"] = "TokenActivity",
         ["Tokens"] = "TokenService",
     };
@@ -48,34 +55,23 @@ public class PostgresStoreEngineTests
     private static PostgresTestDb Unconnected() =>
         new(PostgresDatabase.Create(PostgresConnectionString.Parse("Host=127.0.0.1;Port=1;Database=packmoat;Username=packmoat;Password=x")));   // gitleaks:allow
 
-    /// <summary>What calling <paramref name="call"/> throws (unwrapped from reflection), or null when it returns.</summary>
-    private static Exception? Thrown(Func<object?> call)
+    /// <summary>What calling <paramref name="call"/> returns, unwrapped from reflection.</summary>
+    private static object? Called(Func<object?> call)
     {
         try
         {
-            call();
-            return null;
+            return call();
         }
         catch (TargetInvocationException e) when (e.InnerException is not null)
         {
-            return e.InnerException;
-        }
-        catch (Exception e)
-        {
-            return e;
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e.InnerException).Throw();
+            throw;
         }
     }
 
     private static object?[] Arguments(MethodInfo m, PostgresTestDb t) =>
         m.GetParameters().Select(p => p.ParameterType == typeof(IEngineDb) ? t : p.ParameterType == typeof(Lifecycle.TenantLifecycle) ? (object)TestDb.Lifecycle
             : throw new InvalidOperationException($"{m.Name} takes a {p.ParameterType.Name}: give the test one")).ToArray();
-
-    [Fact]
-    public void The_pending_list_is_in_ordinal_order_and_names_only_store_members()
-    {
-        Assert.Equal(PostgresStoreEngine.PendingStores.Distinct().Order(StringComparer.Ordinal), PostgresStoreEngine.PendingStores);
-        Assert.All(PostgresStoreEngine.PendingStores, n => Assert.Contains(n, EngineStoreMembers().Select(m => m.Name)));
-    }
 
     [Fact]
     public void Every_store_member_of_the_engine_is_mapped()
@@ -86,45 +82,33 @@ public class PostgresStoreEngineTests
         Assert.Equal(BuiltFrom.Values.Distinct().Order(StringComparer.Ordinal), storesMembers);
     }
 
-    // mutation (#303): a pending store's member stops throwing while it is still on the list, or one throws that is off it
+    // mutation: a store member throws again (the pending stores' NotSupportedException put back)
     [Fact]
-    public async Task A_store_member_of_the_engine_throws_if_and_only_if_it_is_pending()
+    public async Task Every_store_member_of_the_engine_builds_its_adapter()
     {
         await using var t = Unconnected();
         foreach (var m in EngineStoreMembers())
-        {
-            var thrown = Thrown(() => m.Invoke(PostgresStoreEngine.Instance, Arguments(m, t)));
-            if (PostgresStoreEngine.PendingStores.Contains(m.Name))
-            {
-                var pending = Assert.IsType<NotSupportedException>(thrown);
-                Assert.Contains("arrives in #303 P3, PR ", pending.Message, StringComparison.Ordinal);
-            }
-            else
-            {
-                Assert.True(thrown is null, $"{m.Name} is off the pending list but throws: {thrown}");
-            }
-        }
+            Assert.True(Called(() => m.Invoke(PostgresStoreEngine.Instance, Arguments(m, t))) is not null, $"{m.Name} built nothing");
     }
 
-    // mutation (#303): a PostgresStores member stops throwing while the engine member built from it is still pending
     [Fact]
-    public async Task A_postgres_stores_member_throws_if_and_only_if_an_engine_member_built_from_it_is_pending()
+    public async Task Every_postgres_stores_member_builds_its_adapter()
     {
         await using var t = Unconnected();
         var stores = new PostgresStores(t.Db, t.Protector);
         foreach (var name in BuiltFrom.Values.Distinct())
         {
             var member = typeof(PostgresStores).GetMember(name, BindingFlags.Public | BindingFlags.Instance).Single();
-            var thrown = Thrown(() => member switch
+            var built = Called(() => member switch
             {
                 PropertyInfo p => p.GetValue(stores),
                 MethodInfo m => m.Invoke(stores, m.GetParameters().Select(p => p.ParameterType == typeof(Lifecycle.TenantLifecycle) ? (object?)TestDb.Lifecycle
-                    : p.ParameterType == typeof(Domain.IClock) ? t.Clock : p.ParameterType == typeof(Application.IServingGate) ? Application.ServeAllGate.Instance : null).ToArray()),
+                    : p.ParameterType == typeof(Domain.IClock) ? t.Clock : p.ParameterType == typeof(IServingGate) ? ServeAllGate.Instance
+                    : p.ParameterType == typeof(PostgresTenantStore) ? stores.Tenants(t.Clock, TestDb.Lifecycle)   // the token service's
+                    : throw new InvalidOperationException($"{name} takes a {p.ParameterType.Name}: give the test one")).ToArray()),
                 _ => throw new InvalidOperationException(name),
             });
-            var pending = BuiltFrom.Where(b => b.Value == name).Any(b => PostgresStoreEngine.PendingStores.Contains(b.Key));
-            if (pending) Assert.IsType<NotSupportedException>(thrown);
-            else Assert.True(thrown is null, $"PostgresStores.{name} is built, but throws: {thrown}");
+            Assert.True(built is not null, $"PostgresStores.{name} built nothing");
         }
     }
 
@@ -134,8 +118,133 @@ public class PostgresStoreEngineTests
         await using var t = Unconnected();
         var stores = new PostgresStores(t.Db, t.Protector);
         Assert.Same(t.Db, stores.Database);
-        Assert.Same(t.Db, stores.Migrator);
+        Assert.IsType<PostgresServerSchema>(stores.Migrator);   // The server never migrates on PostgreSQL
         Assert.IsType<PostgresMasterKeyCheck>(stores.MasterKeyCheck);
         Assert.IsType<PostgresMasterKeyCheck>(PostgresStoreEngine.Instance.MasterKeyCheck(t, t.Protector));
+    }
+
+    [Fact]
+    public async Task The_purge_and_organisation_stores_are_built_from_the_lifecycle_as_sqlites_are()
+    {
+        await using var t = Unconnected();
+        var stores = new PostgresStores(t.Db, t.Protector);
+        Assert.Null(stores.PurgeStore(Lifecycle.TenantLifecycle.None).Eligibility);
+        var recheck = new NeverDue();
+        var contributor = new NoTables();
+        var purge = stores.PurgeStore(new Lifecycle.TenantLifecycle([], [contributor], () => recheck));
+        Assert.Same(recheck, purge.Eligibility);
+        Assert.Equal(Lifecycle.CorePurgeTables.Tables.Concat(contributor.Tables), purge.Classification);
+        Assert.IsType<PostgresOrganisationStore>(stores.Organisations(Lifecycle.TenantLifecycle.None));
+    }
+
+    private sealed class NeverDue : Lifecycle.IPurgeRecheck
+    {
+        public Task<IReadOnlyList<PurgeCandidate>> ListAsync(DateTimeOffset now, CancellationToken ct) => Task.FromResult<IReadOnlyList<PurgeCandidate>>([]);
+        public Task<PurgeCandidate?> AssessAsync(string tenantId, DateTimeOffset now, CancellationToken ct) => Task.FromResult<PurgeCandidate?>(null);
+        public Task ConfirmAsync(PurgeCandidate candidate, CancellationToken ct) => Task.CompletedTask;
+        public Task<bool> StillDueAsync(System.Data.Common.DbTransaction transaction, PurgeCandidate candidate, DateTimeOffset now, CancellationToken ct) => Task.FromResult(false);
+    }
+
+    private sealed class NoTables : Lifecycle.IPurgeContributor
+    {
+        public IReadOnlyList<Lifecycle.PurgeTable> Tables { get; } = [new("module_things", Lifecycle.PurgeTableFate.NoTenantData, "a module's")];
+        public IReadOnlyList<string> NotReached => [];
+        public Task<IReadOnlyList<PurgedTable>> DeleteAsync(System.Data.Common.DbTransaction transaction, string tenantId, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<PurgedTable>>([]);
+    }
+
+    // ---------------------------------------------------------------- parity with SqliteStores
+
+    /// <summary>A store list's public members: its properties and its ordinary methods, declared on it.</summary>
+    private static Dictionary<string, MemberInfo> Members(Type stores) =>
+        stores.GetMembers(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .Where(m => m is PropertyInfo || m is MethodInfo { IsSpecialName: false })
+            .ToDictionary(m => m.Name, StringComparer.Ordinal);
+
+    /// <summary>The ports a member's type gives: Packmoat's interfaces it is or implements.</summary>
+    private static IEnumerable<Type> Ports(Type type) =>
+        (type.IsInterface ? [type] : Array.Empty<Type>()).Concat(type.GetInterfaces())
+            .Where(i => i.Namespace?.StartsWith("Packmoat.", StringComparison.Ordinal) == true).Distinct();
+
+    /// <summary>A SQLite adapter's PostgreSQL twin by name (SqliteTenantStore: PostgresTenantStore); any other type as it is.</summary>
+    private static Type Twin(Type type) =>
+        type.Namespace == typeof(SqliteStores).Namespace && type.Name.StartsWith("Sqlite", StringComparison.Ordinal)
+            && typeof(PostgresStores).Assembly.GetType("Packmoat.Infrastructure.Postgres.Postgres" + type.Name["Sqlite".Length..]) is { } twin ? twin : type;
+
+    /// <summary>
+    /// Where <paramref name="postgres"/> falls short of <paramref name="sqlite"/>: a member <paramref name="sqlite"/> has that it has not,
+    /// or has as another kind (a property for a method); a port the SQLite member's type gives that the PostgreSQL member's does not; or a
+    /// method that takes other arguments (a SQLite adapter counting as its PostgreSQL twin). Empty when every port is given.
+    /// </summary>
+    internal static List<string> PortGaps(Type sqlite, Type postgres)
+    {
+        var gaps = new List<string>();
+        var theirs = Members(postgres);
+        foreach (var (name, member) in Members(sqlite).OrderBy(m => m.Key, StringComparer.Ordinal))
+        {
+            if (!theirs.TryGetValue(name, out var twin))
+            {
+                gaps.Add($"{name}: missing");
+                continue;
+            }
+            if (member.MemberType != twin.MemberType)
+            {
+                gaps.Add($"{name}: a {member.MemberType} on SQLite, a {twin.MemberType} here");
+                continue;
+            }
+            var (given, giving) = member is PropertyInfo p ? (p.PropertyType, ((PropertyInfo)twin).PropertyType) : (((MethodInfo)member).ReturnType, ((MethodInfo)twin).ReturnType);
+            foreach (var port in Ports(given).Except(Ports(giving)).OrderBy(i => i.Name, StringComparer.Ordinal))
+                gaps.Add($"{name}: does not give {port.Name}");
+            if (member is MethodInfo method)
+            {
+                var expected = method.GetParameters().Select(a => Twin(a.ParameterType).Name).ToList();
+                var actual = ((MethodInfo)twin).GetParameters().Select(a => a.ParameterType.Name).ToList();
+                if (!expected.SequenceEqual(actual))
+                    gaps.Add($"{name}: takes ({string.Join(", ", actual)}), not ({string.Join(", ", expected)})");
+            }
+        }
+        return gaps;
+    }
+
+    // mutation: a port removed from PostgresStores (a member deleted, or one that gives fewer ports)
+    [Fact]
+    public void Every_port_sqlite_stores_gives_postgres_stores_gives_too()
+    {
+        Assert.NotEmpty(Members(typeof(SqliteStores)));
+        Assert.Empty(PortGaps(typeof(SqliteStores), typeof(PostgresStores)));
+    }
+
+    private sealed class SqliteShape
+    {
+        public SqliteAuditLog Audit => null!;
+        public IAdminActionLog AdminActions => null!;
+        public SqliteTokenService TokenService(SqliteTenantStore tenants, Domain.IClock clock) => null!;
+        public SqliteJobLease JobLease(Domain.IClock clock) => null!;
+        public SqliteCookieKeyStore CookieKeys(Domain.IClock clock) => null!;
+        public SqliteMemberStore Members => null!;
+    }
+
+    private sealed class PostgresShape
+    {
+        public IAuditLog Audit => null!;   // gives one of the four audit ports
+        public PostgresAdminActionLog AdminActions => null!;   // gives the port, as an adapter: fine
+        public PostgresTokenService TokenService(PostgresTenantStore tenants, Domain.IClock clock) => null!;   // the twin: fine
+        public PostgresJobLease JobLease() => null!;   // takes no clock
+        public PostgresCookieKeyStore CookieKeys => null!;   // a property for a method
+    }
+
+    [Fact]
+    public void The_parity_check_sees_a_missing_member_a_missing_port_another_kind_and_other_arguments()
+    {
+        Assert.Equal(
+            [
+                "Audit: does not give IAuditBatchLog",
+                "Audit: does not give IAuditQuery",
+                "Audit: does not give IAuditRetention",
+                "CookieKeys: a Method on SQLite, a Property here",
+                "JobLease: takes (), not (IClock)",
+                "Members: missing",
+            ],
+            PortGaps(typeof(SqliteShape), typeof(PostgresShape)));
     }
 }

@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
@@ -65,7 +66,7 @@ public sealed class FakeAzureDevOpsSchemeHandler : AuthenticationHandler<Authent
 }
 
 /// <summary>
-/// The Azure setup wizard's test kit (#197): the site, the people and the steps. The core's tests and the hosted tests (which compile this
+/// The Azure setup wizard's test kit: the site, the people and the steps. The core's tests and the hosted tests (which compile this
 /// file in, for the wizard's parts that need the hosted module) share it.
 /// </summary>
 public partial class AzureSetupSiteTests
@@ -84,7 +85,7 @@ public partial class AzureSetupSiteTests
 
     private static async Task<Site> StartAsync(string? flag = "on", bool sharedApp = true, Action<PackmoatOptions>? configure = null,
         Func<AdminSiteFixture, ISelfServiceFeedStore>? feeds = null, Action<IServiceCollection>? services = null, bool logEverything = true,
-        IReadOnlyList<Packmoat.Host.Modules.IPackmoatModule>? modules = null)
+        IReadOnlyList<Packmoat.Host.Modules.IPackmoatModule>? modules = null, bool lease = false)
     {
         var ado = new FakeAzureDevOps(DirS);
         var signIn = new FakeAzureDevOpsSignIn();
@@ -113,6 +114,11 @@ public partial class AzureSetupSiteTests
             s.AddSingleton<IFeedCheckStore>(new SqliteFeedCheckStore(fx.Db));
             s.AddSingleton<ISelfServiceFeedStore>(feeds?.Invoke(fx) ?? new SqliteSelfServiceFeedStore(fx.Db));
             s.AddSingleton<ISharedAppCredentialStore>(new SqliteSharedAppCredentialStore(fx.Db, fx.Clock, AesGcmSecretProtector.FromBase64(fx.MasterKey)));
+            // The wizard's state as a server keeps it: the database's scratch (a test's own, from services, wins). The job lease is the
+            // database's only when asked for: the frozen clock never moves past a released lease by itself, so a test that runs two
+            // checks in one tick would see the first still running.
+            s.TryAddSingleton<IFeedSetupScratch>(new SqliteFeedSetupScratch(fx.Db, fx.Clock));
+            if (lease) s.TryAddSingleton<IJobLease>(new SqliteJobLease(fx.Db, fx.Clock));
         }, modules: modules);
         // A self-made tenant as self sign-up leaves it: no feed URLs at all.
         await f.Tenants.CreateAsync(new NewTenant("selfco", "Selfco", f.Upstream.BaseUrl, "org/", f.Upstream.FeedIndexUrl, 14, TenantOrigin.Self) { CreatedByOid = Ada }, default);
@@ -192,7 +198,7 @@ public partial class AzureSetupSiteTests
 
     private static IReadOnlyList<CheckResult> Passing(params string[] ids) => ids.Select(id => new CheckResult(id, id, CheckStatus.Pass, "ok")).ToList();
 
-    /// <summary>A settings check that has every result Connect needs (including 'private', which #64 I2 adds) and a developer proof by someone else.</summary>
+    /// <summary>A settings check that has every result Connect needs (including 'private', which the developer proof adds) and a developer proof by someone else.</summary>
     private static async Task<(long Settings, long Developer)> SeedChecksAsync(AdminSiteFixture f, string tenant = "selfco", string dir = DirS)
     {
         var store = f.App.Services.GetRequiredService<IFeedCheckStore>();
@@ -235,7 +241,7 @@ public partial class AzureSetupSiteTests
     }
 
     /// <summary>
-    /// For a tenant that would refuse the issue (#200): the page answers 200 with the refusal in the create form's place, and a POST made
+    /// For a tenant that would refuse the issue: the page answers 200 with the refusal in the create form's place, and a POST made
     /// anyway (<see cref="HiddenTokenForm"/>, as Ada of <paramref name="dir"/>) is still refused by the POST's own check.
     /// </summary>
     private static async Task<(string Page, HttpResponseMessage Response, string Body, string? Token)> CreateTokenAnyway(AdminSiteFixture f, AdminBrowser b, string dir = DirS)
@@ -243,7 +249,7 @@ public partial class AzureSetupSiteTests
         var (status, page, _) = await b.GetTextAsync("/tokens");
         Assert.Equal(200, status);
         Assert.True(HiddenTokenForm.IsBlocked(page), "the create form is hidden");
-        var r = await Post(b, page, "/tokens/create", true, ("nonce", HiddenTokenForm.StoreNonce(f.App.Services, dir, Ada)), ("label", "laptop"));
+        var r = await Post(b, page, "/tokens/create", true, ("nonce", await HiddenTokenForm.StoreNonceAsync(f.App.Services, dir, Ada)), ("label", "laptop"));
         var body = await r.Content.ReadAsStringAsync();
         return (page, r, body, TokenValue.Match(body) is { Success: true } t ? t.Value : null);
     }
@@ -257,7 +263,7 @@ public partial class AzureSetupSiteTests
         return b;
     }
 
-    /// <summary>The v2 admin-consent link for the Packmoat app, written out by hand (#118): sign-in plus the four read-only Azure DevOps scopes.</summary>
+    /// <summary>The v2 admin-consent link for the Packmoat app, written out by hand: sign-in plus the four read-only Azure DevOps scopes.</summary>
     internal static string PackmoatConsentUrl(string directory) =>
         $"https://login.microsoftonline.com/{directory}/v2.0/adminconsent?client_id={AppClient}&redirect_uri=https%3A%2F%2F{AppHost}%2Fsetup%2Fazure%2Fconsented" +
         "&scope=openid%20profile%20499b84ac-1321-427f-aa17-267ca6975798%2Fvso.packaging%20499b84ac-1321-427f-aa17-267ca6975798%2Fvso.graph" +

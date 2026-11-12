@@ -60,10 +60,10 @@ public sealed class DelegatedFeedCheck : IDelegatedFeedCheck
     /// <summary>At most this many views listings at a time (the shared app probe also probes at most this many indexes at a time).</summary>
     public const int MaxConcurrency = 8;
 
-    /// <param name="shared">Packmoat's own identity, for the 'private' check (#64 I2). Without it 'private' is not verified.</param>
+    /// <param name="shared">Packmoat's own identity, for the 'private' check. Without it 'private' is not verified.</param>
     /// <param name="privateDeadline">A test seam: production always uses <see cref="PrivateDeadline"/>.</param>
-    /// <param name="log">Where status codes and error types go (#119): never into a result the customer sees.</param>
-    /// <param name="support">Who the results tell a person to ask (#186): the operator's name and address, or neutral words when unset.</param>
+    /// <param name="log">Where status codes and error types go: never into a result the customer sees.</param>
+    /// <param name="support">Who the results tell a person to ask: the operator's name and address, or neutral words when unset.</param>
     public DelegatedFeedCheck(Func<HttpClient> client, ISharedAppFeedProbe? shared = null, TimeSpan? privateDeadline = null, Action<string>? log = null,
         SupportContact? support = null)
     {
@@ -77,10 +77,10 @@ public sealed class DelegatedFeedCheck : IDelegatedFeedCheck
     private readonly Action<string> _log;
     private readonly SupportContact _support;
 
-    /// <summary>This check's log: each line names the Packmoat tenant, and nothing else that identifies anyone (#119).</summary>
+    /// <summary>This check's log: each line names the Packmoat tenant, and nothing else that identifies anyone.</summary>
     private Action<string> Log(DelegatedCheckRequest request) => message => _log($"{message} (tenant {request.TenantId ?? "unknown"})");
 
-    /// <summary>The engine's checks that are not its to run here: 'private' is run below (#64 I2), the developer proof and the proxy are other steps.</summary>
+    /// <summary>The engine's checks that are not its to run here: 'private' is run below, the developer proof and the proxy are other steps.</summary>
     private static readonly string[] NotRunHere = { "developer", "private", "proxy" };
 
     public async Task<DelegatedCheckRun> CheckNewFeedAsync(FeedNames names, DelegatedCheckRequest request, string accessToken, CancellationToken ct)
@@ -138,7 +138,7 @@ public sealed class DelegatedFeedCheck : IDelegatedFeedCheck
             AdminToken = accessToken, AdminTokenIsBearer = true,
             SharedAppClientId = request.SharedClientId, SharedAppDirectoryId = request.DirectoryId,
             CheckProject = true,
-            CustomerWording = true,   // the site's own text, never the CLI's operator text (#119)
+            CustomerWording = true,   // the site's own text, never the CLI's operator text
             Support = _support,
             MaxRetries = AzureSetupRules.MaxRetries, RetryWaitCap = AzureSetupRules.RetryWaitCap,
         };
@@ -152,7 +152,7 @@ public sealed class DelegatedFeedCheck : IDelegatedFeedCheck
     }
 
     /// <summary>
-    /// The 'private' check (#64 I2). The Admin's token lists the organisation's feeds (Get Feeds at organisation level lists the
+    /// The 'private' check. The Admin's token lists the organisation's feeds (Get Feeds at organisation level lists the
     /// project-scoped ones too) and, for every other feed, its views; Packmoat's OWN identity (<see cref="ISharedAppFeedProbe"/>, never the
     /// Admin's token) then GETs the public-only feed's index (the control) and every other feed's index and every non-private view's, all
     /// built from GUIDs. The verdict is <see cref="PrivateFeedVerdict"/>; more than <see cref="PrivateFeedVerdict.MaxFeeds"/> other feeds or
@@ -193,7 +193,7 @@ public sealed class DelegatedFeedCheck : IDelegatedFeedCheck
             await Parallel.ForEachAsync(Enumerable.Range(0, others.Count), new ParallelOptions { MaxDegreeOfParallelism = MaxConcurrency, CancellationToken = ct }, async (k, token) =>
             {
                 var other = others[k];
-                // Only the default feed's own index is flagged (#119): its views have their own visibility.
+                // Only the default feed's own index is flagged: its views have their own visibility.
                 var targets = new List<(string Name, string Url, bool Default)>
                 {
                     (other.Name, GuidIndexUrls.Build(org, other.ProjectId, other.FeedId!.Value)!, PrivateFeedVerdict.IsOrganisationDefault(other.Name, other.HasProject, org)),
@@ -227,7 +227,7 @@ public sealed class DelegatedFeedCheck : IDelegatedFeedCheck
 
             var statuses = await _shared.ProbeAsync(directoryId, allTargets.Select(t => t.Url).Prepend(control).ToList(), ct);
             var probes = allTargets.Select((t, k) => new PrivateProbe(t.Name, statuses[k + 1], t.Default)).Concat(allUnclear).ToList();
-            // The statuses go to the log only (#119): the result names the feeds, never a status code.
+            // The statuses go to the log only: the result names the feeds, never a status code.
             if (statuses[0] != 200) log($"Private check: Packmoat's own feed access got {statuses[0]?.ToString() ?? "no answer"} on Packmoat's feed");
             foreach (var p in probes.Where(p => p.Status is not (null or 401 or 403 or 200) and not (>= 300 and < 400)))
                 log($"Private check: an unclear answer ({p.Status}) for one of the organisation's feeds");
@@ -306,7 +306,7 @@ public sealed class DelegatedFeedCheck : IDelegatedFeedCheck
         }
     }
 
-    /// <summary>The "feed" result's detail for a resolve that failed. Fixed text only: the status is logged, not shown (#119).</summary>
+    /// <summary>The "feed" result's detail for a resolve that failed. Fixed text only: the status is logged, not shown.</summary>
     public static string Describe(FeedResolveProblem problem) => problem switch
     {
         FeedResolveProblem.NotFound => $"Azure DevOps found no feed with that name in that organisation and project, or your account can't see it.",

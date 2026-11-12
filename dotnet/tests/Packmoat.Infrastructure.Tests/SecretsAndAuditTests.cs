@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Microsoft.Data.Sqlite;
 using Packmoat.Application;
 using Packmoat.Domain;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
@@ -95,7 +96,15 @@ public class SecretProtectionTests
     }
 }
 
-/// <summary><see cref="AuditContract"/> on SQLite, and the tests only SQLite has (#232 S1).</summary>
+/// <summary><see cref="AuditContract"/> on PostgreSQL, each test on a database of its own.</summary>
+[Collection(PostgresCollection.Name)]
+[Trait("Category", PostgresTestServer.Category)]
+public class PostgresAuditTests : AuditContract
+{
+    protected override IStoreEngine Engine => PostgresStoreEngine.Instance;
+}
+
+/// <summary><see cref="AuditContract"/> on SQLite, and the tests only SQLite has.</summary>
 [Collection("sqlite-pools")]
 public class AuditTests : AuditContract
 {

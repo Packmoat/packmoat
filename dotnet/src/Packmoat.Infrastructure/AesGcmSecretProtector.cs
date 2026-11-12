@@ -11,7 +11,7 @@ namespace Packmoat.Infrastructure;
 /// KNOWN GAP: there is no key rotation. Changing the master key makes every stored identity unreadable until it is entered again
 /// (<c>identity set</c>), and stops the start (the key check in <c>meta</c>). Tokens, tenants and audit rows are not encrypted with this key
 /// and are unaffected. A re-encrypt command is planned: it must re-encrypt every column the tests' <c>MasterKeyEncryptedColumns</c> list
-/// marks encrypted, including <c>cookie_keys.xml_encrypted</c> (the cookie keys, with PACKMOAT_COOKIE_KEYS=database, #232 B1).
+/// marks encrypted, including <c>cookie_keys.xml_encrypted</c> (the cookie keys, with PACKMOAT_COOKIE_KEYS=database).
 /// </para>
 /// </summary>
 public sealed class AesGcmSecretProtector

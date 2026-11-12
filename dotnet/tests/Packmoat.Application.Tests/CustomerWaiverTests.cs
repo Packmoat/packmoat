@@ -4,7 +4,7 @@ using Packmoat.Domain;
 namespace Packmoat.Application.Tests;
 
 /// <summary>
-/// #157 PR 1: the customer limits on a waiver, enforced in <see cref="AdminCommands.AddWaiverAsync"/> for tenant actors only. The operator's
+/// The customer limits on a waiver, enforced in <see cref="AdminCommands.AddWaiverAsync"/> for tenant actors only. The operator's
 /// limits are unchanged. The store's cap and duplicate checks run in one transaction (see WaiverStoreTests); here the store is faked.
 /// </summary>
 public class CustomerWaiverTests
@@ -18,7 +18,7 @@ public class CustomerWaiverTests
 
     public CustomerWaiverTests()
     {
-        _commands = new AdminCommands(_store, _store, new FixedClock(), alerts: _alerts);
+        _commands = new AdminCommands(_store, _store, new FixedClock(), new InProcessRateCounter(new FixedClock()), alerts: _alerts);
         _store.Tenants.Add(new Tenant("acme", "Acme", "https://pkgs.dev.azure.com/", "o/", "https://x/index.json", new TenantPolicy(14, new[] { "Contoso.*" })));
         _store.Tenants.Add(new Tenant("other", "Other", "https://pkgs.dev.azure.com/", "o/", "https://x/index.json", new TenantPolicy(14)));
     }
@@ -189,11 +189,11 @@ public class CustomerWaiverTests
     [Fact]
     public void The_cap_is_25() => Assert.Equal(25, WaiverRules.MaxActiveCustomerWaivers);
 
-    [Fact]   // #161 review: mutation: drop the per-tenant alert throttle
+    [Fact]   // mutation: drop the per-tenant alert throttle
     public async Task Revoke_then_add_at_the_cap_alerts_at_most_once_per_tenant_per_hour()
     {
         var clock = new MovableClock();
-        var commands = new AdminCommands(_store, _store, clock, alerts: _alerts);
+        var commands = new AdminCommands(_store, _store, clock, new InProcessRateCounter(clock), alerts: _alerts);
         _store.ActiveCustomerAfter = WaiverRules.MaxActiveCustomerWaivers;
         await commands.AddWaiverAsync(Acme, "acme", "Moq", "4.21.0", 7, GoodReason, Ct);
         clock.UtcNow = clock.UtcNow.AddMinutes(59);
@@ -208,6 +208,83 @@ public class CustomerWaiverTests
         await commands.AddWaiverAsync(Acme, "acme", "Moq", "4.21.2", 7, GoodReason, Ct);
         Assert.Equal(3, _alerts.Alerts.Count);
         Assert.All(_alerts.Alerts, a => Assert.IsType<OpsAlert.WaiverCapReached>(a));
+    }
+
+    /// <summary>A counter that records each hit it is asked for (and otherwise counts as the in-process one does).</summary>
+    private sealed class CountingCounter(IClock clock) : IRateCounter
+    {
+        private readonly InProcessRateCounter _inner = new(clock);
+        public List<(string Scope, string Key)> Hits { get; } = new();
+        public CancellationToken LastToken;
+        public Task<RateDecision> HitAsync(string scope, string key, int max, TimeSpan window, CancellationToken ct = default)
+        {
+            Hits.Add((scope, key));
+            LastToken = ct;
+            return _inner.HitAsync(scope, key, max, window, ct);
+        }
+        public Task<int> PruneAsync(DateTimeOffset now, CancellationToken ct = default) => _inner.PruneAsync(now, ct);
+    }
+
+    [Fact]   // mutation: the alert counted before the cap check (an add below the cap would use up the hour)
+    public async Task The_cap_alert_is_counted_only_once_the_cap_is_reached()
+    {
+        var clock = new MovableClock();
+        var counter = new CountingCounter(clock);
+        var commands = new AdminCommands(_store, _store, clock, counter, alerts: _alerts);
+        _store.ActiveCustomerAfter = WaiverRules.MaxActiveCustomerWaivers - 1;
+        await commands.AddWaiverAsync(Acme, "acme", "Moq", "4.21.0", 7, GoodReason, Ct);
+        Assert.Empty(counter.Hits);   // below the cap: nothing counted
+        Assert.Empty(_alerts.Alerts);
+
+        clock.UtcNow = clock.UtcNow.AddMinutes(5);   // the 25th, within the same hour
+        _store.ActiveCustomerAfter = WaiverRules.MaxActiveCustomerWaivers;
+        await commands.AddWaiverAsync(Acme, "acme", "Moq", "4.21.1", 7, GoodReason, Ct);
+        Assert.Equal([(RateScopes.WaiverCapAlert, "acme")], counter.Hits);
+        Assert.IsType<OpsAlert.WaiverCapReached>(Assert.Single(_alerts.Alerts));
+    }
+
+    [Fact]   // mutation: count the cap alert where no alert can be sent (the command line would use up the tenant's hour)
+    public async Task Where_no_alert_can_be_sent_the_cap_alert_is_not_counted()
+    {
+        var clock = new MovableClock();
+        var counter = new CountingCounter(clock);
+        _store.ActiveCustomerAfter = WaiverRules.MaxActiveCustomerWaivers;
+        await new AdminCommands(_store, _store, clock, counter).AddWaiverAsync(Acme, "acme", "Moq", "4.21.0", 7, GoodReason, Ct);   // the CLI's: no alerts
+        await new AdminCommands(_store, _store, clock, counter, alerts: NullOpsAlerts.Instance).AddWaiverAsync(Acme, "acme", "Moq", "4.21.1", 7, GoodReason, Ct);
+        Assert.Empty(counter.Hits);
+
+        // So the site's add a minute later, at the cap, still alerts: the command line took nothing from the shared hour.
+        clock.UtcNow = clock.UtcNow.AddMinutes(1);
+        await new AdminCommands(_store, _store, clock, counter, alerts: _alerts).AddWaiverAsync(Acme, "acme", "Moq", "4.21.2", 7, GoodReason, Ct);
+        Assert.Single(counter.Hits);
+        Assert.IsType<OpsAlert.WaiverCapReached>(Assert.Single(_alerts.Alerts));
+    }
+
+    [Fact]   // mutation: the alert's count given the caller's token (a cancellation then fails an add that was stored)
+    public async Task A_cancellation_after_the_waiver_is_stored_does_not_fail_the_add()
+    {
+        using var cts = new CancellationTokenSource();
+        var clock = new MovableClock();
+        var counter = new CancellingCounter(clock, cts);
+        var commands = new AdminCommands(_store, _store, clock, counter, alerts: _alerts);
+        _store.ActiveCustomerAfter = WaiverRules.MaxActiveCustomerWaivers;
+        var w = await commands.AddWaiverAsync(Acme, "acme", "Moq", "4.21.0", 7, GoodReason, cts.Token);
+        Assert.Equal("moq", w.PackageId);
+        Assert.True(cts.IsCancellationRequested);
+        Assert.IsType<OpsAlert.WaiverCapReached>(Assert.Single(_alerts.Alerts));
+    }
+
+    /// <summary>Cancels the caller's token as it is asked (just after the store added the waiver), then honours the token it was given.</summary>
+    private sealed class CancellingCounter(IClock clock, CancellationTokenSource caller) : IRateCounter
+    {
+        private readonly InProcessRateCounter _inner = new(clock);
+        public Task<RateDecision> HitAsync(string scope, string key, int max, TimeSpan window, CancellationToken ct = default)
+        {
+            caller.Cancel();
+            ct.ThrowIfCancellationRequested();
+            return _inner.HitAsync(scope, key, max, window, ct);
+        }
+        public Task<int> PruneAsync(DateTimeOffset now, CancellationToken ct = default) => _inner.PruneAsync(now, ct);
     }
 
     // ---------------------------------------------------------------- the operator is unchanged

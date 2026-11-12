@@ -1,21 +1,21 @@
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// No database engine's types outside the adapters and the composition allowlist (#278 step 0, architecture test 1): in the core's src/,
+/// No database engine's types outside the adapters and the composition allowlist: in the core's src/,
 /// only these files may name <c>Microsoft.Data.Sqlite</c>, a <c>Sqlite*</c> type or <c>Npgsql</c> in code (comments aside). Everything
 /// else, the module seams and the lifecycle's ports first, sees <c>IRelationalDatabase</c> and <c>DbTransaction</c>. The hosted
 /// projects have their own twin.
 /// </summary>
 public class EngineTypeScanTests
 {
-    /// <summary>The PostgreSQL adapter's folder (#288), and the SQLite adapters (SqliteStores among them: the one list of how each is built), the migration copy check, the
+    /// <summary>The PostgreSQL adapter's folder, and the SQLite adapters (SqliteStores among them: the one list of how each is built), the migration copy check, the
     /// organisation store, the server's registration of that list, and the two composition roots (server and CLI).</summary>
     internal static readonly string[] Allowed =
     [
         "Packmoat.Infrastructure/Sqlite*.cs",
         "Packmoat.Infrastructure/SqliteDatabase.cs",
         "Packmoat.Infrastructure/MigrationDryRun.cs",
-        "Packmoat.Infrastructure/CoreSchema.cs",   // #288 P2: the core's track takes SQLite's statements where they are (SqliteDatabase.Migrations)
+        "Packmoat.Infrastructure/CoreSchema.cs",   // The core's track takes SQLite's statements where they are (SqliteDatabase.Migrations)
         "Packmoat.Infrastructure/Lifecycle/OrganisationCreation.cs",
         "Packmoat.Host/SqliteStoreRegistration.cs",
         "Packmoat.Host/PackmoatApp.cs",
@@ -23,7 +23,7 @@ public class EngineTypeScanTests
         "Packmoat.Infrastructure.Postgres/*.cs",
     ];
 
-    /// <summary>Where Npgsql may be named (#288): the PostgreSQL adapter's own folder, and nowhere else.</summary>
+    /// <summary>Where Npgsql may be named: the PostgreSQL adapter's own folder, and nowhere else.</summary>
     internal const string PostgresAdapter = "Packmoat.Infrastructure.Postgres/";
 
     private static (string Named, string Source)[] CoreSource() => EngineTypeScan.SourceFiles(Path.Combine(CoreRoot.Path(), "dotnet", "src"));
@@ -54,7 +54,7 @@ public class EngineTypeScanTests
             .Select(f => $"{f.Named}: {string.Join(", ", f.Wrong)}")
             .Order(StringComparer.Ordinal).ToArray();
 
-    // #288. mutations: an Npgsql using in a SQLite adapter (SqliteDatabase.cs); a SqliteConnection in the PostgreSQL adapter
+    // mutations: an Npgsql using in a SQLite adapter (SqliteDatabase.cs); a SqliteConnection in the PostgreSQL adapter
     [Fact]
     public void Npgsql_is_named_only_in_the_Postgres_adapter_and_the_adapter_names_no_SQLite_type()
     {

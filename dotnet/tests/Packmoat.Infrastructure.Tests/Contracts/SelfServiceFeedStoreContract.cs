@@ -1,18 +1,20 @@
 using Packmoat.Application;
 using Packmoat.Domain;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// #64 I1 as a contract (#232 S1): LatestAsync by kind, and the self-service feed store: Connect is all or nothing (every refusal writes
+/// The contract: LatestAsync by kind, and the self-service feed store: Connect is all or nothing (every refusal writes
 /// nothing), a check from another tenant or a settings check that is not the latest is refused, and Withdraw deletes only the exact record.
-/// #207: every test here runs for a self-made tenant (<see cref="SelfServiceFeedStoreTests"/>) and again for an operator-made tenant made
+/// Every test here runs for a self-made tenant (<see cref="SelfServiceFeedStoreTests"/>) and again for an operator-made tenant made
 /// for its customer to connect (<see cref="FlaggedOperatorSelfServiceFeedStoreTests"/>): every Connect check holds for both. Migration 14
-/// and the directory race (two SQLite connections) stay in the SQLite fixture.
+/// and the directory race (two SQLite connections) stay in the SQLite fixture. the snapshot reads a check id as text (on
+/// PostgreSQL COALESCE cannot mix a bigint and ''), and two tenants claiming one directory at once is a contract test.
 /// </summary>
 public abstract class SelfServiceFeedStoreContract : StoreContract
 {
-    /// <summary>The tenant shape under test: self-made (origin 'self'), or operator-made with feed_setup 'customer' (#207).</summary>
+    /// <summary>The tenant shape under test: self-made (origin 'self'), or operator-made with feed_setup 'customer'.</summary>
     protected virtual bool Flagged => false;
 
     protected const string Dir = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -68,7 +70,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
     }
 
     /// <summary>
-    /// An operator write of the identity takes a flagged tenant's feed over (#207), so Connect then refuses at its first step. To reach
+    /// An operator write of the identity takes a flagged tenant's feed over, so Connect then refuses at its first step. To reach
     /// the later check a test is about, the flag is put back by hand (nothing in the product does this). A self-made tenant: no change.
     /// </summary>
     protected async Task KeepShapeAsync(IEngineDb t, string tenant = "selfco")
@@ -98,7 +100,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
                  {
                      "SELECT id || upstream_base || allowed_path_prefix || feed_index_url || policy_revision FROM tenants ORDER BY id",
                      $"SELECT tenant_id || kind || azure_tenant_id || COALESCE(client_id,'') || COALESCE({Engine.HexSql("cert_encrypted")},'') FROM upstream_identities ORDER BY tenant_id",
-                     "SELECT tenant_id || feed_index_url || verified_at || verified_via || COALESCE(feed_check_id,'') || COALESCE(developer_check_id,'') FROM shared_app_verifications ORDER BY tenant_id",
+                     "SELECT tenant_id || feed_index_url || verified_at || verified_via || COALESCE(CAST(feed_check_id AS TEXT),'') || COALESCE(CAST(developer_check_id AS TEXT),'') FROM shared_app_verifications ORDER BY tenant_id",
                      "SELECT COUNT(*) FROM admin_actions",
                  })
         {
@@ -115,7 +117,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         Assert.Equal(before, await Snapshot(s.T));
     }
 
-    [Fact]
+    [EngineFact]
     public async Task Latest_is_per_kind_and_an_unknown_stored_kind_never_reads_as_either()
     {
         await using var s = await StartAsync();
@@ -130,7 +132,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
 
     // ---- Connect
 
-    [Fact]
+    [EngineFact]
     public async Task Connect_writes_the_tenant_urls_the_shared_binding_the_wizard_verification_and_feed_connect_in_one_go()
     {
         await using var s = await StartAsync();
@@ -153,7 +155,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         Assert.Equal(UpstreamReadiness.Ready, UpstreamReadiness.Of(tenant, binding, v, Client));
     }
 
-    [Fact]
+    [EngineFact]
     public async Task A_check_from_another_tenant_is_refused_even_when_everything_else_matches()
     {
         await using var s = await StartAsync();
@@ -167,7 +169,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         Assert.Equal(ConnectResult.Connected, await s.Store.ConnectSelfServiceFeedAsync(Request(s), default));   // its own rows still connect
     }
 
-    [Fact]
+    [EngineFact]
     public async Task A_settings_check_that_is_not_the_latest_is_refused()
     {
         await using var s = await StartAsync();
@@ -176,7 +178,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         await Refused(s, ConnectResult.NotLatest);
     }
 
-    [Fact]
+    [EngineFact]
     public async Task An_older_passing_developer_check_never_outweighs_a_newer_failed_one_for_the_same_feed()
     {
         await using var s = await StartAsync();   // the developer pass is 2 hours old
@@ -188,8 +190,8 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         await Refused(s, ConnectResult.NotLatest);
     }
 
-    /// <summary>#64 I1 follow-up: a newer developer check that could not complete also replaces an older pass (the latest decides, whatever its outcome).</summary>
-    [Fact]
+    /// <summary>A newer developer check that could not complete also replaces an older pass (the latest decides, whatever its outcome).</summary>
+    [EngineFact]
     public async Task An_older_passing_developer_check_and_a_newer_incomplete_one_for_the_same_feed_is_not_the_latest()
     {
         await using var s = await StartAsync();   // the developer pass is 2 hours old
@@ -201,7 +203,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         await Refused(s, ConnectResult.NotLatest);
     }
 
-    [Fact]
+    [EngineFact]
     public async Task A_newer_developer_check_of_another_feed_does_not_replace_this_feeds()
     {
         await using var s = await StartAsync();
@@ -209,7 +211,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         Assert.Equal(ConnectResult.Connected, await s.Store.ConnectSelfServiceFeedAsync(Request(s), default));
     }
 
-    [Fact]
+    [EngineFact]
     public async Task Missing_rows_and_rows_of_the_wrong_kind_are_refused()
     {
         await using var s = await StartAsync();
@@ -219,7 +221,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         await Refused(s, ConnectResult.CheckNotFound, Request(s, developer: s.SettingsId));
     }
 
-    [Fact]
+    [EngineFact]
     public async Task The_tenant_must_be_active_self_made_and_linked_to_the_directory()
     {
         await using (var s = await StartAsync())
@@ -244,7 +246,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         }
     }
 
-    [Fact]
+    [EngineFact]
     public async Task The_client_and_feed_must_be_the_ones_the_page_showed()
     {
         await using var s = await StartAsync();
@@ -257,7 +259,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         await Refused(s, ConnectResult.ClientChanged);
     }
 
-    [Fact]
+    [EngineFact]
     public async Task An_own_app_identity_is_never_overwritten()
     {
         await using var s = await StartAsync();
@@ -267,7 +269,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         Assert.NotNull(await Engine.Tenants(s.T).GetUpstreamIdentityAsync("selfco", default));
     }
 
-    [Fact]
+    [EngineFact]
     public async Task A_directory_another_tenant_uses_is_refused_explicitly()
     {
         await using var s = await StartAsync();
@@ -277,7 +279,47 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         Assert.Equal(new UpstreamBinding(IdentityKind.Shared, Dir.ToUpperInvariant(), null), await Engine.Tenants(s.T).GetUpstreamBindingAsync("e2e-shared", default));
     }
 
-    [Fact]
+    /// <summary>
+    /// Two tenants claim one shared directory at once, this tenant through Connect and another through the operator's bind,
+    /// started together, five times over. Exactly one holds the directory afterwards. If it is this tenant, Connect said Connected and the
+    /// bind was refused by the database. If it is the other, Connect said DirectoryTaken, whether it saw the bind's row or met the
+    /// one-directory index (on PostgreSQL), and wrote nothing (no binding, no verification, no record). SQLite serialises the two; PostgreSQL
+    /// locks each claimant's own tenant row, so the unique index is what decides between two tenants.
+    /// </summary>
+    [EngineFact]
+    public async Task Two_tenants_claiming_one_shared_directory_at_once_exactly_one_wins()
+    {
+        for (var round = 0; round < 5; round++)
+        {
+            await using var s = await StartAsync();
+            await AddTenantAsync(s.T, "e2e-shared");
+            var actionsBefore = (long)(await ScalarAsync(s.T, "SELECT COUNT(*) FROM admin_actions"))!;
+            var go = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var connect = Task.Run(async () => { await go.Task; return await s.Store.ConnectSelfServiceFeedAsync(Request(s), default); });
+            var bind = Task.Run(async () => { await go.Task; await Engine.Tenants(s.T).BindSharedIdentityAsync("e2e-shared", Dir, default); });
+            go.SetResult();
+            await Task.WhenAll(connect, bind).ContinueWith(_ => { }, TaskScheduler.Default);   // both done, however each ended
+
+            var holder = Assert.Single(await ColumnAsync(s.T, $"SELECT tenant_id FROM upstream_identities WHERE kind='shared' AND lower(azure_tenant_id)='{Dir}'"));
+            if (holder == "selfco")
+            {
+                Assert.Equal(ConnectResult.Connected, await connect);
+                await RefusedAsync(() => bind);
+                Assert.Equal("wizard", await ScalarAsync(s.T, "SELECT verified_via FROM shared_app_verifications WHERE tenant_id='selfco'"));
+            }
+            else
+            {
+                Assert.Equal("e2e-shared", holder);
+                await bind;
+                Assert.Equal(ConnectResult.DirectoryTaken, await connect);   // never the index's error
+                Assert.Null(await Engine.Tenants(s.T).GetUpstreamBindingAsync("selfco", default));
+                Assert.Null(await s.Shared.GetVerificationAsync("selfco", default));
+                Assert.Equal(actionsBefore, await ScalarAsync(s.T, "SELECT COUNT(*) FROM admin_actions"));
+            }
+        }
+    }
+
+    [EngineFact]
     public async Task A_shared_binding_of_this_tenant_in_another_directory_is_refused()
     {
         await using var s = await StartAsync();
@@ -286,7 +328,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         await Refused(s, ConnectResult.DirectoryTaken);
     }
 
-    [Fact]
+    [EngineFact]
     public async Task The_rules_run_inside_the_transaction_windows_people_and_results()
     {
         await using (var s = await StartAsync())
@@ -313,7 +355,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         }
         await using (var s = await StartAsync(checks: false))
         {
-            // what #63 H2 records today: no 'private' result, so it can never be connected
+            // what the delegated check records: no 'private' result, so it can never be connected
             s.SettingsId = await s.Checks.RecordAsync(SettingsCheck(s.T, results: Pass("feed", "identity", "upstreams", "permissions", "views", "project")), default);
             s.DeveloperId = await s.Checks.RecordAsync(DeveloperCheck(s.T), default);
             await Refused(s, ConnectResult.NotPassed);
@@ -326,7 +368,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         }
     }
 
-    [Fact]
+    [EngineFact]
     public async Task Connecting_again_after_a_withdrawal_replaces_the_binding_and_record_and_keeps_one_row_each()
     {
         await using var s = await StartAsync();
@@ -344,7 +386,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
 
     // ---- Withdraw and the operator's record
 
-    [Fact]
+    [EngineFact]
     public async Task Withdraw_deletes_only_the_exact_record_and_writes_feed_withdrawn_with_it()
     {
         await using var s = await StartAsync();
@@ -366,7 +408,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         Assert.False(await s.Store.WithdrawAsync(v, action, default));   // only once
     }
 
-    [Fact]
+    [EngineFact]
     public async Task The_operators_record_replacing_a_wizard_record_is_operator_made_with_no_check_ids()
     {
         await using var s = await StartAsync();
@@ -378,10 +420,10 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
     }
 
     /// <summary>
-    /// The withdraw race (#251 item 26): the wizard's failed check read its record, then the operator verified the tenant afresh. Even
+    /// The withdraw race: the wizard's failed check read its record, then the operator verified the tenant afresh. Even
     /// with every value the same, the operator's record is never withdrawn: only a wizard-made record is. Mutation: drop verified_via='wizard'.
     /// </summary>
-    [Fact]
+    [EngineFact]
     public async Task Withdraw_never_deletes_an_operators_record_even_with_the_same_values()
     {
         await using var s = await StartAsync();
@@ -398,7 +440,7 @@ public abstract class SelfServiceFeedStoreContract : StoreContract
         Assert.NotEqual(ConnectRules.WithdrawnAction, (await Engine.AdminActions(s.T).LatestAsync(1, default))[0].Action);
     }
 
-    [Fact]
+    [EngineFact]
     public async Task Operator_made_tenants_like_the_canary_and_e2e_tenants_are_never_connected()
     {
         await using var s = await StartAsync();

@@ -3,7 +3,7 @@ using Microsoft.Data.Sqlite;
 namespace Packmoat.Infrastructure;
 
 /// <summary>
-/// The pre-deploy dry run of the migrations (#196, <c>packmoat-admin db check-migrations FILE</c>). It never opens the live database:
+/// The pre-deploy dry run of the migrations (<c>packmoat-admin db check-migrations FILE</c>). It never opens the live database:
 /// it refuses a file that resolves to it, verifies the file, copies it into a private temporary directory, runs this build's migration
 /// runner (the core, then every module's track) on the copy, and compares the copy with a fresh database this build makes. The source
 /// file is only read. Both temporary databases are deleted. The report holds names and counts only, never a row's contents.
@@ -15,7 +15,7 @@ public static class MigrationDryRun
 
     /// <summary>
     /// One table's row count before and after (null: no such table). A table the migrations created and left empty (none before, 0
-    /// after, #232 M1) changed no row, so it counts as equal; one they created with rows in it, or dropped, does not.
+    /// after) changed no row, so it counts as equal; one they created with rows in it, or dropped, does not.
     /// </summary>
     public sealed record RowLine(string Table, long? Before, long? After)
     {

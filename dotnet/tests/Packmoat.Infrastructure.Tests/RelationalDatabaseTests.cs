@@ -1,7 +1,7 @@
 namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>
-/// The module seams give the database as <see cref="IRelationalDatabase"/> (#278 step 0). <see cref="SqliteDatabase.From"/> is the one
+/// The module seams give the database as <see cref="IRelationalDatabase"/>. <see cref="SqliteDatabase.From"/> is the one
 /// approved way back to SQLite's own: it returns the same instance for SQLite, and refuses any other engine, naming it.
 /// </summary>
 [Collection("sqlite-pools")]

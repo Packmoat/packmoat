@@ -3,9 +3,9 @@ using System.Text.RegularExpressions;
 namespace Packmoat.Architecture.Tests;
 
 /// <summary>
-/// Self-hosting (#186): the hosted service's website and support address are settings (PACKMOAT_OPERATOR_NAME, PACKMOAT_SUPPORT_EMAIL,
+/// Self-hosting: the hosted service's website and support address are settings (PACKMOAT_OPERATOR_NAME, PACKMOAT_SUPPORT_EMAIL,
 /// PACKMOAT_SITE_URL), never code. No string in src/ names packmoat.com, and only the composition root reads the three settings: everything
-/// else is handed them. The root reads them through Settings.Get (#233).
+/// else is handed them. The root reads them through Settings.Get.
 /// </summary>
 public class OperatorLinksArchitectureTests
 {

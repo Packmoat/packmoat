@@ -1,4 +1,4 @@
-# OpenSSF Scorecard (#276): scores this repository's security practices (pinned actions, branch rules, token permissions, code review,
+# OpenSSF Scorecard: scores this repository's security practices (pinned actions, branch rules, token permissions, code review,
 # ...) on each push to main, weekly, and when a branch rule changes. The results are published to the Scorecard API (so the badge and
 # scorecard.dev show them; this needs an identity token) and uploaded to the repository's code scanning alerts. Scorecard publishes only
 # from a workflow that follows its rules: no env: or defaults:, one Ubuntu job, and only its approved actions. Its one job alone may

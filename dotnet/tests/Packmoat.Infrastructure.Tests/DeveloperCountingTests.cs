@@ -1,9 +1,21 @@
 using Packmoat.Application;
 using Packmoat.Infrastructure;
+using Packmoat.Infrastructure.Tests.Postgres;
 
 namespace Packmoat.Infrastructure.Tests;
 
-/// <summary><see cref="DeveloperCountingContract"/> on SQLite, and the tests only SQLite has (#232 S1).</summary>
+/// <summary>
+/// <see cref="DeveloperCountingContract"/> on PostgreSQL, each test on a database of its own. The session's time zone is
+/// Pacific/Chatham (UTC+12:45 or +13:45) on every test connection, so a day that moved with it would be off by one here.
+/// </summary>
+[Collection(PostgresCollection.Name)]
+[Trait("Category", PostgresTestServer.Category)]
+public class PostgresDeveloperCountingTests : DeveloperCountingContract
+{
+    protected override IStoreEngine Engine => PostgresStoreEngine.Instance;
+}
+
+/// <summary><see cref="DeveloperCountingContract"/> on SQLite, and the tests only SQLite has.</summary>
 [Collection("sqlite-pools")]
 public class DeveloperCountingTests : DeveloperCountingContract
 {

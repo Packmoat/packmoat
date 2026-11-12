@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The Helm chart's tests (#249): helm lint, then helm template with assertions on what it renders, and on what it refuses.
+# The Helm chart's tests: helm lint, then helm template with assertions on what it renders, and on what it refuses.
 # Needs helm on PATH (core/.github/scripts/install-helm-kind.sh installs the pinned one). No cluster is needed.
 # Usage: deploy/helm/test-chart.sh   (from anywhere; exits 1 when any check fails, after running them all)
 set -euo pipefail

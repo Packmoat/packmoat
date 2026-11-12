@@ -1,7 +1,7 @@
 namespace Packmoat.Host;
 
 /// <summary>
-/// Whether this server runs the scheduled background jobs (#233, PACKMOAT_BACKGROUND_JOBS): <c>on</c> or <c>off</c>, on when unset or
+/// Whether this server runs the scheduled background jobs (PACKMOAT_BACKGROUND_JOBS): <c>on</c> or <c>off</c>, on when unset or
 /// empty. Off is for running several copies of the server on one database: one copy keeps them on, or the operator runs
 /// <c>packmoat-admin jobs run retention</c> on a schedule.
 /// <para>Off leaves out the core's daily retention pass (<see cref="RetentionService"/>) and a module's own scheduled jobs (each module

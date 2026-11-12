@@ -11,7 +11,7 @@ using Packmoat.Host.Web;
 
 namespace Packmoat.Host.Tests;
 
-/// <summary>Auto-join on the customer site (#80), end to end through the fake Microsoft sign-in, and the real OIDC event.</summary>
+/// <summary>Auto-join on the customer site, end to end through the fake Microsoft sign-in, and the real OIDC event.</summary>
 [Collection("sqlite-pools")]
 public class AutoJoinSiteTests
 {
@@ -24,10 +24,10 @@ public class AutoJoinSiteTests
     private const string Grace = "ffffffff-ffff-4fff-8fff-ffffffffffff";
     private const string Origin = "https://" + AppHost;
 
-    // The wording of #80, as the pages encode it.
+    // The wording of the auto-join pages, as the pages encode it.
     private static readonly string NoRoleText = AppHtml.E("Your organisation only lets in people with a Packmoat role. Ask your administrator to give you the Packmoat Developer role.");
     private static readonly string GuestText = AppHtml.E("Guest accounts need a Packmoat role to sign in. Ask the organisation's administrator to give you the Packmoat Developer role.");
-    /// <summary>No usable acct claim (MemberStatusUnknown): the no-role wording of #79.</summary>
+    /// <summary>No usable acct claim (MemberStatusUnknown): the no-role wording.</summary>
     private static readonly string UnknownText = AppHtml.E("Your account has no Packmoat role. Ask your administrator to assign Packmoat.Admin or Packmoat.Developer.");
     private static readonly string OnText = AppHtml.E("Anyone in your organisation can sign in as a Developer without being given a role, and can create feed tokens that read your packages. Guests still need a Packmoat role.");
     private static readonly string OffText = AppHtml.E("Only people with a Packmoat role can sign in. Give people the Packmoat Developer role in Microsoft Entra.");
@@ -156,7 +156,7 @@ public class AutoJoinSiteTests
             var (b, callback) = await Callback(f, person);
             Assert.Equal(HttpStatusCode.Forbidden, callback.StatusCode);
             var body = await callback.Content.ReadAsStringAsync();
-            Assert.Contains("<h1>No Packmoat role</h1><p>" + UnknownText + "</p>", body);   // the #79 wording, not the guest card
+            Assert.Contains("<h1>No Packmoat role</h1><p>" + UnknownText + "</p>", body);   // the no-role wording, not the guest card
             Assert.DoesNotContain(GuestText, body);
             Assert.False(b.HasCookie(AppSite.CookieName));
             Assert.DoesNotContain(b.SetCookieLog, c => c.StartsWith(AppSite.CookieName + "="));
