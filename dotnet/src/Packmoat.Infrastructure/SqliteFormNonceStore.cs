@@ -28,7 +28,7 @@ public sealed class SqliteFormNonceStore : IFormNonceStore
         var now = _clock.UtcNow.ToUniversalTime();
         var subject = FormNonceRules.Hash(key);
         await using var c = await _db.OpenAsync(ct);
-        await using var tx = (SqliteTransaction)await c.BeginTransactionAsync(ct);   // BEGIN IMMEDIATE: the trim and the insert see the same rows
+        await using var tx = c.BeginTransaction(System.Data.IsolationLevel.Serializable, deferred: false);   // BEGIN IMMEDIATE: explicit, so a later read ahead of the trim cannot make this a deferred read-then-write (no test can tell: the trim is the first statement)
         await using (var trim = c.CreateCommand())
         {
             trim.Transaction = tx;

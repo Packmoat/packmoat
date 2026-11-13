@@ -135,6 +135,25 @@ public abstract class FormNonceStoreContract : StoreContract
         Assert.Equal((long)Cap, await ScalarAsync(t, "SELECT COUNT(*) FROM form_nonces"));
     }
 
+    /// <summary>
+    /// The issue's trim and insert are one transaction: with the key at its cap and the trim refused by the database, the issue throws,
+    /// the key keeps exactly its nonces, and the new nonce was not stored (a consume of it finds nothing).
+    /// </summary>
+    [EngineFact]   // mutations: the trim's failure caught and the insert gone ahead; the trim run after the insert
+    public async Task A_failed_trim_writes_nothing()
+    {
+        await using var t = await CreateDbAsync();
+        var store = Engine.FormNonces(t);
+        for (var i = 0; i < Cap; i++) await store.IssueAsync(Scope, "old-" + i, Key, Life, Cap);
+        var before = await ColumnAsync(t, "SELECT nonce_hash FROM form_nonces ORDER BY nonce_hash");
+        await Engine.ArrangeFailingTrimAsync(t);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => store.IssueAsync(Scope, Nonce, Key, Life, Cap));
+
+        Assert.Equal(before, await ColumnAsync(t, "SELECT nonce_hash FROM form_nonces ORDER BY nonce_hash"));
+        Assert.Equal(0L, await ScalarAsync(t, $"SELECT COUNT(*) FROM form_nonces WHERE nonce_hash = '{FormNonceRules.Hash(Nonce)}'"));
+    }
+
     [EngineFact]   // mutation: the prune deleting a live nonce (a form shown a minute ago would be refused)
     public async Task The_prune_deletes_expired_nonces_and_keeps_live_ones()
     {

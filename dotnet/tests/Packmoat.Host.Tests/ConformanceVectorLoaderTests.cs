@@ -58,7 +58,7 @@ public class ConformanceVectorLoaderTests
         Assert.Contains("tenant", Refused(TokenCheck, With(GoodToken, c => c["input"]!["tokens"]![0]!.AsObject().Remove("tenant"))));
     }
 
-    /// <summary>The review's probes: each used to load and pass vacuously.</summary>
+    /// <summary>Probes: each used to load and pass vacuously.</summary>
     [Fact]
     public void A_misspelled_field_anywhere_is_refused_rather_than_ignored()
     {

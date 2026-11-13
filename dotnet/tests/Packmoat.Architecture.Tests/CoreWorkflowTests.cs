@@ -33,8 +33,9 @@ public class CoreWorkflowTests
     // A .. segment: two dots with no other dot or name character on either side, so "cd ..;", "..&&", "../x" and "$X/.." are all caught.
     private static readonly Regex ParentSegment = new(@"(?<![\w.-])\.\.(?![\w.-])", RegexOptions.CultureInvariant);
     // First segments that name no folder in core-image.yml, and only there: a registry host (ghcr.io/x/y, docker.io/x/y), a
-    // platform (linux/amd64), a git ref (refs/heads/main) and the repository its guard names (Packmoat/packmoat, pinned by PublisherProblems).
-    private static readonly string[] PublisherNotFolders = ["docker.io", "ghcr.io", "linux", "refs", "Packmoat"];
+    // platform (linux/amd64) and a git ref (refs/heads/main). The repository its guard names (Packmoat/packmoat) is exempt on that one
+    // line only (the exemptLine argument of OutsidePaths), so a path that starts with it anywhere else is still caught.
+    private static readonly string[] PublisherNotFolders = ["docker.io", "ghcr.io", "linux", "refs"];
     private static readonly Regex PathKey = new(@"^\s*-?\s*(working-directory|global-json-file|cache-dependency-path|path):\s*['""]?([^'""\s]+)", RegexOptions.CultureInvariant);
 
     /// <summary>
@@ -42,8 +43,9 @@ public class CoreWorkflowTests
     /// in neither the root nor one of the workflow's working directories; a working-directory or global-json-file that is not in the root;
     /// and the word "hosted" anywhere, comments included. Comments are otherwise not read, and neither is an action reference (<c>uses:</c>) or a service's container image (<c>image:</c>).
     /// A first segment in <paramref name="notFolders"/> is not a path; only <see cref="Publisher"/> is given any (<see cref="PublisherNotFolders"/>).
+    /// A line whose trimmed text is exactly <paramref name="exemptLine"/> may also name the repository <c>Packmoat/packmoat</c> (and nothing longer).
     /// </summary>
-    internal static IReadOnlyList<string> OutsidePaths(string workflow, string root, IReadOnlyCollection<string>? notFolders = null)
+    internal static IReadOnlyList<string> OutsidePaths(string workflow, string root, IReadOnlyCollection<string>? notFolders = null, string? exemptLine = null)
     {
         notFolders ??= [];
         var found = new List<string>();
@@ -58,8 +60,9 @@ public class CoreWorkflowTests
             var line = Regex.Replace(raw, @"(^|\s)#.*$", "");
             if (Regex.IsMatch(line, @"^\s*-?\s*(uses|image):")) continue;   // an action or a container image, not a path
             if (ParentSegment.IsMatch(line)) found.Add($"line {number}: a .. segment: {line.Trim()}");
+            var exempt = exemptLine is not null && line.Trim() == exemptLine;
             foreach (Match m in RelativePath.Matches(line))
-                if (m.Groups[1].Value != ".." && !notFolders.Contains(m.Groups[1].Value) &&!bases.Any(b => InCore(Path.Combine(root, b), m.Groups[1].Value))) found.Add($"line {number}: {m.Value} is not in the repository");
+                if (!(exempt && m.Value == "Packmoat/packmoat") && m.Groups[1].Value != ".." && !notFolders.Contains(m.Groups[1].Value) &&!bases.Any(b => InCore(Path.Combine(root, b), m.Groups[1].Value))) found.Add($"line {number}: {m.Value} is not in the repository");
             var key = PathKey.Match(line);
             if (key.Success && !key.Groups[2].Value.StartsWith('$'))
             {
@@ -71,15 +74,15 @@ public class CoreWorkflowTests
     }
 
     [Fact]   // mutation: a release.yml added
-    public void The_core_has_its_codeql_conformance_image_dotnet_gitleaks_helm_and_scorecard_workflows() =>
-        Assert.Equal(["codeql.yml", "conformance.yml", "core-image.yml", "dotnet.yml", "gitleaks.yml", "helm.yml", "scorecard.yml"],
+    public void The_core_has_its_codeql_conformance_image_dotnet_gitleaks_helm_scorecard_and_templates_workflows() =>
+        Assert.Equal(["codeql.yml", "conformance.yml", "core-image.yml", "dotnet.yml", "gitleaks.yml", "helm.yml", "scorecard.yml", "templates.yml"],
             Workflows().Select(w => w.Name).ToArray());
 
     [Fact]   // mutation: working-directory: ../hosted/dotnet in core/.github/workflows/dotnet.yml
     public void The_core_workflows_name_only_paths_inside_core()
     {
         var root = CoreRoot();
-        var offenders = Workflows().SelectMany(w => OutsidePaths(w.Text, root, w.Name == Publisher ? PublisherNotFolders : null)
+        var offenders = Workflows().SelectMany(w => OutsidePaths(w.Text, root, w.Name == Publisher ? PublisherNotFolders : null, w.Name == Publisher ? PublishGuard : null)
             .Select(o => $"{w.Name} {o}")).ToArray();
         Assert.True(offenders.Length == 0, "core/.github/workflows runs with core/ as the repository root; these name something outside it:\n" + string.Join("\n", offenders));
     }
@@ -119,7 +122,8 @@ public class CoreWorkflowTests
                           platforms: linux/amd64,linux/arm64
                         run: cosign verify --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/x.yml@refs/heads/main"
                 """;
-            Assert.Empty(OutsidePaths(publisher, root, PublisherNotFolders));
+            Assert.Empty(OutsidePaths(publisher, root, PublisherNotFolders, PublishGuard));
+            Assert.Single(OutsidePaths(publisher, root, PublisherNotFolders));            // without the exemption the guard's repository is a path too
             Assert.Equal(6, OutsidePaths(publisher, root).Count);                         // in any other workflow each is a path outside, but the image: line
             // An image: line names a container image (a service's, or an action's input), never a path.
             Assert.Empty(OutsidePaths("        image: edoburu/pgbouncer@sha256:8638aa563607256d3c7440437534195f1066a92b68015d89ae9d6b935b444a6d\n", root));
@@ -144,6 +148,14 @@ public class CoreWorkflowTests
             Assert.Equal(2, OutsidePaths("        working-directory: " + "core" + "/dotnet\n", root).Count);   // the path, and the working directory
             Assert.Single(OutsidePaths("        run: dotnet build Packmoat.Hosted.sln\n", root));
             Assert.Single(OutsidePaths("        # the hosted image\n", root));
+            // The repository name is exempt on the guard line alone: elsewhere, or with a longer name, it is a path outside.
+            Assert.Empty(OutsidePaths("        " + PublishGuard + "\n", root, PublisherNotFolders, PublishGuard));
+            Assert.Single(OutsidePaths("        run: cat Packmoat/x\n", root, PublisherNotFolders, PublishGuard));
+            Assert.Single(OutsidePaths("        run: cat Packmoat/packmoat\n", root, PublisherNotFolders, PublishGuard));
+            // A longer name is not the exempt one even when it is the exempt line itself; and the exempt line with more after it is no longer exact.
+            var longer = "        " + PublishGuard.Replace("Packmoat/packmoat'", "Packmoat/packmoat-x'") + "\n";
+            Assert.Single(OutsidePaths(longer, root, PublisherNotFolders, longer.Trim()));
+            Assert.Equal(2, OutsidePaths("        " + PublishGuard + " && cat Packmoat/packmoat\n", root, PublisherNotFolders, PublishGuard).Count);
         }
         catch when (TempDir.Failing(root)) { throw; }
         finally { TempDir.Delete(root); }
@@ -637,6 +649,8 @@ public class CoreWorkflowTests
         Assert.Matches(@"(?m)^version=\d+\.\d+\.\d+$", script);
         Assert.Matches(@"(?m)^sha256=[0-9a-f]{64}$", script);
         Assert.Matches(@"(?m)^set -euo pipefail$", script);
+        AssertCurlsUnderStrictMode(script, 1);
+        Assert.Matches(@"(?m)^curl -fsSL " + RetryFlags + @" -o ""\$dir/gitleaks\.tar\.gz"" \\$", script);
         // The whole line: nothing after the check (|| true, ; true, & ...) can let a wrong download through.
         Assert.Matches(@"(?m)^echo ""\$\{sha256\}  \$dir/gitleaks\.tar\.gz"" \| sha256sum --check --strict -$", script);
         Assert.Matches(@"(?m)^""\$dir/gitleaks"" ""\$@"" --redact --no-banner$", script);
@@ -650,6 +664,51 @@ public class CoreWorkflowTests
         var code = Regex.Replace(workflow, @"(?m)^\s*#.*$", "");
         Assert.DoesNotContain("continue-on-error", code);
         Assert.DoesNotMatch(@"\|\||set\s+\+e", code);
+    }
+
+    // A busy release host answers 5xx for a while: the downloads wait it out (and retry on any error), for at most two minutes.
+    private const string RetryFlags = @"--retry 6 --retry-all-errors --retry-max-time 120";
+
+    // Exactly this many curl commands (any indentation), and strict mode is on before the first: no extra, unchecked download.
+    private static void AssertCurlsUnderStrictMode(string script, int count)
+    {
+        var curls = Regex.Matches(script, @"(?m)^\s*curl\b");
+        Assert.Equal(count, curls.Count);
+        var strict = script.IndexOf("\nset -euo pipefail\n", StringComparison.Ordinal);
+        Assert.True(strict >= 0 && strict < curls[0].Index, "set -euo pipefail must come before the first curl");
+    }
+
+    [Fact]   // mutations: --retry 3; --retry-all-errors removed; || true after the hash check; the check indented inside an if
+    public void The_workflow_linter_runs_a_pinned_checked_release_and_retries_its_download()
+    {
+        var script = File.ReadAllText(Path.Combine(CoreRoot(), ".github", "scripts", "actionlint.sh")).Replace("\r\n", "\n");
+        Assert.Matches(@"(?m)^version=\d+\.\d+\.\d+$", script);
+        Assert.Matches(@"(?m)^sha256=[0-9a-f]{64}$", script);
+        Assert.Matches(@"(?m)^set -euo pipefail$", script);
+        AssertCurlsUnderStrictMode(script, 1);
+        Assert.Matches(@"(?m)^curl -fsSL " + RetryFlags + @" -o ""\$dir/actionlint\.tar\.gz"" \\$", script);
+        Assert.Matches(@"(?m)^echo ""\$\{sha256\}  \$dir/actionlint\.tar\.gz"" \| sha256sum --check --strict -$", script);
+        Assert.Matches(@"(?m)^""\$dir/actionlint"" ""\$@""$", script);
+        Assert.DoesNotMatch(@"\|\||set\s+\+e", script);
+    }
+
+    [Fact]   // mutations: --retry 3 or --retry-all-errors removed on either download in install-helm-kind.sh
+    public void The_helm_and_kind_downloads_retry_like_the_other_tools()
+    {
+        var script = File.ReadAllText(Path.Combine(CoreRoot(), ".github", "scripts", "install-helm-kind.sh")).Replace("\r\n", "\n");
+        var curls = Regex.Matches(script, @"(?m)^curl .*$").Select(m => m.Value).ToArray();
+        Assert.Equal(2, curls.Length);
+        AssertCurlsUnderStrictMode(script, 2);
+        Assert.All(curls, c => Assert.StartsWith("curl -fsSL " + RetryFlags + " -o ", c));
+    }
+
+    [Fact]   // mutations: --retry 3, or --retry-all-errors removed, on the bicep download; a second curl added; set -euo pipefail moved below it
+    public void The_bicep_download_retries_like_the_other_tools()
+    {
+        var script = File.ReadAllText(Path.Combine(CoreRoot(), ".github", "scripts", "install-iac-tools.sh")).Replace("\r\n", "\n");
+        AssertCurlsUnderStrictMode(script, 1);
+        Assert.Matches(@"(?m)^curl -fsSL " + RetryFlags + @" -o ""\$dir/bicep"" ", script);
+        Assert.Matches(@"(?m)^echo ""\$\{bicep_sha256\}  \$dir/bicep"" \| check$", script);
     }
 
     /// <summary>The actions each scanner may use. Scorecard publishes its results only from a workflow whose job uses its approved

@@ -108,7 +108,11 @@ public sealed class CustomerPage<T> where T : class
     /// <summary>The antiforgery hidden field, for a form that posts to this site.</summary>
     public string AntiforgeryField() => AppHtml.Hidden(SignedInSite.AntiforgeryField, SignedInSite.AntiforgeryToken(Http));
 
-    /// <summary>A single-use form nonce for <paramref name="key"/> (the customer site's own scope).</summary>
+    /// <summary>
+    /// A single-use form nonce for <paramref name="key"/> (the customer site's own scope). The key must come from the signed-in person
+    /// or the prospect (<see cref="Who"/>), never from request input: a key the caller chooses lets anyone push out another person's
+    /// nonces (each issue drops the key's oldest beyond the cap) or fill the table with a made-up key per request.
+    /// </summary>
     public Task<string> IssueNonceAsync(string key) => Http.RequestServices.GetRequiredService<AppFormNonces>().IssueAsync(key, Http.RequestAborted);
 
     /// <summary>True once for a live nonce issued for <paramref name="key"/>.</summary>

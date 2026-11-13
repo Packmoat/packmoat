@@ -11,7 +11,7 @@ namespace Packmoat.TestSupport;
 /// does every tests folder built on the core: a project there cannot leave it out). When the framework is made, before any test runs, it
 /// points the process's temporary folder (TMPDIR; TMP and TEMP on Windows) at a new, empty folder of its own,
 /// <c>&lt;temp&gt;/pmrun-&lt;assembly&gt;-&lt;guid&gt;/</c>; child processes inherit it. After the last test it closes SQLite's pooled
-/// connections, lists that folder and reports every entry left there (outside <see cref="Allowed"/>) as an error, which fails the run and
+/// connections (process-wide), lists that folder and reports every entry left there (outside <see cref="Allowed"/>) as an error, which fails the run and
 /// names the path, with every delete that failed after its test had failed (<see cref="TempDir.Failing(string)"/>). Then it deletes the
 /// folder. A problem with the folder itself (gone, unreadable) is reported the same way; it never stops the test host.
 /// </summary>
@@ -92,7 +92,11 @@ public sealed class TempLeakGuard : XunitTestFramework
             var folder = RunFolder(new AssemblyName(TestAssembly.Assembly.Name).Name!, make: true);
             var summary = await base.RunTestCollectionsAsync(messageBus, cancellationTokenSource);
             IReadOnlyList<string> problems;
-            try { problems = Check(folder, endOfRun: true); }
+            try
+            {
+                TempDir.ClearSqlitePools();   // process-wide, so only here, after the last test
+                problems = Check(folder, endOfRun: true);
+            }
             catch (Exception e) { problems = [$"The temporary-folder check of {folder} failed: {e}"]; }
             foreach (var problem in problems)
                 messageBus.QueueMessage(new ErrorMessage(TestCases, ["Packmoat.TestSupport.TempLeak"], [problem], [null], [-1]));
@@ -102,15 +106,14 @@ public sealed class TempLeakGuard : XunitTestFramework
 
     /// <summary>
     /// What is wrong with <paramref name="folder"/> (nothing, when the tests cleaned up); the folder is deleted. Only files may match
-    /// <see cref="Allowed"/>. <paramref name="endOfRun"/> is set by the guard alone, after the last test: it first closes SQLite's pooled
-    /// connections (process-wide, so never while a test runs) and adds the deletes <see cref="TempDir"/> deferred.
+    /// <see cref="Allowed"/>. <paramref name="endOfRun"/> is set by the guard after the last test (and by one self-test): it adds the deletes <see cref="TempDir"/> deferred
+    /// (every one in the process, taken once). The caller closes SQLite's pooled connections first (process-wide, so never while a test runs).
     /// </summary>
     internal static IReadOnlyList<string> Check(string folder, bool endOfRun)
     {
         var problems = new List<string>();
         if (endOfRun)
         {
-            TempDir.ClearSqlitePools();
             problems.AddRange(TempDir.TakeDeferred());
         }
         try

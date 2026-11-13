@@ -324,7 +324,7 @@ public sealed class PostgresMigratorTests : IAsyncLifetime
         Assert.Contains("probe_items.name text", await scratch.SnapshotAsync());
     }
 
-    // Review F5. mutation: the part-way rule applied to every track (the later build then refuses the module at version 2 of 3)
+    // Mutation: the part-way rule applied to every track (the later build then refuses the module at version 2 of 3)
     [PostgresFact]
     public async Task A_module_recorded_at_its_empty_versions_runs_on_when_a_later_build_adds_statements()
     {
@@ -337,7 +337,7 @@ public sealed class PostgresMigratorTests : IAsyncLifetime
         Assert.Contains("probe_items.id integer", await scratch.SnapshotAsync());
     }
 
-    // Review F5: the core's rule stands for a test core whose first version is empty too
+    // The core's rule stands for a test core whose first version is empty too
     [PostgresFact]
     public async Task A_core_recorded_before_its_first_version_with_statements_is_refused()
     {

@@ -33,7 +33,7 @@ public class PostgresMasterKeyCheckTests : MasterKeyCheckContract
     protected override IMasterKeyEngine Engine => PostgresSqlEngine.Instance;
 
     /// <summary>
-    /// Review F4 under real concurrency: two first starts at once with different keys, as two real sessions. Exactly one passes, the other
+    /// Under real concurrency: two first starts at once with different keys, as two real sessions. Exactly one passes, the other
     /// stops with the start's message, and one marker is kept: the winner's. The deterministic case, the same on every engine, is
     /// <see cref="MasterKeyCheckContract.Of_two_first_starts_with_different_keys_exactly_one_passes"/>; this one checks the same
     /// outcome with no test hook in the database, PostgreSQL only.

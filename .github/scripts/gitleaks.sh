@@ -12,7 +12,7 @@ sha256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
 
 dir="$(mktemp -d)"
 trap 'rm -rf "$dir"' EXIT
-curl -fsSL --retry 3 -o "$dir/gitleaks.tar.gz" \
+curl -fsSL --retry 6 --retry-all-errors --retry-max-time 120 -o "$dir/gitleaks.tar.gz" \
   "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz"
 echo "${sha256}  $dir/gitleaks.tar.gz" | sha256sum --check --strict -
 tar -xzf "$dir/gitleaks.tar.gz" -C "$dir" gitleaks

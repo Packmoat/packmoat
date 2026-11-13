@@ -10,7 +10,7 @@ using static Packmoat.Host.Tests.AdminSiteFixture;
 
 namespace Packmoat.Host.Tests;
 
-/// <summary>Review follow-ups: each allowlist check alone, error pages, host filtering, the redirect uri and the key folder.</summary>
+/// <summary>Hardening checks: each allowlist check alone, error pages, host filtering, the redirect uri and the key folder.</summary>
 [Collection("sqlite-pools")]
 public class AdminSiteHardeningTests
 {

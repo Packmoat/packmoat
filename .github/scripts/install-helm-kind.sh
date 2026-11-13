@@ -31,12 +31,12 @@ check() { if command -v sha256sum > /dev/null; then sha256sum --check --strict -
 dir="$(mktemp -d)"
 trap 'rm -rf "$dir"' EXIT
 
-curl -fsSL --retry 3 -o "$dir/helm.tar.gz" "https://get.helm.sh/helm-v${helm_version}-${platform}.tar.gz"
+curl -fsSL --retry 6 --retry-all-errors --retry-max-time 120 -o "$dir/helm.tar.gz" "https://get.helm.sh/helm-v${helm_version}-${platform}.tar.gz"
 echo "${helm_sha256}  $dir/helm.tar.gz" | check
 tar -xzf "$dir/helm.tar.gz" -C "$dir" "${platform}/helm"
 install -m 755 "$dir/${platform}/helm" "$bin/helm"
 
-curl -fsSL --retry 3 -o "$dir/kind" "https://github.com/kubernetes-sigs/kind/releases/download/v${kind_version}/kind-${platform}"
+curl -fsSL --retry 6 --retry-all-errors --retry-max-time 120 -o "$dir/kind" "https://github.com/kubernetes-sigs/kind/releases/download/v${kind_version}/kind-${platform}"
 echo "${kind_sha256}  $dir/kind" | check
 install -m 755 "$dir/kind" "$bin/kind"
 

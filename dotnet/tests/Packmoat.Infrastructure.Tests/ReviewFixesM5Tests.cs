@@ -3,7 +3,7 @@ using Packmoat.Application;
 
 namespace Packmoat.Infrastructure.Tests;
 
-/// <summary>Regression tests for the review findings on the onboarding tools (M5): safe certificate files and clean errors.</summary>
+/// <summary>Regression tests for the onboarding tools: safe certificate files and clean errors.</summary>
 [Collection("sqlite-pools")]
 public class ReviewFixesM5Tests
 {

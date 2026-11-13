@@ -5,7 +5,7 @@ using Packmoat.Infrastructure;
 
 namespace Packmoat.Host.Tests;
 
-/// <summary>Regression tests for the review findings on onboarding verification (M5).</summary>
+/// <summary>Regression tests for onboarding verification.</summary>
 public class ReviewFixesM5Tests
 {
     private const string Packmoat = "AadServicePrincipal;tenant\\11111111-spid";
