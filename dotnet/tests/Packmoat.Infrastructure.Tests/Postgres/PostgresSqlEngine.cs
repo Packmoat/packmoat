@@ -165,6 +165,19 @@ public class PostgresSqlEngine : IMasterKeyEngine
             """);
         await ExecAsync(t, "CREATE TRIGGER test_rival_marker BEFORE INSERT ON meta FOR EACH ROW EXECUTE FUNCTION test_rival_marker()");
     }
+
+    /// <summary>A plpgsql trigger function that raises on every delete from form_nonces (the trim's), as a row-level refusal (FOR EACH ROW).</summary>
+    public async Task ArrangeFailingTrimAsync(IEngineDb t)
+    {
+        await ExecAsync(t, """
+            CREATE FUNCTION test_refuse_delete() RETURNS trigger LANGUAGE plpgsql AS $fn$
+            BEGIN
+                RAISE EXCEPTION 'test: deletes are refused';
+            END
+            $fn$
+            """);
+        await ExecAsync(t, "CREATE TRIGGER test_refuse_delete BEFORE DELETE ON form_nonces FOR EACH ROW EXECUTE FUNCTION test_refuse_delete()");
+    }
 }
 
 /// <summary>PostgreSQL's <see cref="IEngineDb"/>: its own database, at the core's current schema. Disposing it drops the database.</summary>

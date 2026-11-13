@@ -1,0 +1,39 @@
+# The platform templates, checked offline: no cloud account, no sign-in, nothing deployed. Today the Azure Container Apps template
+# (deploy/azure-container-apps): bicep lint and build, then its tests (jq on the compiled template and on the resources bicep snapshot
+# predicts, and what it refuses), then each test's mutation, which it must catch. bicep is a pinned release, checked by sha256
+# (.github/scripts/install-iac-tools.sh); jq is the runner's own. No secrets, a read-only token. Actions are pinned to full commit SHAs.
+# Every path here is relative to this repository's root.
+name: templates
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: templates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  templates:
+    name: templates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned bicep (checked by sha256)
+        run: |
+          .github/scripts/install-iac-tools.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Azure Container Apps template tests (bicep lint and build; what it makes and what it refuses)
+        run: deploy/azure-container-apps/test-template.sh
+      - name: Each Azure Container Apps template test catches its mutation
+        env:
+          MUTATION_JOBS: "4"
+        run: deploy/azure-container-apps/test-template.sh --mutations

@@ -87,17 +87,22 @@ public class CoreImageTests
         Assert.DoesNotContain("grep -iE", dockerfile);
     }
 
-    [Fact]   // mutations: the check deleted; moved above the publish or into the runtime stage; /out/admin left out; the adapter's name dropped
+    [Fact]   // mutations: the check deleted; moved above the publish or into the runtime stage; ONBUILD before it; SHELL (any case) after the publish;
+             // a stage opened before it; a RUN deleting a DLL after it or in the runtime stage; a third folder copied into the runtime stage
     public void The_image_build_fails_unless_its_published_output_holds_PostgreSQL()
     {
-        var dockerfile = Dockerfile().Replace("\r\n", "\n");
-        var at = dockerfile.IndexOf(PostgresCheck, StringComparison.Ordinal);
-        Assert.True(at >= 0, "the Dockerfile no longer checks that its published output carries PostgreSQL:\n" + PostgresCheck);
-        Assert.Equal(at, dockerfile.LastIndexOf(PostgresCheck, StringComparison.Ordinal));
-        var publish = dockerfile.LastIndexOf("dotnet publish ", StringComparison.Ordinal);
-        var runtime = dockerfile.IndexOf("\nFROM mcr.microsoft.com/dotnet/aspnet:", StringComparison.Ordinal);
-        Assert.True(publish >= 0 && runtime > 0, "the Dockerfile has no publish or no runtime stage");
-        Assert.True(publish < at && at < runtime, "the check must run in the build stage, after both publishes");
+        Assert.Empty(DockerfileCheck.Problems(Dockerfile(), PostgresCheck));
+    }
+
+    [Fact]   // each way past a reader that only looks for the check's text is caught, made in the real Dockerfile
+    public void The_image_check_catches_each_way_it_could_be_kept_in_text_and_not_run()
+    {
+        var holes = DockerfileCheck.Holes(Dockerfile(), PostgresCheck);
+        Assert.Equal(17, holes.Length);
+        foreach (var (name, text) in holes)
+            Assert.True(DockerfileCheck.Problems(text, PostgresCheck).Length > 0, "not caught: " + name);
+        foreach (var (name, text) in DockerfileCheck.LegalEdits(Dockerfile()))
+            Assert.True(DockerfileCheck.Problems(text, PostgresCheck).Length == 0, "wrongly rejected: " + name + "\n" + string.Join("\n", DockerfileCheck.Problems(text, PostgresCheck)));
     }
 
     [Fact]   // not vacuous: the check names both entry points' folders and both files, and each file is what the publish really makes

@@ -67,6 +67,12 @@ public interface IMasterKeyEngine : ISqlEngine
     /// start's read and its write, every time.
     /// </summary>
     Task ArrangeRivalMarkerAsync(IEngineDb t, byte[] rivalMarker);
+
+    /// <summary>
+    /// Test only: adds a BEFORE DELETE trigger on form_nonces to <paramref name="t"/>'s database alone that refuses every delete, so
+    /// an issue's trim of the key's oldest nonces fails while its insert alone would succeed.
+    /// </summary>
+    Task ArrangeFailingTrimAsync(IEngineDb t);
 }
 
 /// <summary>
@@ -229,6 +235,9 @@ public sealed class SqliteStoreEngine : SqliteSqlEngine, IStoreEngine
             BEGIN INSERT INTO meta(key, value) VALUES('key_check', {rival}); END
             """);
     }
+
+    public Task ArrangeFailingTrimAsync(IEngineDb t) => ExecAsync(t,
+        "CREATE TRIGGER test_refuse_delete BEFORE DELETE ON form_nonces BEGIN SELECT RAISE(ABORT, 'test: deletes are refused'); END");
     public TokenActivityPorts TokenActivity(IEngineDb t)
     {
         var activity = new SqliteTokenActivity(Sql(t).Db, t.Clock);

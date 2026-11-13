@@ -46,6 +46,6 @@ The full list of settings is in the [operations guide](../operations.md#settings
 | [Single server](single-server.md) | One Linux server with Docker. Includes a ready-made HTTPS proxy and backups. | Supported |
 | [Your own proxy](own-proxy.md) | You already have HTTPS in front: nginx, a cloud load balancer or similar. | Supported |
 | [Kubernetes](kubernetes.md) | A cluster, with the Helm chart. | Supported. The chart is not published to a chart repository yet. |
-| [Azure Container Apps](azure-container-apps.md) | A managed container platform on Azure. | Supported (pre-production), more than one copy on PostgreSQL (SQLite runs one); tested in CI against PostgreSQL 17. It needs a PostgreSQL database. |
+| [Azure Container Apps](azure-container-apps.md) | A managed container platform on Azure. | Supported (pre-production), more than one copy on PostgreSQL (SQLite runs one); tested in CI against PostgreSQL 17. It needs a PostgreSQL database. A Bicep template (`deploy/azure-container-apps`): template checked offline in CI; not yet deployed by the project. |
 
 If you would rather not run Packmoat yourself, a hosted service is available at https://packmoat.com.

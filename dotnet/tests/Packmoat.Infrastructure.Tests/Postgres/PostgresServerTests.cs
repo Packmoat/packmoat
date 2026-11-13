@@ -35,7 +35,7 @@ public class PostgresServerTests
         await using var command = new NpgsqlCommand("SELECT 1", connection);
         Assert.Equal(1, await command.ExecuteScalarAsync());
 
-        // Review F3: in CI the PostgreSQL tests are set to run, the contract ones too (through the discoverer itself), not to skip.
+        // In CI the PostgreSQL tests are set to run, the contract ones too (through the discoverer itself), not to skip.
         Assert.Null(new PostgresFactAttribute().Skip);
         Assert.Null(new PostgresTheoryAttribute().Skip);
         Assert.All(EngineFactTests.ContractTests(), m => Assert.All(EngineFactTests.Discover(typeof(PostgresMasterKeyCheckTests), m), c => Assert.Null(c.SkipReason)));

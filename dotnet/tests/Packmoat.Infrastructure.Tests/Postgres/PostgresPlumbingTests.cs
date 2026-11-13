@@ -256,6 +256,52 @@ public class PostgresPlumbingServerTests
         return (bool)(await cmd.ExecuteScalarAsync())!;
     }
 
+    // A waiter that connects after the holder's transaction first polled is still seen by later polls: the probe drops the session's
+    // snapshot of pg_stat_activity before each count, which a transaction would otherwise keep from its first read to its end.
+    // mutation: the pg_stat_clear_snapshot call removed from PostgresLockProbe.CountAsync (the wait runs out its deadline)
+    [PostgresFact]
+    public async Task A_lock_waiter_that_connects_after_the_first_poll_is_still_counted_in_the_holders_transaction()
+    {
+        await using var t = await Engine.CreateAsync();
+        var db = ((PostgresTestDb)t).Db;
+        await using var holder = await db.OpenAsync();
+        await using var holding = await holder.BeginTransactionAsync();
+        await using (var take = new NpgsqlCommand("SELECT lock_tenant_id('acme', true)", holder, holding)) await take.ExecuteNonQueryAsync();
+
+        var waiting = "SELECT COUNT(DISTINCT l.pid) FROM pg_catalog.pg_locks l WHERE NOT l.granted AND " + PostgresLockProbe.Others + " AND " + PostgresLockProbe.TenantLock("acme");
+        // A first poll that reads the view itself (the waiting count's subquery on it is not run while no lock is waited for), so that this
+        // transaction holds a snapshot of it from before the waiter exists.
+        await PostgresLockProbe.CountAsync(holder, holding, "SELECT COUNT(*) FROM pg_catalog.pg_stat_activity WHERE datname = pg_catalog.current_database()");
+        Assert.Equal(0L, await PostgresLockProbe.CountAsync(holder, holding, waiting));
+
+        var waiter = Task.Run(async () =>
+        {
+            await using var c = await ((PostgresTestDb)t).OpenAsTestServerAsync();   // unpooled: a session that did not exist at the first poll
+            await using var tx = await c.BeginTransactionAsync();
+            await using var cmd = new NpgsqlCommand("SELECT lock_tenant_id('acme', true)", c, tx);
+            await cmd.ExecuteNonQueryAsync();
+            await tx.CommitAsync();
+        });
+
+        var committed = false;
+        try
+        {
+            await PostgresLockProbe.WaitUntilAsync(holder, holding, waiting, 1, waiter);
+            Assert.False(waiter.IsCompleted, "the waiter finished while the holder held the lock");
+            Assert.Equal(1L, await PostgresLockProbe.CountAsync(holder, holding, waiting));
+
+            await holding.CommitAsync();
+            committed = true;
+            await waiter.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+        finally
+        {
+            // Whatever failed above: let the lock go and settle the waiter before the connections and the database are disposed.
+            if (!committed) await holding.RollbackAsync();
+            try { await waiter.WaitAsync(TimeSpan.FromSeconds(30)); } catch { /* the failure being reported is the earlier one */ }
+        }
+    }
+
     // Copies of the template are separate databases, each at the current schema.
     [PostgresFact]
     public async Task Each_database_is_a_separate_copy_at_the_current_schema()

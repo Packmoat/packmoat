@@ -7,7 +7,7 @@ using static Packmoat.Host.Tests.ProxyFixture;
 
 namespace Packmoat.Host.Tests;
 
-/// <summary>Regression tests for the review findings on the NuGet proxy (M2).</summary>
+/// <summary>Regression tests for the NuGet proxy.</summary>
 public class ReviewFixesM2Tests
 {
     private const string Flat = "/v3/u/org/proj/_packaging/feed/nuget/v3/flat2/";

@@ -43,7 +43,7 @@ public class TempLeakGuardTests
         }
     }
 
-    // Check(endOfRun: false) throughout: a self-test runs beside other tests, so it must not clear SQLite's pools for the whole process.
+    // Check(endOfRun: false) except in the last test: a self-test runs beside other tests, and an end-of-run check takes every deferred delete in the process.
 
     [Fact]
     public void Only_entries_outside_the_allowlist_are_reported_and_the_folder_goes()
@@ -102,6 +102,36 @@ public class TempLeakGuardTests
             Assert.Equal("the test's own failure", thrown.Message);
             Assert.Contains(locked, TempDir.TakeDeferred(locked), StringComparison.Ordinal);   // the guard would report it after the last test
             Assert.ThrowsAny<Exception>(() => TempDir.Delete(locked));      // without a failure first, the delete throws
+        }
+        finally
+        {
+            File.SetUnixFileMode(locked, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            dir.Dispose();
+        }
+    }
+
+    [Fact]   // mutation: Check(endOfRun: true) does not add TempDir's deferred deletes
+    public void The_end_of_run_check_reports_deletes_that_failed_after_their_test_failed()
+    {
+        if (OperatingSystem.IsWindows()) return;   // as A_delete_that_keeps_failing_throws
+        var dir = TempDir.Create("packmoat-guard-end-deferred-");
+        var locked = dir.File("locked");
+        Directory.CreateDirectory(locked);
+        File.WriteAllText(Path.Combine(locked, "f.txt"), "x");
+        File.SetUnixFileMode(locked, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            void FailingTest()
+            {
+                try { throw new InvalidOperationException("the test's own failure"); }
+                catch when (TempDir.Failing(locked)) { throw; }
+                finally { TempDir.Delete(locked); }
+            }
+            Assert.Throws<InvalidOperationException>(FailingTest);
+            var folder = Directory.CreateTempSubdirectory("packmoat-guard-end-").FullName;
+            var problems = TempLeakGuard.Check(folder, endOfRun: true);   // takes every deferred entry in the process, so look for ours
+            Assert.Contains(problems, p => p.Contains(locked, StringComparison.Ordinal) && p.Contains("after its test had failed", StringComparison.Ordinal));
+            Assert.False(Directory.Exists(folder));
         }
         finally
         {
