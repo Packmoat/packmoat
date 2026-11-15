@@ -20,6 +20,14 @@ public sealed class NuGetOrgDateOptions
     public int MaxConcurrentFetches { get; set; } = 8;
     /// <summary>The largest registration document we will read, enforced while reading.</summary>
     public long MaxResponseBytes { get; set; } = 32 * 1024 * 1024;
+    /// <summary>One request to nuget.org (headers and body together) is given up on after this long.</summary>
+    public TimeSpan AttemptTimeout { get; set; } = TimeSpan.FromSeconds(10);
+    /// <summary>How many times one request is tried when it stalls or fails in a way that may pass (1 means no retry).</summary>
+    public int Attempts { get; set; } = 2;
+    /// <summary>The pause before a second try.</summary>
+    public TimeSpan RetryDelay { get; set; } = TimeSpan.FromMilliseconds(500);
+    /// <summary>The whole fetch of one package (the index and every page, with any retries) must finish within this, or it fails.</summary>
+    public TimeSpan FetchBudget { get; set; } = TimeSpan.FromSeconds(40);
 }
 
 /// <summary>
@@ -47,10 +55,17 @@ public sealed class NuGetOrgPublishDateSource : IPublishDateSource
     private readonly object _lock = new();
     private readonly SemaphoreSlim _gate;
 
-    public NuGetOrgPublishDateSource(HttpClient http, IClock clock, NuGetOrgDateOptions? options = null)
+    private readonly Action<string>? _log;
+    private readonly Action<string>? _logRetry;
+
+    /// <param name="log">Where a failed fetch is reported (a warning); null for silence.</param>
+    /// <param name="logRetry">Where a retry is reported (information); null for silence.</param>
+    public NuGetOrgPublishDateSource(HttpClient http, IClock clock, NuGetOrgDateOptions? options = null, Action<string>? log = null, Action<string>? logRetry = null)
     {
         _http = http;
         _clock = clock;
+        _log = log;
+        _logRetry = logRetry;
         _options = options ?? new NuGetOrgDateOptions();
         _gate = new SemaphoreSlim(_options.MaxConcurrentFetches);
     }
@@ -102,7 +117,8 @@ public sealed class NuGetOrgPublishDateSource : IPublishDateSource
             await _gate.WaitAsync();
             try
             {
-                var (dates, notFound) = await FetchAsync(key);
+                using var budget = new CancellationTokenSource(_options.FetchBudget);
+                var (dates, notFound) = await FetchAsync(key, budget.Token);
                 lock (_lock)
                 {
                     _cache[key] = new Entry { Dates = dates, FetchedAt = _clock.UtcNow, NotFound = notFound };
@@ -111,8 +127,9 @@ public sealed class NuGetOrgPublishDateSource : IPublishDateSource
             }
             finally { _gate.Release(); }
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Report(_log, $"nuget.org dates for {key} failed: {Describe(ex)}");
             lock (_lock)
             {
                 if (!_cache.TryGetValue(key, out var e)) _cache[key] = e = new Entry();
@@ -141,10 +158,10 @@ public sealed class NuGetOrgPublishDateSource : IPublishDateSource
 
     private static TimeSpan Age(Entry e, DateTimeOffset now) => now - (e.FailedAt is { } f && (e.Dates is null || f > e.FetchedAt) ? f : e.FetchedAt);
 
-    private async Task<(IReadOnlyDictionary<string, DateTimeOffset> Dates, bool NotFound)> FetchAsync(string id)
+    private async Task<(IReadOnlyDictionary<string, DateTimeOffset> Dates, bool NotFound)> FetchAsync(string id, CancellationToken ct)
     {
         var dates = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
-        var root = await GetJsonAsync(new Uri(new Uri(_options.RegistrationBase), $"{Uri.EscapeDataString(id)}/index.json"));
+        var root = await GetJsonAsync(new Uri(new Uri(_options.RegistrationBase), $"{Uri.EscapeDataString(id)}/index.json"), ct);
         if (root is null) return (dates, true); // not on nuget.org: every version unknown
 
         foreach (var page in root["items"]?.AsArray() ?? new JsonArray())
@@ -153,7 +170,11 @@ public sealed class NuGetOrgPublishDateSource : IPublishDateSource
             if (items is null)
             {
                 var pageUrl = page?["@id"]?.GetValue<string>() ?? throw new FormatException("Registration page without items or id.");
-                items = (await GetJsonAsync(new Uri(pageUrl)) ?? throw new FormatException("Registration page vanished."))["items"] as JsonArray ?? new JsonArray();
+                var pageUri = new Uri(pageUrl);
+                var baseUri = new Uri(_options.RegistrationBase);
+                if (pageUri.Scheme != baseUri.Scheme || !string.Equals(pageUri.Host, baseUri.Host, StringComparison.OrdinalIgnoreCase) || pageUri.Port != baseUri.Port)
+                    throw new FormatException("Registration page is not on the registration host.");
+                items = (await GetJsonAsync(pageUri, ct) ?? throw new FormatException("Registration page vanished."))["items"] as JsonArray ?? new JsonArray();
             }
             foreach (var item in items)
             {
@@ -167,14 +188,48 @@ public sealed class NuGetOrgPublishDateSource : IPublishDateSource
         return (dates, false);
     }
 
-    /// <summary>Null for 404. Throws for any other failure, and when the body is bigger than the limit (checked while reading).</summary>
-    private async Task<JsonNode?> GetJsonAsync(Uri url)
+    /// <summary>
+    /// Null for 404. Throws for any other failure, and when the body is bigger than the limit (checked while reading).
+    /// A request that stalls (headers or body), cannot connect, or gets 5xx/408/429 is tried once more; 404, other 4xx,
+    /// unreadable bodies and oversized bodies are final. Once the whole fetch's budget is spent nothing is retried.
+    /// </summary>
+    private async Task<JsonNode?> GetJsonAsync(Uri url, CancellationToken ct)
     {
-        using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
-        response.EnsureSuccessStatusCode();
-        await using var body = await response.Content.ReadAsStreamAsync();
-        var text = await BoundedText.ReadAsync(body, _options.MaxResponseBytes, CancellationToken.None);
-        return JsonNode.Parse(text) ?? throw new FormatException("Empty registration.");
+        for (var attempt = 1; ; attempt++)
+        {
+            using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            attemptCts.CancelAfter(_options.AttemptTimeout);
+            string reason;
+            try
+            {
+                using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, attemptCts.Token);
+                if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+                response.EnsureSuccessStatusCode();
+                await using var body = await response.Content.ReadAsStreamAsync(attemptCts.Token);
+                var text = await BoundedText.ReadAsync(body, _options.MaxResponseBytes, attemptCts.Token);
+                return JsonNode.Parse(text) ?? throw new FormatException("Empty registration.");
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested && attemptCts.IsCancellationRequested)
+            {
+                reason = $"no answer within {_options.AttemptTimeout.TotalSeconds:0.#} s";
+            }
+            catch (HttpRequestException ex) when (!ct.IsCancellationRequested && IsRetryable(ex))
+            {
+                reason = Describe(ex);
+            }
+            if (attempt >= _options.Attempts) throw new HttpRequestException($"{reason} (after {attempt} tries)");
+            Report(_logRetry, $"nuget.org request {url} failed ({reason}); trying again");
+            await Task.Delay(_options.RetryDelay, ct);
+        }
+    }
+
+    private static bool IsRetryable(HttpRequestException ex) =>
+        ex.StatusCode is null || (int)ex.StatusCode >= 500 || ex.StatusCode is System.Net.HttpStatusCode.RequestTimeout or System.Net.HttpStatusCode.TooManyRequests;
+
+    private static string Describe(Exception ex) => ex is OperationCanceledException ? "timed out" : ex.Message;
+
+    private static void Report(Action<string>? sink, string message)
+    {
+        try { sink?.Invoke(message); } catch (Exception) { /* logging never changes an answer */ }
     }
 }

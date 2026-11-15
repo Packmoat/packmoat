@@ -673,10 +673,10 @@ public class CustomerTokenPagesTests
         var operatorIssued = await f.Tokens.IssueAsync("acme", "op", default);
 
         var commands = new DirectoryBindingCommands(f.Tenants, f.Directories, f.Clock);
-        Assert.Equal(1, await commands.UnbindAsync(ActorScope.OperatorAs("founder"), "acme", DirA, default));
+        Assert.Equal(1, await commands.UnbindAsync(ActorScope.OperatorAs("ops"), "acme", DirA, default));
         Assert.Null(await f.Tokens.AuthenticateAsync(token!, default));
         Assert.NotNull(await f.Tokens.AuthenticateAsync(operatorIssued.Plaintext, default));
-        Assert.Equal("operator founder (directory unlinked)", (await f.Tokens.ListAsync("acme", default)).Single(t => t.OwnerOid == Ada).RevokedBy);
+        Assert.Equal("operator ops (directory unlinked)", (await f.Tokens.ListAsync("acme", default)).Single(t => t.OwnerOid == Ada).RevokedBy);
     }
 
     [Fact]

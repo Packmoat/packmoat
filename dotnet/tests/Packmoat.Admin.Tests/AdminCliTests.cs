@@ -2,7 +2,10 @@ using Packmoat.Admin;
 using Packmoat.Application;
 using Packmoat.Domain;
 
-namespace Packmoat.Infrastructure.Tests;
+using Packmoat.Infrastructure;
+using Packmoat.Infrastructure.Tests;
+
+namespace Packmoat.Admin.Tests;
 
 [Collection("sqlite-pools")]
 public class AdminCliTests

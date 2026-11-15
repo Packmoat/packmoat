@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="10.1.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Packmoat.Admin\Packmoat.Admin.csproj" />
+    <ProjectReference Include="..\..\src\Packmoat.Infrastructure\Packmoat.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Packmoat.Application\Packmoat.Application.csproj" />
+    <ProjectReference Include="..\..\src\Packmoat.Domain\Packmoat.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Helpers shared with Packmoat.Infrastructure.Tests, compiled into both (not referenced: both hold the same TempLeakGuard). -->
+    <Compile Include="..\Packmoat.Infrastructure.Tests\SqlitePoolsCollection.cs" Link="SqlitePoolsCollection.cs" />
+    <Compile Include="..\Packmoat.Infrastructure.Tests\EngineDb.cs" Link="EngineDb.cs" />
+    <Compile Include="..\Packmoat.Infrastructure.Tests\TestCli.cs" Link="TestCli.cs" />
+  </ItemGroup>
+
+</Project>

@@ -90,53 +90,52 @@ public class OpenSourceFilesTests
         Assert.Equal("977d781349351fd7c1f076e4c7dc7de2a05b40e12c773542c3815dd4ce7f37ba", Sha256(template));
     }
 
-    private static readonly Regex Word = new("founder", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    // The word is put together from two pieces, so this file (read by the scan below) does not contain it.
+    private static readonly Regex Word = new("found" + "er", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-    /// <summary>
-    /// The comments in C# source, as (line, text), one entry for each line a comment covers: // to the end of the line, and /* to */.
-    /// String literals (regular, verbatim, interpolated with their holes, raw) and char literals are stepped over, so data, and a URL or a
-    /// quote in data, is never taken for a comment.
-    /// </summary>
-    internal static List<(int Line, string Text)> CSharpComments(string text) => CSharpSource.Comments(text);
+    /// <summary>A line that opens or closes a region (the marker comes first on the line; a string that holds the text does not count).</summary>
+    private static readonly Regex Region = new(@"^\s*#\s*(end)?region\b", RegexOptions.CultureInvariant);
 
-    /// <summary>A line of a test file that is not C#: a comment when it starts as one (#, //, /*, *, &lt;!--).</summary>
-    private static bool CommentLine(string line)
-    {
-        var t = line.TrimStart();
-        return t.StartsWith('#') || t.StartsWith("//") || t.StartsWith("/*") || t.StartsWith('*') || t.StartsWith("<!--");
-    }
+    /// <summary>Each line of each file that names the word, as "file:line". Test files, their names, their data and their comments all count.</summary>
+    internal static string[] ApproverMentions(string root, IEnumerable<string> files) =>
+        Lines(root, files, _ => true, Word);
 
-    /// <summary>
-    /// Each line that names the word, as "file:line": anywhere outside dotnet/tests, and in a comment inside it. The tests' data (a test
-    /// person's name, an actor) and their names are code, and stay.
-    /// </summary>
-    internal static string[] FounderMentions(string root, IEnumerable<string> files) =>
+    /// <summary>Each region marker in a C# file, as "file:line".</summary>
+    internal static string[] RegionMarkers(string root, IEnumerable<string> files) =>
+        Lines(root, files, name => name.EndsWith(".cs", StringComparison.Ordinal), Region);
+
+    private static string[] Lines(string root, IEnumerable<string> files, Func<string, bool> wanted, Regex pattern) =>
         files.SelectMany(f =>
             {
                 var name = Path.GetRelativePath(root, f).Replace('\\', '/');
-                var text = File.ReadAllText(f);
-                IEnumerable<int> lines =
-                    !name.StartsWith("dotnet/tests/", StringComparison.Ordinal)
-                        ? text.Split('\n').Select((line, i) => (line, i)).Where(x => Word.IsMatch(x.line)).Select(x => x.i + 1)
-                    : name.EndsWith(".cs", StringComparison.Ordinal)
-                        ? CSharpComments(text).Where(c => Word.IsMatch(c.Text)).Select(c => c.Line)
-                    : text.Split('\n').Select((line, i) => (line, i)).Where(x => CommentLine(x.line) && Word.IsMatch(x.line)).Select(x => x.i + 1);
-                return lines.Distinct().Select(l => $"{name}:{l}");
+                if (!wanted(name)) return Array.Empty<string>();
+                return File.ReadAllText(f).Split('\n')
+                    .Select((line, i) => (line, i)).Where(x => pattern.IsMatch(x.line)).Select(x => $"{name}:{x.i + 1}");
             })
             .Order(StringComparer.Ordinal).ToArray();
 
-    [Fact]   // mutations: a draft-approval marker back in a src comment (AppAzureSetup.cs); the word in a test's comment
+    [Fact]   // mutations: a draft-approval marker back in a src comment; the word in a test's name, data or comment
     public void The_code_names_no_approver_only_an_issue()
     {
         var files = PublicFixtureTests.TextFiles(CoreRoot.Path());
         Assert.True(files.Length > 100, "the scan found too few files in core/ to mean anything");
-        var found = FounderMentions(CoreRoot.Path(), files);
+        var found = ApproverMentions(CoreRoot.Path(), files);
         Assert.True(found.Length == 0, "core/ says who approves or decides. Name the issue instead:\n" +
             string.Join("\n", found.Select(x => "  " + x)));
     }
 
-    [Fact]   // mutations: a trailing // found inside a string again; a block comment read line by line again; .git read again
-    public void The_approver_scan_sees_the_word_where_it_must()
+    [Fact]   // mutations: a region marker in a test file; a region marker in a src file
+    public void The_code_has_no_region_markers()
+    {
+        var files = PublicFixtureTests.TextFiles(CoreRoot.Path());
+        Assert.True(files.Length > 100, "the scan found too few files in core/ to mean anything");
+        var found = RegionMarkers(CoreRoot.Path(), files);
+        Assert.True(found.Length == 0, "core/ hides code in regions. Split the file or the type instead:\n" +
+            string.Join("\n", found.Select(x => "  " + x)));
+    }
+
+    [Fact]   // mutations: the exemption for dotnet/tests back; .git read again; build output read again
+    public void The_approver_scan_sees_the_word_in_every_line_of_every_file()
     {
         var dir = Directory.CreateTempSubdirectory("packmoat-oss-").FullName;
         try
@@ -145,49 +144,77 @@ public class OpenSourceFilesTests
             var src = Path.Combine(dir, "dotnet", "src", "X");
             Directory.CreateDirectory(tests);
             Directory.CreateDirectory(src);
-            const string F = "founder";   // the word, put together into each line below
-            File.WriteAllText(Path.Combine(dir, "README.md"), $"ok\nThe {F.ToUpperInvariant()} says.\n");
-            File.WriteAllText(Path.Combine(src, "A.cs"), "var a = 1;\nconst string S = \"" + F + "\";\n");   // outside the tests, code too
+            var f = "found" + "er";   // the word, put together into each line below
+            File.WriteAllText(Path.Combine(dir, "README.md"), $"ok\nThe {f.ToUpperInvariant()} says.\n");
+            File.WriteAllText(Path.Combine(src, "A.cs"), "var a = 1;\nconst string S = \"" + f + "\";\n");
             File.WriteAllText(Path.Combine(tests, "T.cs"), string.Join('\n',
-                "var name = \"Test Founder\";",                              // 1: test data, stays
-                "// the " + F + " approves",                                 // 2
-                "    /// <summary>" + F + ".</summary>",                     // 3
+                "var name = \"Test " + f + "\";",                            // 1: test data
+                "// the " + f + " approves",                                 // 2: a comment
+                "    /// <summary>" + f + ".</summary>",                     // 3
                 "/*",                                                        // 4
-                "   " + F + " inside, on a line with no star",               // 5
-                " * " + F,                                                   // 6
+                "   " + f + " inside, on a line with no star",               // 5
+                " * " + f,                                                   // 6
                 "*/",                                                        // 7
-                "Assert.Equal(\"" + F + "\", x);   // " + F,                 // 8: the trailing comment
-                "Assert.Equal(\"" + F + "\", x);",                           // 9: test data, stays
-                "x(); /* " + F + " */ y();",                                 // 10: a block comment mid-line
-                "Exec(\"VALUES('https://x/','" + F + "')\");",               // 11: a URL in test data is not a comment
-                "const char Q = '\"'; // " + F,                              // 12: a quote in a char literal opens no string
-                "var p = @\"a\\\"; // " + F,                                 // 13: a verbatim string ends at its quote
-                "var v = @\"say \"\"" + F + "\"\" // in the string\";",      // 14: stays
-                "var i = $\"{(ok ? \"" + F + "\" : \"b\")} // in the string\";",   // 15: stays
-                "var r = \"\"\"",                                            // 16
-                F + " // in the raw string",                                 // 17: stays
-                "\"\"\";",                                                   // 18
-                "var n = 2 * 3; An_" + F + "_test();"));                     // 19: a name in code stays (the test names, for now)
-            File.WriteAllText(Path.Combine(tests, "run.sh"), $"# {F}\necho {F}\n");
+                "Assert.Equal(\"" + f + "\", x);   // " + f,                 // 8: data and a trailing comment
+                "Assert.Equal(\"" + f + "\", x);",                           // 9: test data
+                "x(); /* " + f + " */ y();",                                 // 10
+                "Exec(\"VALUES('https://x/','" + f + "')\");",               // 11
+                "var n = 2 * 3; An_" + f + "_test();",                       // 12: a name in code
+                "string Q = \"no match here\";"));                           // 13: not flagged
+            File.WriteAllText(Path.Combine(tests, "run.sh"), $"# {f}\necho {f}\n");
             Directory.CreateDirectory(Path.Combine(dir, "obj"));
-            File.WriteAllText(Path.Combine(dir, "obj", "x.cs"), F);   // build output is not read
+            File.WriteAllText(Path.Combine(dir, "obj", "x.cs"), f);   // build output is not read
             Directory.CreateDirectory(Path.Combine(dir, ".git", "logs"));
-            File.WriteAllText(Path.Combine(dir, ".git", "logs", "HEAD"), $"0 1 Ada <ada@contoso.example> 1700000000 +0000\tcheckout: moving from main to fix/{F}-wording\n");
-            File.WriteAllText(Path.Combine(tests, ".git"), $"gitdir: /src/{F}/.git/worktrees/x\n");   // a worktree's .git is a file
+            File.WriteAllText(Path.Combine(dir, ".git", "logs", "HEAD"), $"0 1 Ada <ada@contoso.example> 1700000000 +0000\tcheckout: moving from main to fix/{f}-wording\n");
+            File.WriteAllText(Path.Combine(tests, ".git"), $"gitdir: /src/{f}/.git/worktrees/x\n");   // a worktree's .git is a file
             Assert.Equal(new[]
             {
                 "README.md:2",
                 "dotnet/src/X/A.cs:2",
+                "dotnet/tests/X.Tests/T.cs:1",
                 "dotnet/tests/X.Tests/T.cs:10",
+                "dotnet/tests/X.Tests/T.cs:11",
                 "dotnet/tests/X.Tests/T.cs:12",
-                "dotnet/tests/X.Tests/T.cs:13",
                 "dotnet/tests/X.Tests/T.cs:2",
                 "dotnet/tests/X.Tests/T.cs:3",
                 "dotnet/tests/X.Tests/T.cs:5",
                 "dotnet/tests/X.Tests/T.cs:6",
                 "dotnet/tests/X.Tests/T.cs:8",
+                "dotnet/tests/X.Tests/T.cs:9",
                 "dotnet/tests/X.Tests/run.sh:1",
-            }, FounderMentions(dir, PublicFixtureTests.TextFiles(dir)));
+                "dotnet/tests/X.Tests/run.sh:2",
+            }, ApproverMentions(dir, PublicFixtureTests.TextFiles(dir)));
+        }
+        catch when (TempDir.Failing(dir)) { throw; }
+        finally { TempDir.Delete(dir); }
+    }
+
+    [Fact]   // mutations: the pattern anchored to the start of the line (the indented case fails); .md files read; the end marker dropped
+    public void The_region_scan_sees_a_marker_where_it_must()
+    {
+        var dir = Directory.CreateTempSubdirectory("packmoat-oss-").FullName;
+        try
+        {
+            var src = Path.Combine(dir, "dotnet", "src", "X");
+            var tests = Path.Combine(dir, "dotnet", "tests", "X.Tests");
+            Directory.CreateDirectory(src);
+            Directory.CreateDirectory(tests);
+            const string R = "re" + "gion";   // the directive's word, put together into each line below
+            File.WriteAllText(Path.Combine(src, "A.cs"), string.Join('\n',
+                "#" + R + " x",                                              // 1: flagged
+                "int a;",                                                    // 2
+                "  #  end" + R,                                              // 3: flagged, indented with a gap
+                "var s = \"#" + R + " in a string\";",                       // 4: not a marker
+                "// #" + R + " in a comment",                                // 5: not a marker
+                "#" + R + "s();"));                                          // 6: another word
+            File.WriteAllText(Path.Combine(tests, "T.cs"), "\t#" + R + " Layout\n");
+            File.WriteAllText(Path.Combine(dir, "README.md"), "# Title\n#" + R + " heading\n");   // not C#
+            Assert.Equal(new[]
+            {
+                "dotnet/src/X/A.cs:1",
+                "dotnet/src/X/A.cs:3",
+                "dotnet/tests/X.Tests/T.cs:1",
+            }, RegionMarkers(dir, PublicFixtureTests.TextFiles(dir)));
         }
         catch when (TempDir.Failing(dir)) { throw; }
         finally { TempDir.Delete(dir); }

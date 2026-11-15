@@ -6,7 +6,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 /// <summary>Regression tests for onboarding verification.</summary>
-public class ReviewFixesM5Tests
+public class OnboardingVerificationTests
 {
     private const string Packmoat = "AadServicePrincipal;tenant\\11111111-spid";
 
@@ -22,7 +22,7 @@ public class ReviewFixesM5Tests
     private static OnboardingOptions WithDeveloper() => new() { DeveloperToken = FakeDevOps.DeveloperSecret };
     private static OnboardingOptions WithAdmin() => new() { AdminToken = FakeDevOps.AdminSecret };
 
-    // ---- 18: positive controls
+    // positive controls
 
     [Fact]
     public async Task A_refusal_proves_nothing_when_Packmoat_itself_cannot_read_the_feed()
@@ -89,7 +89,7 @@ public class ReviewFixesM5Tests
         Assert.Equal(CheckStatus.Pass, Get(await Build(d, o).RunAsync(default), "private").Status);
     }
 
-    // ---- 19: summary and exit code
+    // summary and exit code
 
     private static CheckResult R(string id, CheckStatus s) => new(id, id, s, "");
 
@@ -145,7 +145,7 @@ public class ReviewFixesM5Tests
         Assert.Contains(group, perm.Detail);
     }
 
-    // ---- 20: egress is gone
+    // egress is gone
     [Fact]
     public async Task There_is_no_egress_check_because_the_operators_network_says_nothing_about_the_customers()
     {
@@ -153,7 +153,7 @@ public class ReviewFixesM5Tests
         Assert.DoesNotContain(await Build(d, new OnboardingOptions()).RunAsync(default), r => r.Id == "egress");
     }
 
-    // ---- 21: upstreams
+    // upstreams
 
     [Theory]
     [InlineData("https://api.nuget.org.evil.example/v3/index.json")]
@@ -183,7 +183,7 @@ public class ReviewFixesM5Tests
     [InlineData("https://registry.npmjs.org/")]
     public void The_two_allowed_hosts_match_in_any_case(string location) => Assert.True(OnboardingChecks.IsAllowedUpstream(location));
 
-    // ---- 24: permissions identity, pagination, throttling
+    // permissions identity, pagination, throttling
 
     [Fact]
     public async Task A_principal_whose_id_merely_contains_ours_is_not_Packmoat()

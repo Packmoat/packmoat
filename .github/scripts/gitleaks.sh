@@ -12,8 +12,20 @@ sha256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
 
 dir="$(mktemp -d)"
 trap 'rm -rf "$dir"' EXIT
-curl -fsSL --retry 6 --retry-all-errors --retry-max-time 120 -o "$dir/gitleaks.tar.gz" \
-  "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz"
+# An optional cache folder (PACKMOAT_TOOL_CACHE) holds the release under its version and sha256. A cached file is copied into $dir and
+# checked like a download; it is added to the cache only after that check, and the tool runs only from $dir.
+cache="${PACKMOAT_TOOL_CACHE:-}"
+cached="$cache/gitleaks_${version}_${sha256}.tar.gz"
+if [ -n "$cache" ] && [ -f "$cached" ]; then
+  cp "$cached" "$dir/gitleaks.tar.gz"
+else
+  curl -fsSL --retry 6 --retry-all-errors --retry-max-time 120 -o "$dir/gitleaks.tar.gz" \
+    "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz"
+fi
 echo "${sha256}  $dir/gitleaks.tar.gz" | sha256sum --check --strict -
+if [ -n "$cache" ] && [ ! -e "$cached" ] && [ ! -L "$cached" ]; then
+  mkdir -p "$cache"
+  cp "$dir/gitleaks.tar.gz" "$cached"
+fi
 tar -xzf "$dir/gitleaks.tar.gz" -C "$dir" gitleaks
 "$dir/gitleaks" "$@" --redact --no-banner

@@ -5,7 +5,7 @@ namespace Packmoat.Infrastructure.Tests;
 
 /// <summary>Regression tests for the onboarding tools: safe certificate files and clean errors.</summary>
 [Collection("sqlite-pools")]
-public class ReviewFixesM5Tests
+public class OnboardingCertificateFileTests
 {
     private sealed class Cli : IAsyncDisposable
     {
@@ -27,7 +27,7 @@ public class ReviewFixesM5Tests
         public ValueTask DisposeAsync() => _temp.DisposeAsync();
     }
 
-    // ---- 22: atomic 0600, never overwrite
+    // atomic 0600, never overwrite
 
     [Fact]
     public async Task A_private_file_is_created_with_mode_600_and_refuses_to_replace_an_existing_one()
@@ -86,7 +86,7 @@ public class ReviewFixesM5Tests
         Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(outDir));
     }
 
-    // ---- 25: clean errors
+    // clean errors
 
     [Theory]
     [InlineData("abc")]

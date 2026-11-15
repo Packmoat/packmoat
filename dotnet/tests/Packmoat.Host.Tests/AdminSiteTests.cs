@@ -89,7 +89,7 @@ public class AdminSiteTests
     }
 
     [Fact]
-    public async Task An_email_that_matches_the_founder_is_not_enough_even_with_the_right_pair_elsewhere_in_the_list()
+    public async Task An_email_that_matches_the_admin_is_not_enough_even_with_the_right_pair_elsewhere_in_the_list()
     {
         await using var f = await StartAsync();
         f.Identity.Next = FakeIdentityProvider.Person(Tid, "44444444-4444-4444-8444-444444444444", email: "olivia@contoso.example");

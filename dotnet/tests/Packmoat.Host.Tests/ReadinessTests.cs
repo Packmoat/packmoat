@@ -233,13 +233,55 @@ public class ReadinessTests
             Assert.Equal(HttpStatusCode.OK, (await s.Get(path, loopback)).Code);               // the loopback address
             Assert.Equal(HttpStatusCode.OK, (await s.Get(path, "localhost")).Code);            // what a Kubernetes probe should send
             Assert.Equal(HttpStatusCode.BadRequest, (await s.Get(path, "evil.example")).Code); // AllowedHosts, before anything else
-            Assert.Equal(HttpStatusCode.BadRequest, (await s.Get(path, "10.1.2.3:8080")).Code); // a pod's own address, as Kubernetes sends it
+            Assert.Equal(HttpStatusCode.OK, (await s.Get(path, "10.1.2.3:8080")).Code);        // a pod's own address, as Kubernetes sends it
+            Assert.Equal(HttpStatusCode.OK, (await s.Get(path, "203.0.113.9")).Code);          // a load balancer's address
+            Assert.Equal(HttpStatusCode.OK, (await s.Get(path, "[::1]:8080")).Code);
+            Assert.Equal(HttpStatusCode.BadRequest, (await s.Get(path, "127.0.0.1.evil.com")).Code);
+            Assert.Equal(HttpStatusCode.BadRequest, (await s.Get(path, "2130706433")).Code);   // an IP written as one number is not an IP address here
             Assert.Equal(HttpStatusCode.OK, (await s.Get(path, token: "pmt_wrong_but_ignored")).Code);
             using var post = new HttpRequestMessage(HttpMethod.Post, path);
             post.Headers.Host = Host;
             Assert.Equal(HttpStatusCode.MethodNotAllowed, (await s.Http.SendAsync(post)).StatusCode);
         }
         Assert.Equal(HttpStatusCode.Unauthorized, (await s.Get("/v3/index.json")).Code);
+    }
+
+    [Fact]   // mutation: the gate reads Request.Host.Value, which decodes an internationalised name and throws on a malformed one (a 500)
+    public async Task A_malformed_internationalised_host_on_a_health_check_is_a_400_not_an_error()
+    {
+        await using var s = await Server.StartAsync();
+        Assert.Equal(HttpStatusCode.BadRequest, (await s.Get("/healthz", "xn--1-.xn--2-.xn--3-.xn--4-")).Code);
+        Assert.Equal(HttpStatusCode.BadRequest, (await s.Get(Readiness.Route, "xn--a")).Code);
+    }
+
+    [Fact]   // mutations: the gate removed with "*" kept; the gate after the forwarded-headers step; empty hosts refused
+    public async Task Only_a_get_of_a_health_check_is_answered_to_an_ip_host_and_an_empty_host_still_is()
+    {
+        await using var s = await Server.StartAsync();
+        foreach (var path in new[] { "/v3/index.json", "/", "/admin", "/healthz/", "/HEALTHZ", "/healthzx" })
+            Assert.Equal(HttpStatusCode.BadRequest, (await s.Get(path, "10.1.2.3")).Code);
+        using var post = new HttpRequestMessage(HttpMethod.Post, "/healthz");
+        post.Headers.Host = "10.1.2.3";
+        Assert.Equal(HttpStatusCode.BadRequest, (await s.Http.SendAsync(post)).StatusCode);
+        using var head = new HttpRequestMessage(HttpMethod.Head, "/healthz");
+        head.Headers.Host = "10.1.2.3";
+        Assert.Equal(HttpStatusCode.BadRequest, (await s.Http.SendAsync(head)).StatusCode);
+
+        // The raw Host is checked, not one a forwarded header names.
+        using var forwarded = new HttpRequestMessage(HttpMethod.Get, "/v3/index.json");
+        forwarded.Headers.Host = "10.1.2.3";
+        forwarded.Headers.Add("X-Forwarded-Host", Host);
+        Assert.Equal(HttpStatusCode.BadRequest, (await s.Http.SendAsync(forwarded)).StatusCode);
+
+        // HTTP/1.0 with no Host, as the image's health check sends it.
+        var uri = s.Http.BaseAddress!;
+        using var tcp = new System.Net.Sockets.TcpClient();
+        await tcp.ConnectAsync(uri.Host, uri.Port);
+        var stream = tcp.GetStream();
+        await stream.WriteAsync(System.Text.Encoding.ASCII.GetBytes("GET /healthz HTTP/1.0\r\n\r\n"));
+        var buffer = new byte[64];
+        var read = await stream.ReadAsync(buffer);
+        Assert.StartsWith("HTTP/1.1 200", System.Text.Encoding.ASCII.GetString(buffer, 0, read));
     }
 
     [Fact]   // the limiters are inside TokenAuthMiddleware, which both checks skip

@@ -8,11 +8,11 @@ using static Packmoat.Host.Tests.ProxyFixture;
 namespace Packmoat.Host.Tests;
 
 /// <summary>Regression tests for the NuGet proxy.</summary>
-public class ReviewFixesM2Tests
+public class NuGetProxyRegressionTests
 {
     private const string Flat = "/v3/u/org/proj/_packaging/feed/nuget/v3/flat2/";
 
-    // ---- (1) the file must belong to the version the decision was made on
+    // the file must belong to the version the decision was made on
     [Theory]
     [InlineData("acme.lib/1.0.0/acme.lib.2.0.0.nupkg")]      // another version's package behind an allowed version's path
     [InlineData("acme.lib/1.0.0/other.lib.1.0.0.nupkg")]     // another package
@@ -63,7 +63,7 @@ public class ReviewFixesM2Tests
         Assert.Equal("Cooldown", young.Headers.GetValues("X-Packmoat-Reason").Single());
     }
 
-    // ---- (4) a date-source outage is a retryable 503, still failing closed
+    // a date-source outage is a retryable 503, still failing closed
     [Fact]
     public async Task While_publish_dates_are_unavailable_downloads_and_lists_answer_503_with_retry_after_and_never_a_partial_list()
     {
@@ -117,7 +117,7 @@ public class ReviewFixesM2Tests
         Assert.Equal("DateUnknown", response.Headers.GetValues("X-Packmoat-Reason").Single());
     }
 
-    // ---- (3) the size cap holds for chunked and compressed bodies
+    // the size cap holds for chunked and compressed bodies
     private static async Task Chunked(Microsoft.AspNetCore.Http.HttpContext ctx, int bytes)
     {
         ctx.Response.ContentType = "application/json";            // no Content-Length: chunked
@@ -180,7 +180,7 @@ public class VerdictFilterTests
     private static readonly Verdict Allow = new(Decision.Allow, VerdictReason.CooldownElapsed);
     private static readonly Verdict Hide = new(Decision.Hide, VerdictReason.Cooldown);
 
-    // ---- (6) a version with no verdict at all must be hidden
+    // a version with no verdict at all must be hidden
     [Fact]
     public void A_version_without_a_verdict_is_hidden()
         => Assert.True(Proxy.VerdictFilter.IsHidden(new Dictionary<string, Verdict>(), "1.0.0"));

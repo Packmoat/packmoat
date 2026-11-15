@@ -39,11 +39,11 @@ public abstract class MemberTokenContract : StoreContract
         Assert.Null(await store.UnbindAsync("globex", Dir, t.Clock.UtcNow, "op", default));   // not linked there: nothing changes
         Assert.NotNull(await Engine.Tokens(t).AuthenticateAsync(adas.Plaintext, default));
 
-        Assert.Equal(2, await store.UnbindAsync("acme", Dir, t.Clock.UtcNow, "operator founder (directory unlinked)", default));
+        Assert.Equal(2, await store.UnbindAsync("acme", Dir, t.Clock.UtcNow, "operator ops (directory unlinked)", default));
         Assert.Null(await Engine.Tokens(t).AuthenticateAsync(adas.Plaintext, default));
         Assert.Null(await Engine.Tokens(t).AuthenticateAsync(bobs.Plaintext, default));
         foreach (var still in new[] { elsewhere, otherDir, operatorIssued }) Assert.NotNull(await Engine.Tokens(t).AuthenticateAsync(still.Plaintext, default));
-        Assert.All((await Engine.Tokens(t).ListForMemberAsync("acme", Dir, Ada, default)), x => Assert.Equal("operator founder (directory unlinked)", x.RevokedBy));
+        Assert.All((await Engine.Tokens(t).ListForMemberAsync("acme", Dir, Ada, default)), x => Assert.Equal("operator ops (directory unlinked)", x.RevokedBy));
         Assert.Null(await store.GetAsync(Dir, default));
     }
 

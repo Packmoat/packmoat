@@ -4,7 +4,10 @@ using Packmoat.Admin;
 using Packmoat.Application;
 using Packmoat.Infrastructure.Lifecycle;
 
-namespace Packmoat.Infrastructure.Tests;
+using Packmoat.Infrastructure;
+using Packmoat.Infrastructure.Tests;
+
+namespace Packmoat.Admin.Tests;
 
 /// <summary>
 /// The command line opens the database in one order: migrate, then the module's lifecycle, then the tenant store

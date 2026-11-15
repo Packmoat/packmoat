@@ -161,12 +161,122 @@ public class CoreWorkflowTests
         finally { TempDir.Delete(root); }
     }
 
+    /// <summary>A workflow read as YAML: every step mapping of every job, every <c>uses</c> value (steps and reusable-workflow jobs), the
+    /// number of jobs, and why it could not be read (a merge key, or a shape this check does not follow), if it could not.</summary>
+    internal sealed record StepWalk(IReadOnlyList<YamlMappingNode> Steps, IReadOnlyList<string> Uses, int Jobs, string? Error);
+
+    /// <summary>A key's value, looked up by the key's text: a tag on the key (<c>!!str uses:</c>) must not hide it.</summary>
+    internal static YamlNode? Get(YamlMappingNode m, string key) => m.Children.FirstOrDefault(kv => kv.Key is YamlScalarNode s && s.Value == key).Value;
+
+    /// <summary>The first key of a mapping that carries a tag, if any: such a key is refused, not read.</summary>
+    private static bool HasTaggedKey(YamlMappingNode m) => m.Children.Keys.Any(k => k is not YamlScalarNode s || !s.Tag.IsEmpty);
+
+    /// <summary>Walks jobs.*.steps[*] as YAML, so a step in flow style (<c>- {run: x}</c>, <c>steps: [{uses: x}]</c>) is read like any other.</summary>
+    internal static StepWalk WalkSteps(string workflow)
+    {
+        var steps = new List<YamlMappingNode>();
+        var uses = new List<string>();
+        StepWalk Fail(string why) => new(steps, uses, 0, why);
+        void AddUses(YamlMappingNode m) { if (Get(m, "uses") is { } u) uses.Add((u as YamlScalarNode)?.Value ?? "(not text)"); }
+        try
+        {
+            var stream = new YamlStream();
+            using (var reader = new StringReader(workflow)) stream.Load(reader);
+            var root = (YamlMappingNode)stream.Documents.Single().RootNode;
+            if (HasTaggedKey(root)) return Fail("a tagged key at the top of the workflow");
+            if (Get(root, "jobs") is not YamlMappingNode jobs) return Fail("jobs: is not a map of jobs");
+            if (HasTaggedKey(jobs)) return Fail("a tagged key among the jobs");
+            if (Get(jobs, "<<") is not null) return Fail("a merge key (<<) among the jobs");
+            foreach (var job in jobs.Children.Values)
+            {
+                if (job is not YamlMappingNode j) return Fail("a job is not a map");
+                if (HasTaggedKey(j)) return Fail("a tagged key in a job");
+                if (Get(j, "<<") is not null) return Fail("a merge key (<<) in a job");
+                AddUses(j);
+                if (Get(j, "steps") is not { } stepsNode) continue;
+                if (stepsNode is not YamlSequenceNode sequence) return Fail("a job's steps: is not a list");
+                foreach (var step in sequence.Children)
+                {
+                    if (step is not YamlMappingNode m) return Fail("a step is not a map");
+                    if (HasTaggedKey(m)) return Fail("a tagged key in a step");
+                    steps.Add(m);
+                    AddUses(m);
+                }
+            }
+            return new(steps, uses, jobs.Children.Count, null);
+        }
+        catch (Exception e) when (e is YamlException or InvalidCastException or InvalidOperationException) { return Fail($"not YAML this check can read: {e.Message}"); }
+    }
+
+    /// <summary>A step that runs a command: a <c>run</c> key, or a merge key (<c>&lt;&lt;: *anchor</c>), which could bring one in.</summary>
+    private static bool RunsACommand(YamlMappingNode step) => Get(step, "run") is not null || Get(step, "<<") is not null;
+
+    /// <summary>
+    /// Where a workflow sets <c>defaults</c>, at the top or in a job. <c>defaults: run: shell: "true {0}"</c> turns every run step into a
+    /// no-op (the tests included) and <c>working-directory</c> moves every step; a run step should do what it says, so neither is allowed.
+    /// Keys are looked up by their text, in block or flow style; a tagged key, a merge key or a shape that is not read is a problem too.
+    /// </summary>
+    internal static IReadOnlyList<string> DefaultsProblems(string workflow)
+    {
+        var problems = new List<string>();
+        var walk = WalkSteps(workflow);
+        if (walk.Error is not null) problems.Add(walk.Error);
+        try
+        {
+            var stream = new YamlStream();
+            using (var reader = new StringReader(workflow)) stream.Load(reader);
+            var root = (YamlMappingNode)stream.Documents.Single().RootNode;
+            if (Get(root, "defaults") is not null) problems.Add("defaults: at the top of the workflow");
+            if (Get(root, "<<") is not null) problems.Add("a merge key (<<) at the top of the workflow");
+            if (Get(root, "jobs") is YamlMappingNode jobs)
+                foreach (var (name, job) in jobs.Children)
+                    if (job is YamlMappingNode j && Get(j, "defaults") is not null) problems.Add($"defaults: in the job {(name as YamlScalarNode)?.Value}");
+        }
+        catch (Exception e) when (e is YamlException or InvalidCastException or InvalidOperationException) { problems.Add($"not YAML this check can read: {e.Message}"); }
+        return problems;
+    }
+
+    [Fact]   // mutations in core/.github/workflows/dotnet.yml: a workflow-level defaults: run: shell; a job-level defaults: run: working-directory
+    public void No_core_workflow_and_no_job_sets_defaults_so_a_run_step_does_what_it_says()
+    {
+        var offenders = Workflows().SelectMany(w => DefaultsProblems(w.Text).Select(p => $"{w.Name}: {p}")).ToArray();
+        Assert.True(offenders.Length == 0, "A run step must do what it says:\n" + string.Join("\n", offenders));
+    }
+
+    [Fact]
+    public void The_defaults_check_catches_defaults_at_either_level_in_any_style_and_accepts_none()
+    {
+        const string Plain = "name: x\non: push\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi\n";
+        const string Job = "  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi\n";
+        Assert.Empty(DefaultsProblems(Plain));
+        void Catches(string from, string to, string expect) => CatchesIn(DefaultsProblems, Plain, from, to, expect);
+        Catches("jobs:\n", "defaults:\n  run:\n    shell: \"true {0}\"\njobs:\n", "at the top of the workflow");
+        Catches("name: x\n", "defaults: {run: {shell: x}}\nname: x\n", "at the top of the workflow");
+        Catches("    runs-on:", "    defaults:\n      run:\n        working-directory: x\n    runs-on:", "in the job a");
+        Catches(Job, "  a: {defaults: {run: {shell: x}}, runs-on: ubuntu-24.04, steps: [{run: echo hi}]}\n", "in the job a");
+        Catches(Job, "  a:\n    {defaults: {run: {working-directory: x}}, runs-on: ubuntu-24.04}\n", "in the job a");
+        Catches("name: x\n", "name: x\n!!str defaults:\n  run:\n    shell: x\n", "tagged key");
+        Catches("    runs-on:", "    !!str defaults:\n      run:\n        shell: x\n    runs-on:", "tagged key");
+        Catches("name: x\n", "name: x\nd: &d {a: 1}\n<<: *d\n", "merge key");
+    }
+
+    /// <summary>The action references in a workflow as written (<c>name@ref</c>): those the YAML walk finds, and those a line-by-line read finds.</summary>
+    private static IReadOnlyList<string> ActionReferences(string workflow, out string? error)
+    {
+        var walk = WalkSteps(workflow);
+        error = walk.Error;
+        return walk.Uses.Concat(Regex.Matches(workflow, @"^\s*-?\s*uses:\s*(\S+)", RegexOptions.Multiline).Select(m => m.Groups[1].Value)).Distinct().ToArray();
+    }
+
     [Fact]
     public void Every_action_in_a_core_workflow_is_pinned_to_a_full_commit_sha()
     {
         var offenders = Workflows().SelectMany(w =>
-            Regex.Matches(w.Text, @"^\s*-?\s*uses:\s*(\S+)", RegexOptions.Multiline).Select(m => m.Groups[1].Value)
-                .Where(u => !u.StartsWith("./", StringComparison.Ordinal) && !Regex.IsMatch(u, @"@[0-9a-f]{40}$")).Select(u => $"{w.Name}: {u}")).ToArray();
+        {
+            var references = ActionReferences(w.Text, out var error);
+            return references.Where(u => !u.StartsWith("./", StringComparison.Ordinal) && !Regex.IsMatch(u, @"@[0-9a-f]{40}$")).Select(u => $"{w.Name}: {u}")
+                .Concat(error is null ? [] : [$"{w.Name}: {error}"]);
+        }).ToArray();
         Assert.True(offenders.Length == 0, "Unpinned actions:\n" + string.Join("\n", offenders));
     }
 
@@ -642,7 +752,7 @@ public class CoreWorkflowTests
     }
 
     [Fact]   // mutations: --strict dropped; --redact dropped; fetch-depth: 0 removed; || true after the hash check; set -- in the script;
-             // continue-on-error in gitleaks.yml
+             // continue-on-error in gitleaks.yml; the cache written before the check; the check skipped on a cache hit; the tool run from the cache
     public void The_secret_scan_runs_a_pinned_checked_release_over_the_whole_history_and_never_prints_a_secret()
     {
         var script = File.ReadAllText(Path.Combine(CoreRoot(), ".github", "scripts", "gitleaks.sh")).Replace("\r\n", "\n");
@@ -650,7 +760,8 @@ public class CoreWorkflowTests
         Assert.Matches(@"(?m)^sha256=[0-9a-f]{64}$", script);
         Assert.Matches(@"(?m)^set -euo pipefail$", script);
         AssertCurlsUnderStrictMode(script, 1);
-        Assert.Matches(@"(?m)^curl -fsSL " + RetryFlags + @" -o ""\$dir/gitleaks\.tar\.gz"" \\$", script);
+        Assert.Matches(@"(?m)^\s*curl -fsSL " + RetryFlags + @" -o ""\$dir/gitleaks\.tar\.gz"" \\$", script);
+        AssertToolCacheOnlyAfterTheCheck(script, "gitleaks");
         // The whole line: nothing after the check (|| true, ; true, & ...) can let a wrong download through.
         Assert.Matches(@"(?m)^echo ""\$\{sha256\}  \$dir/gitleaks\.tar\.gz"" \| sha256sum --check --strict -$", script);
         Assert.Matches(@"(?m)^""\$dir/gitleaks"" ""\$@"" --redact --no-banner$", script);
@@ -666,8 +777,52 @@ public class CoreWorkflowTests
         Assert.DoesNotMatch(@"\|\||set\s+\+e", code);
     }
 
+    // Nothing may swallow a tool's exit status: no || (so no || true), no set +e, no set -- / shift (which could add a flag such as
+    // --no-exit-codes), and the trap is exactly the cleanup, with no exit 0.
+    private static void AssertNothingSwallowsTheExit(string script, string toolLine)
+    {
+        Assert.DoesNotMatch(@"\|\||set\s+\+e|(?m)^\s*(set\s+--?(\s|$)|shift\b)", script);
+        Assert.Matches(@"(?m)^trap 'rm -rf ""\$dir""' EXIT$", script);
+        Assert.Single(Regex.Matches(script, @"(?m)^\s*trap\b"));
+        // No early exit or exec, and the tool line is the last line, so its status is the script's.
+        Assert.DoesNotMatch(@"(?m)^\s*(exit|exec)\b", script);
+        Assert.Equal(toolLine, script.Split('\n').Last(l => l.Trim().Length > 0));
+    }
+
     // A busy release host answers 5xx for a while: the downloads wait it out (and retry on any error), for at most two minutes.
     private const string RetryFlags = @"--retry 6 --retry-all-errors --retry-max-time 120";
+
+    // The optional download cache (PACKMOAT_TOOL_CACHE): a cached file is copied into $dir and checked like a download (the check line sits
+    // at column 0, outside any if/else, so it always runs); it is copied into the cache only after that line; the tool and tar read $dir only.
+    private static void AssertToolCacheOnlyAfterTheCheck(string script, string tool)
+    {
+        Assert.Matches(@"(?m)^cache=""\$\{PACKMOAT_TOOL_CACHE:-\}""$", script);
+        Assert.Matches(@"(?m)^cached=""\$cache/" + tool + @"_\$\{version\}_\$\{sha256\}\.tar\.gz""$", script);
+        var check = Regex.Match(script, @"(?m)^echo ""\$\{sha256\}  \$dir/" + tool + @"\.tar\.gz"" \| sha256sum --check --strict -$");
+        Assert.True(check.Success, "the sha256 check line is not at column 0");
+        var read = Regex.Matches(script, @"(?m)^\s*cp ""\$cached"" ""\$dir/" + tool + @"\.tar\.gz""$");
+        Assert.Single(read);
+        Assert.True(read[0].Index < check.Index, "the cached file must be copied in before the check");
+        var write = Regex.Matches(script, @"(?m)^\s*cp\b.*""\$cached""\s*$").Where(m => !m.Value.Contains("cp \"$cached\"")).ToArray();
+        Assert.Single(write);
+        Assert.Matches(@"^\s*cp ""\$dir/" + tool + @"\.tar\.gz"" ""\$cached""$", write[0].Value);
+        Assert.True(write[0].Index > check.Index, "the cache may be written only after the sha256 check");
+        Assert.Single(Regex.Matches(script, @"(?m)^\s*mkdir\b"));
+        // Every whole line that names the cache (comments aside) (by $cache or $PACKMOAT_TOOL_CACHE) is one of these seven, in this order: nothing else reads or writes the
+        // cache (no one-line write, no trailing comment, no second copy), and tar and the tool read $dir.
+        var users = Regex.Matches(script, @"(?m)^(?!\s*#).*\$\{?(cache|PACKMOAT_TOOL_CACHE).*$").Select(m => m.Value.Trim()).ToArray();
+        Assert.Equal(
+        [
+            "cache=\"${PACKMOAT_TOOL_CACHE:-}\"",
+            "cached=\"$cache/" + tool + "_${version}_${sha256}.tar.gz\"",
+            "if [ -n \"$cache\" ] && [ -f \"$cached\" ]; then",
+            "cp \"$cached\" \"$dir/" + tool + ".tar.gz\"",
+            "if [ -n \"$cache\" ] && [ ! -e \"$cached\" ] && [ ! -L \"$cached\" ]; then",
+            "mkdir -p \"$cache\"",
+            "cp \"$dir/" + tool + ".tar.gz\" \"$cached\"",
+        ], users);
+        Assert.Matches(@"(?m)^tar -xzf ""\$dir/" + tool + @"\.tar\.gz"" -C ""\$dir"" " + tool + "$", script);
+    }
 
     // Exactly this many curl commands (any indentation), and strict mode is on before the first: no extra, unchecked download.
     private static void AssertCurlsUnderStrictMode(string script, int count)
@@ -678,7 +833,8 @@ public class CoreWorkflowTests
         Assert.True(strict >= 0 && strict < curls[0].Index, "set -euo pipefail must come before the first curl");
     }
 
-    [Fact]   // mutations: --retry 3; --retry-all-errors removed; || true after the hash check; the check indented inside an if
+    [Fact]   // mutations: --retry 3; --retry-all-errors removed; || true after the hash check; the check indented inside an if;
+             // the cache written before the check; the check skipped on a cache hit; the tool run from the cache
     public void The_workflow_linter_runs_a_pinned_checked_release_and_retries_its_download()
     {
         var script = File.ReadAllText(Path.Combine(CoreRoot(), ".github", "scripts", "actionlint.sh")).Replace("\r\n", "\n");
@@ -686,10 +842,53 @@ public class CoreWorkflowTests
         Assert.Matches(@"(?m)^sha256=[0-9a-f]{64}$", script);
         Assert.Matches(@"(?m)^set -euo pipefail$", script);
         AssertCurlsUnderStrictMode(script, 1);
-        Assert.Matches(@"(?m)^curl -fsSL " + RetryFlags + @" -o ""\$dir/actionlint\.tar\.gz"" \\$", script);
+        Assert.Matches(@"(?m)^\s*curl -fsSL " + RetryFlags + @" -o ""\$dir/actionlint\.tar\.gz"" \\$", script);
+        AssertToolCacheOnlyAfterTheCheck(script, "actionlint");
         Assert.Matches(@"(?m)^echo ""\$\{sha256\}  \$dir/actionlint\.tar\.gz"" \| sha256sum --check --strict -$", script);
         Assert.Matches(@"(?m)^""\$dir/actionlint"" ""\$@""$", script);
-        Assert.DoesNotMatch(@"\|\||set\s+\+e", script);
+        AssertNothingSwallowsTheExit(script, "\"$dir/actionlint\" \"$@\"");
+    }
+
+    [Fact]   // mutations: --offline removed; || true after the hash check; the cache written before the check; the dotnet.yml step dropped;
+             // a zizmor.yml with disable: true; an inline ignore with no reason
+    public void The_workflow_security_linter_runs_a_pinned_checked_release_offline_and_in_the_required_job()
+    {
+        var script = File.ReadAllText(Path.Combine(CoreRoot(), ".github", "scripts", "zizmor.sh")).Replace("\r\n", "\n");
+        Assert.Matches(@"(?m)^version=\d+\.\d+\.\d+$", script);
+        Assert.Matches(@"(?m)^sha256=[0-9a-f]{64}$", script);
+        Assert.Matches(@"(?m)^set -euo pipefail$", script);
+        AssertCurlsUnderStrictMode(script, 1);
+        Assert.Matches(@"(?m)^\s*curl -fsSL " + RetryFlags + @" -o ""\$dir/zizmor\.tar\.gz"" \\$", script);
+        AssertToolCacheOnlyAfterTheCheck(script, "zizmor");
+        Assert.Matches(@"(?m)^echo ""\$\{sha256\}  \$dir/zizmor\.tar\.gz"" \| sha256sum --check --strict -$", script);
+        // No network audits (no token; the result does not depend on the network) and no config file: zizmor reads zizmor.yml from the
+        // repository root (core/ here, the private root in the private CI), where it could switch an audit off.
+        Assert.Matches(@"(?m)^""\$dir/zizmor"" --offline --no-config ""\$@""$", script);
+        AssertNothingSwallowsTheExit(script, "\"$dir/zizmor\" --offline --no-config \"$@\"");
+
+        // The required dotnet job runs it: a step with exactly the keys name and run (no if:, continue-on-error: or env:), this run text,
+        // in a job that cannot fail softly.
+        var dotnet = Workflows().Single(w => w.Name == "dotnet.yml").Text.Replace("\r\n", "\n");
+        var stream = new YamlStream();
+        using (var reader = new StringReader(dotnet)) stream.Load(reader);
+        var jobs = (YamlMappingNode)((YamlMappingNode)stream.Documents.Single().RootNode).Children[new YamlScalarNode("jobs")];
+        var job = (YamlMappingNode)jobs.Children[new YamlScalarNode("dotnet")];
+        Assert.False(job.Children.ContainsKey(new YamlScalarNode("continue-on-error")), "the dotnet job must not continue on error");
+        var steps = ((YamlSequenceNode)job.Children[new YamlScalarNode("steps")]).Children.OfType<YamlMappingNode>()
+            .Where(s => s.Children.TryGetValue(new YamlScalarNode("run"), out var r) && r is YamlScalarNode { Value: not null } rs && rs.Value.Contains("zizmor.sh", StringComparison.Ordinal))
+            .ToArray();
+        var step = Assert.Single(steps);
+        Assert.Equal(["name", "run"], step.Children.Keys.Select(k => ((YamlScalarNode)k).Value!).ToArray());
+        Assert.Equal("shopt -s nullglob\n.github/scripts/zizmor.sh .github/workflows/*.{yml,yaml} .github/dependabot.yml\n",
+            ((YamlScalarNode)step.Children[new YamlScalarNode("run")]).Value);
+
+        // No config file that turns an audit off; an inline ignore says why, on its own line, after the audit name.
+        foreach (var folder in new[] { CoreRoot(), Path.Combine(CoreRoot(), ".github") })
+            foreach (var file in new[] { "zizmor.yml", "zizmor.yaml" })
+                Assert.False(File.Exists(Path.Combine(folder, file)), $"{file} in {folder}");
+        foreach (var (name, text) in Workflows().Append(("dependabot.yml", File.ReadAllText(DependabotFile))))
+            foreach (var line in text.Replace("\r\n", "\n").Split('\n').Where(l => l.Contains("zizmor:", StringComparison.Ordinal)))
+                Assert.True(Regex.IsMatch(line, @"# zizmor: ignore\[[a-z-]+(,[a-z-]+)*\] \S.{8,}$"), $"{name}: an ignore needs a reason: {line.Trim()}");
     }
 
     [Fact]   // mutations: --retry 3 or --retry-all-errors removed on either download in install-helm-kind.sh
@@ -702,13 +901,15 @@ public class CoreWorkflowTests
         Assert.All(curls, c => Assert.StartsWith("curl -fsSL " + RetryFlags + " -o ", c));
     }
 
-    [Fact]   // mutations: --retry 3, or --retry-all-errors removed, on the bicep download; a second curl added; set -euo pipefail moved below it
+    [Fact]   // mutations: --retry 3, or --retry-all-errors removed, on the bicep download; a second curl added; set -euo pipefail moved below it; || true added to the download
     public void The_bicep_download_retries_like_the_other_tools()
     {
         var script = File.ReadAllText(Path.Combine(CoreRoot(), ".github", "scripts", "install-iac-tools.sh")).Replace("\r\n", "\n");
         AssertCurlsUnderStrictMode(script, 1);
         Assert.Matches(@"(?m)^curl -fsSL " + RetryFlags + @" -o ""\$dir/bicep"" ", script);
         Assert.Matches(@"(?m)^echo ""\$\{bicep_sha256\}  \$dir/bicep"" \| check$", script);
+        // Nothing may swallow a failure (|| true, set +e), as for the gitleaks and actionlint downloads.
+        Assert.DoesNotMatch(@"\|\||set\s+\+e", script);
     }
 
     /// <summary>The actions each scanner may use. Scorecard publishes its results only from a workflow whose job uses its approved
@@ -733,16 +934,22 @@ public class CoreWorkflowTests
         var code = Regex.Replace(text, @"(?m)^\s*#.*$", "");
         void Require(bool ok, string problem) { if (!ok) found.Add(problem); }
         var jobs = text.IndexOf("\njobs:\n", StringComparison.Ordinal);
-        Require(jobs >= 0 && Regex.Matches(text[jobs..], @"(?m)^  [\w-]+:\s*$").Count == 1, "not exactly one job");
-        Require(Regex.Matches(code, "persist-credentials: false").Count == 1 && Regex.Matches(code, "uses: actions/checkout@").Count == 1,
+        var walk = WalkSteps(text);
+        if (walk.Error is not null) found.Add($"the steps cannot be read: {walk.Error}");
+        Require(jobs >= 0 && Regex.Matches(text[jobs..], @"(?m)^  [\w-]+:\s*$").Count == 1 && walk.Jobs == 1, "not exactly one job");
+        var references = ActionReferences(text, out _);
+        Require(Regex.Matches(code, "persist-credentials: false").Count == 1 && references.Count(r => r.StartsWith("actions/checkout@", StringComparison.Ordinal)) == 1,
             "the checkout keeps its credentials (persist-credentials: false is missing)");
-        var uses = Regex.Matches(code, @"(?m)^\s*-?\s*uses:\s*([^@\s]+)@").Select(m => m.Groups[1].Value).Distinct().ToArray();
+        var uses = references.Select(r => r.Split('@')[0]).Distinct().ToArray();
         Require(uses.All(ScannerActions[name].Contains) && ScannerActions[name].All(uses.Contains),
             $"the actions are not exactly {string.Join(", ", ScannerActions[name])}: {string.Join(", ", uses)}");
         Require(!code.Contains("continue-on-error", StringComparison.Ordinal) && !Regex.IsMatch(code, @"\|\||set \+e"), "a failure can pass");
         // Only actions, no commands of their own: a run: step would run with the job's write (and, in Scorecard, its identity token), and
         // Scorecard refuses to publish from a job with one.
-        Require(!Regex.IsMatch(code, @"(?m)^\s*-?\s*[""']?run[""']?\s*:"), "a run: step");
+        // Read as YAML (a run key, or a merge key that could bring one in) and as text with the comments stripped (a run key anywhere, in
+        // flow style too; a name like dry-run: is not one).
+        var bare = Regex.Replace(code, @"(^|\s)#.*$", "", RegexOptions.Multiline);
+        Require(!walk.Steps.Any(RunsACommand) && !Regex.IsMatch(bare, @"(?<![\w-])[""']?run[""']?\s*:"), "a run: step");
         Require(Regex.IsMatch(text, @"(?m)^    branches: \[main\]$") && Regex.Matches(text, "branches").Count == 1, "the push is not exactly to main");
         Require(Regex.IsMatch(text, @"(?m)^  schedule:\n    - cron: '\d+ \d+ \* \* [0-6]'\n"), "not weekly (one cron, on one day of the week)");
         if (name == "codeql.yml")
@@ -785,6 +992,20 @@ public class CoreWorkflowTests
             Catches(name, text, "    timeout-minutes:", "    continue-on-error: true\n    timeout-minutes:", "a failure can pass");
             Catches(name, text, "      - uses: actions/checkout@", "      - run: curl -fsSL https://example.com/x.sh | sh\n      - uses: actions/checkout@", "a run: step");
             Catches(name, text, "      - uses: actions/checkout@", "      - name: x\n        run: echo hi\n      - uses: actions/checkout@", "a run: step");
+            // A name that holds "dry-run:", and a comment that says run:, are not a run: step.
+            Assert.Empty(ScannerProblems(name, text.Replace("      - uses: actions/checkout@", "      - name: \"dry-run: x\" # run: y\n        uses: actions/checkout@")));
+            // Steps in flow style, quoted keys, a merge key: read as YAML, not line by line.
+            Catches(name, text, "      - uses: actions/checkout@", "      - {run: curl x}\n      - uses: actions/checkout@", "a run: step");
+            Catches(name, text, "      - uses: actions/checkout@", "      - {\"run\": x}\n      - uses: actions/checkout@", "a run: step");
+            Catches(name, text, "      - uses: actions/checkout@", "      - name: x\n        'run': echo hi\n      - uses: actions/checkout@", "a run: step");
+            Catches(name, text, "    steps:\n", "    steps: [{run: x}]\n    later:\n", "a run: step");
+            Catches(name, text, "      - uses: actions/checkout@", "      - &a {name: x}\n      - <<: *a\n      - uses: actions/checkout@", "a run: step");
+            Catches(name, text, "      - uses: actions/checkout@", "      - {uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809}\n      - uses: actions/checkout@", "the actions are not exactly");
+            Catches(name, text, "    steps:\n", "    steps: [{uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809}]\n    later:\n", "the actions are not exactly");
+            Catches(name, text, "      - uses: actions/checkout@", "      - !!str uses: x@y\n      - uses: actions/checkout@", "the steps cannot be read");
+            Catches(name, text, "      - uses: actions/checkout@", "      - {!!str uses: x@y}\n      - uses: actions/checkout@", "the steps cannot be read");
+            Catches(name, text, "    steps:\n", "    !!str steps:\n", "the steps cannot be read");
+            Catches(name, text, "      - uses: actions/checkout@", "      - 7\n      - uses: actions/checkout@", "the steps cannot be read");
             Catches(name, text, "jobs:\n", "jobs:\n  second:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi\n", "not exactly one job");
         }
         Catches("codeql.yml", codeql, "build-mode: none", "build-mode: autobuild", "build-mode none");
@@ -803,10 +1024,21 @@ public class CoreWorkflowTests
 
     /// <summary>
     /// The one cooldown exception: Microsoft's .NET base images, whose rebuilds carry the OS and runtime security fixes and
-    /// which Dependabot has no security advisories for, so a cooldown would only hold those fixes back. Dependabot names a Docker image by
-    /// its repository; the docs do not say whether the registry host is part of the name, so both forms are listed. Nothing else is excluded.
+    /// which Dependabot has no security advisories for, so a cooldown would only hold those fixes back. Dependabot names a Docker image
+    /// without its registry (its pull requests say "dotnet/aspnet" and "dotnet/sdk"), so a pattern with the registry would never match.
+    /// Nothing else is excluded.
     /// </summary>
-    private static readonly string?[] DockerCooldownExclude = ["dotnet/*", "mcr.microsoft.com/dotnet/*"];
+    private static readonly string?[] DockerCooldownExclude = ["dotnet/*"];
+
+    /// <summary>
+    /// The major updates Dependabot is told to skip while we stay on the current .NET LTS, per ecosystem: the framework's Docker images and
+    /// the packages that ship in step with it. Each is ignored for exactly semver-major (minor and patch still come); nothing else is ignored.
+    /// </summary>
+    private static readonly Dictionary<string, string[]> DependabotIgnores = new()
+    {
+        ["docker /dotnet"] = ["dotnet/*"],
+        ["nuget /dotnet"] = ["Microsoft.AspNetCore.*", "Microsoft.Data.Sqlite", "Microsoft.Extensions.*"],
+    };
 
     /// <summary>
     /// What .github/dependabot.yml leaves out, one line each: exactly the ecosystems in <see cref="DependabotEcosystems"/>, each weekly,
@@ -828,6 +1060,7 @@ public class CoreWorkflowTests
         static YamlNode? Get(YamlNode? node, string key) =>
             node is YamlMappingNode m && m.Children.TryGetValue(new YamlScalarNode(key), out var v) ? v : null;
         static string? Text(YamlNode? node) => (node as YamlScalarNode)?.Value;
+        static string?[] List(YamlNode? node) => (node as YamlSequenceNode)?.Children.Select(Text).Order(StringComparer.Ordinal).ToArray() ?? [];
 
         if (Text(Get(root, "version")) != "2") found.Add("version is not 2");
         var updates = (Get(root, "updates") as YamlSequenceNode)?.Children ?? [];
@@ -843,8 +1076,12 @@ public class CoreWorkflowTests
             var expected = id == "docker /dotnet" ? DockerCooldownExclude : [];
             if (!exclude.SequenceEqual(expected))
                 found.Add($"{id}: the cooldown's exclude: is not exactly [{string.Join(", ", expected)}]: [{string.Join(", ", exclude)}]");
+            var ignored = (Get(u, "ignore") as YamlSequenceNode)?.Children
+                .Select(i => $"{Text(Get(i, "dependency-name"))} [{string.Join(", ", List(Get(i, "update-types")))}]").Order(StringComparer.Ordinal).ToArray() ?? [];
+            var expectedIgnored = (DependabotIgnores.GetValueOrDefault(id) ?? []).Select(n => $"{n} [version-update:semver-major]").Order(StringComparer.Ordinal).ToArray();
+            if (!ignored.SequenceEqual(expectedIgnored))
+                found.Add($"{id}: the ignore: list is not exactly the major updates [{string.Join(", ", expectedIgnored)}]: [{string.Join(", ", ignored)}]");
             if (!int.TryParse(Text(Get(u, "open-pull-requests-limit")), out var limit) || limit < 1 || limit > 5) found.Add($"{id}: open-pull-requests-limit is not 1 to 5");
-            static string?[] List(YamlNode? node) => (node as YamlSequenceNode)?.Children.Select(Text).Order(StringComparer.Ordinal).ToArray() ?? [];
             var groups = (Get(u, "groups") as YamlMappingNode)?.Children.Values ?? [];
             if (!groups.Any(g => List(Get(g, "update-types")).SequenceEqual(["minor", "patch"]) && List(Get(g, "patterns")).SequenceEqual(["*"])))
                 found.Add($"{id}: minor and patch updates are not grouped (a group of patterns [\"*\"] and update-types minor and patch)");
@@ -854,7 +1091,7 @@ public class CoreWorkflowTests
 
     private static string DependabotFile => Path.Combine(CoreRoot(), ".github", "dependabot.yml");
 
-    [Fact]   // mutations: the docker entry dropped; a cooldown removed; a pip entry added; the npm folder misspelt
+    [Fact]   // mutations: the docker entry dropped; a cooldown removed; an ignore dropped or widened; a pip entry added; the npm folder misspelt
     public void Dependabot_updates_the_four_ecosystems_weekly_after_a_cooldown()
     {
         Assert.True(File.Exists(DependabotFile), ".github/dependabot.yml is missing");
@@ -885,16 +1122,27 @@ public class CoreWorkflowTests
         Catches("          - minor\n          - patch\n", "          - major\n          - minor\n          - patch\n", "not grouped");
         Catches("version: 2", "version: 1", "version is not 2");
         // The docker entry's exclusion is exactly the .NET images: not widened, not dropped, and no other entry has one.
-        const string Exclude = "        - \"mcr.microsoft.com/dotnet/*\"\n";
+        const string Exclude = "        - \"dotnet/*\"\n";
         Catches(Exclude, "        - \"*\"\n", "docker /dotnet: the cooldown's exclude: is not exactly");
         Catches(Exclude, Exclude + "        - \"mcr.microsoft.com/*\"\n", "docker /dotnet: the cooldown's exclude: is not exactly");
-        Catches("        - \"dotnet/*\"\n" + Exclude, "", "docker /dotnet: the cooldown's exclude: is not exactly");
+        Catches(Exclude, Exclude + "        - \"mcr.microsoft.com/dotnet/*\"\n", "docker /dotnet: the cooldown's exclude: is not exactly");   // Dependabot never matches the registry
+        Catches(Exclude, "", "docker /dotnet: the cooldown's exclude: is not exactly");
         Catches("  - package-ecosystem: nuget\n    directory: /dotnet\n    schedule:\n      interval: weekly\n    cooldown:\n      default-days: 7\n",
             "  - package-ecosystem: nuget\n    directory: /dotnet\n    schedule:\n      interval: weekly\n    cooldown:\n      default-days: 7\n      exclude:\n        - \"Microsoft.*\"\n",
             "nuget /dotnet: the cooldown's exclude: is not exactly");
         Catches("  - package-ecosystem: npm\n    directory: /spec/check\n    schedule:\n      interval: weekly\n    cooldown:\n      default-days: 7\n",
             "  - package-ecosystem: npm\n    directory: /spec/check\n    schedule:\n      interval: weekly\n    cooldown:\n      default-days: 7\n      include:\n        - \"ajv\"\n",
             "npm /spec/check: a cooldown include:");
+        // The ignores are exactly the major updates: not dropped, not widened beyond major, no framework package missing, nothing extra.
+        const string Ignore = "the ignore: list is not exactly the major updates";
+        Catches("    ignore:\n      - dependency-name: \"dotnet/*\"\n        update-types: [\"version-update:semver-major\"]\n", "", "docker /dotnet: " + Ignore);
+        Catches("      - dependency-name: \"dotnet/*\"\n        update-types: [\"version-update:semver-major\"]", "      - dependency-name: \"dotnet/*\"\n        update-types: [\"version-update:semver-major\", \"version-update:semver-minor\",\"version-update:semver-patch\"]", "docker /dotnet: " + Ignore);
+        Catches("      - dependency-name: \"Microsoft.Data.Sqlite\"\n        update-types: [\"version-update:semver-major\"]", "      - dependency-name: \"Microsoft.Data.Sqlite\"\n        update-types: [\"version-update:semver-major\", \"version-update:semver-minor\"]", "nuget /dotnet: " + Ignore);
+        Catches("      - dependency-name: \"Microsoft.AspNetCore.*\"\n        update-types: [\"version-update:semver-major\"]\n", "", "nuget /dotnet: " + Ignore);
+        Catches("      - dependency-name: \"Microsoft.Data.Sqlite\"\n        update-types: [\"version-update:semver-major\"]\n", "", "nuget /dotnet: " + Ignore);
+        Catches("      - dependency-name: \"Microsoft.Extensions.*\"\n        update-types: [\"version-update:semver-major\"]\n", "", "nuget /dotnet: " + Ignore);
+        Catches("      - dependency-name: \"Microsoft.Extensions.*\"\n        update-types: [\"version-update:semver-major\"]\n", "      - dependency-name: \"Npgsql\"\n        update-types: [\"version-update:semver-major\"]\n", "nuget /dotnet: " + Ignore);
+        Catches("    open-pull-requests-limit: 3\n    groups:\n      npm-minor-patch:", "    open-pull-requests-limit: 3\n    ignore:\n      - dependency-name: \"*\"\n        update-types: [\"version-update:semver-major\"]\n    groups:\n      npm-minor-patch:", "npm /spec/check: " + Ignore);
         Catches("updates:", "updates: [", "not YAML");
     }
 

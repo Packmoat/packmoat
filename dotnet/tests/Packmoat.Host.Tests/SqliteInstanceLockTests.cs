@@ -203,6 +203,92 @@ public class SqliteInstanceLockTests
         Assert.False(File.Exists(dir.File("backup.db") + ".instance"));
     }
 
+    [Fact]   // mutations: restore takes no lock (it replaces the file under a running server); it waits instead of refusing at once
+    public async Task A_restore_is_refused_at_once_while_the_server_runs_and_changes_nothing()
+    {
+        using var dir = Dir();
+        var db = dir.File("packmoat.db");
+        var key = AesGcmSecretProtector.GenerateKeyBase64();
+        var env = new CliEnvironment(db, () => AesGcmSecretProtector.FromBase64(key), new SystemClock(), "op");
+        await using var server = Build(db, key);
+        Assert.Equal(0, (await Cli(env, "tenant", "create", "acme", "Acme", "--upstream-base", "https://x/", "--feed", "https://x/i.json")).Code);
+        Assert.Equal(0, (await Cli(env, "backup", dir.File("backup.db"))).Code);
+        Assert.Equal(0, (await Cli(env, "tenant", "create", "later", "Later", "--upstream-base", "https://x/", "--feed", "https://x/i.json")).Code);
+
+        var run = Cli(env, "restore", dir.File("backup.db"), "--force");
+        Assert.Same(run, await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(20))));   // refuses at once, never a wait
+        var (code, _, error) = await run;
+        Assert.Equal(1, code);
+        Assert.Equal($"error: A server is using the database {Path.GetFullPath(db)}: stop it first. Nothing was restored.", error.Trim());
+        Assert.Empty(Directory.GetFiles(dir.Path, "*.before-restore-*"));   // the database was not set aside
+        var list = (await Cli(env, "tenant", "list")).Out;
+        Assert.Contains("later", list);   // the database is the one the server has, not the backup
+        Assert.True(Held(db));   // the server still holds the lock
+    }
+
+    [Fact]   // mutations: the lock is let go before the restore has finished; it is never let go (the next server is refused)
+    public async Task A_restore_holds_the_lock_until_it_has_replaced_the_database_and_then_lets_go()
+    {
+        using var dir = Dir();
+        var db = dir.File("packmoat.db");
+        var key = AesGcmSecretProtector.GenerateKeyBase64();
+        var env = new CliEnvironment(db, () => AesGcmSecretProtector.FromBase64(key), new SystemClock(), "op");
+        Assert.Equal(0, (await Cli(env, "tenant", "create", "acme", "Acme", "--upstream-base", "https://x/", "--feed", "https://x/i.json")).Code);
+        Assert.Equal(0, (await Cli(env, "backup", dir.File("backup.db"))).Code);
+        Assert.Equal(0, (await Cli(env, "tenant", "create", "later", "Later", "--upstream-base", "https://x/", "--feed", "https://x/i.json")).Code);
+
+        bool? heldAfterReplace = null;
+        var watching = env with { AfterRestore = () => { heldAfterReplace = Held(db); return Task.CompletedTask; } };
+        var (code, output, error) = await Cli(watching, "restore", dir.File("backup.db"), "--force");
+        Assert.True(code == 0, error);
+        Assert.StartsWith("restored.", output);
+        Assert.True(heldAfterReplace);   // held while the file was being replaced
+        Assert.False(Held(db));          // and let go once it is done
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();   // the file was replaced: connections still open on the old one would read it
+        var list = (await Cli(env, "tenant", "list")).Out;
+        Assert.DoesNotContain("later", list);
+        Assert.Contains("acme", list);
+    }
+
+    [Fact]   // mutation: the file-locking switch is not passed to the restore (it would take a lock that holds nothing)
+    public async Task A_restore_is_refused_when_file_locking_is_turned_off()
+    {
+        using var dir = Dir();
+        var db = dir.File("packmoat.db");
+        var key = AesGcmSecretProtector.GenerateKeyBase64();
+        var env = new CliEnvironment(db, () => AesGcmSecretProtector.FromBase64(key), new SystemClock(), "op");
+        Assert.Equal(0, (await Cli(env, "tenant", "create", "acme", "Acme", "--upstream-base", "https://x/", "--feed", "https://x/i.json")).Code);
+        Assert.Equal(0, (await Cli(env, "backup", dir.File("backup.db"))).Code);
+        var (code, _, error) = await Cli(env with { DisableFileLocking = "1" }, "restore", dir.File("backup.db"), "--force");
+        Assert.Equal(1, code);
+        Assert.Contains(SqliteInstanceLock.DisableFileLockingVariable + " is set", error);
+        Assert.Contains("Refusing to restore", error);
+        Assert.Empty(Directory.GetFiles(dir.Path, "*.before-restore-*"));
+        Assert.Equal("1", CliEnvironment.FromSettings(n => n == SqliteInstanceLock.DisableFileLockingVariable ? "1" : null).DisableFileLocking);
+    }
+
+    [Fact]   // mutation: the lock does not make the database's folder (a restore into a fresh folder would fail on the lock file)
+    public async Task A_restore_into_a_folder_that_is_not_there_yet_takes_the_lock_and_works()
+    {
+        using var dir = Dir();
+        var key = AesGcmSecretProtector.GenerateKeyBase64();
+        var db = dir.File("packmoat.db");
+        var env = new CliEnvironment(db, () => AesGcmSecretProtector.FromBase64(key), new SystemClock(), "op");
+        Assert.Equal(0, (await Cli(env, "tenant", "create", "acme", "Acme", "--upstream-base", "https://x/", "--feed", "https://x/i.json")).Code);
+        Assert.Equal(0, (await Cli(env, "backup", dir.File("backup.db"))).Code);
+        var fresh = env with { DbPath = Path.Combine(dir.Path, "new", "sub", "packmoat.db") };
+        var (code, _, error) = await Cli(fresh, "restore", dir.File("backup.db"));
+        Assert.True(code == 0, error);
+        Assert.True(File.Exists(fresh.DbPath));
+    }
+
+    private static async Task<(int Code, string Out, string Err)> Cli(CliEnvironment env, params string[] args)
+    {
+        var (o, e) = (new StringWriter(), new StringWriter());
+        var code = await AdminCli.RunAsync(args, o, e, env, []);
+        return (code, o.ToString(), e.ToString());
+    }
+
     [Fact]   // mutation: a marker file instead of an OS lock (the file a crashed server leaves behind would block every later start)
     public async Task A_lock_file_left_by_a_dead_server_does_not_block_the_next_start()
     {
@@ -230,7 +316,7 @@ public class SqliteInstanceLockTests
         try
         {
             Assert.Equal("held", await holder.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(30)));
-            var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => SqliteInstanceLock.AcquireAsync(db, TimeSpan.FromMilliseconds(300)));
+            var refused = await Assert.ThrowsAsync<SqliteInstanceLock.HeldException>(() => SqliteInstanceLock.AcquireAsync(db, TimeSpan.FromMilliseconds(300)));
             Assert.Equal(Refusal(db, "0.3"), refused.Message);
         }
         finally

@@ -16,7 +16,7 @@ The same image as everywhere else, with:
   - **Connections.** The database must allow N × `Maximum Pool Size` connections, plus any connections a module holds on its own (the core server holds none; a module that does says so in its docs), where N is the most replicas you will run, counting the old and the new revision during an update. Set `Maximum Pool Size` in the connection string to fit. [Connections and pooling](../self-hosting.md#connections-and-pooling) has the rest.
   - **Limits on traffic nobody has signed in to** (failed sign-ins, token guesses) are counted by each replica on its own, so with N replicas they are N times looser.
 - **Container Apps' own HTTPS ingress** in front, so `PORT` and `PACKMOAT_TRUSTED_PROXIES` are set as for [your own proxy](own-proxy.md). Point the ingress's target port at `PORT`.
-- **Health probes** on `/healthz` (liveness) and `/readyz` (readiness), with the `Host` header set to `localhost` (see [Health checks](../operations.md#health-checks)).
+- **Health probes** on `/healthz` (liveness) and `/readyz` (readiness), with the `Host` header set to `localhost` (see [Health checks](../operations.md#health-checks); they also answer when the `Host` is an IP address, and the header is kept so an older image still answers them).
 - **Settings:** `PACKMOAT_DB_ENGINE=postgres`, `PACKMOAT_DB` set to the app role's connection string with `SSL Mode=VerifyFull`, and `PACKMOAT_COOKIE_KEYS=database`, so the keys that protect sign-in cookies live in the database rather than on a disk.
 - **Secrets as files:** the master key, the connection string and the other secrets, given through each setting's `_FILE` form.
 
