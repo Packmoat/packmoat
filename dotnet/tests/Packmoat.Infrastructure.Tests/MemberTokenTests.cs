@@ -94,7 +94,7 @@ public class MemberTokenTests : MemberTokenContract
         {
             var clock = new FakeClock();
             var key = AesGcmSecretProtector.GenerateKeyBase64();
-            var env = new CliEnvironment(Path.Combine(dir, "packmoat.db"), () => AesGcmSecretProtector.FromBase64(key), clock, "founder");
+            var env = new CliEnvironment(Path.Combine(dir, "packmoat.db"), () => AesGcmSecretProtector.FromBase64(key), clock, "ops");
             async Task<string> Run(params string[] args)
             {
                 var o = new StringWriter(); var e = new StringWriter();

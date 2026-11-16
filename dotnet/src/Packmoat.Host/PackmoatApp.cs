@@ -180,6 +180,9 @@ public static class PackmoatApp
     /// <summary>The log category of the start's warning about a test seam that is set.</summary>
     internal const string TestSeamCategory = "Packmoat.TestSeams";
 
+    /// <summary>The configuration key holding the host names a production server answers to, joined by ';'. (The framework's own AllowedHosts is "*" there; see HealthHost.)</summary>
+    public const string AnsweredHostsKey = "Packmoat:AnsweredHosts";
+
     /// <summary>The log category of the PostgreSQL start checks' warnings.</summary>
     public const string PostgresStartupLogCategory = "Packmoat.Database";
 
@@ -303,10 +306,16 @@ public static class PackmoatApp
             sp.GetRequiredService<ILogger<TokenRateLimiter>>()));
         builder.Services.AddSingleton<TokenGuessLimiter>(sp => new TokenGuessLimiter(sp.GetRequiredService<IClock>(), log: sp.GetRequiredService<ILogger<TokenGuessLimiter>>()));
 
-        builder.Services.AddSingleton<IPublishDateSource>(sp => new NuGetOrgPublishDateSource(
-            new HttpClient(new SocketsHttpHandler { AutomaticDecompression = System.Net.DecompressionMethods.All, ConnectTimeout = TimeSpan.FromSeconds(10) })
-            { Timeout = TimeSpan.FromSeconds(30) },
-            sp.GetRequiredService<IClock>()));
+        builder.Services.AddSingleton<IPublishDateSource>(sp =>
+        {
+            var datesLog = sp.GetRequiredService<ILoggerFactory>().CreateLogger("Packmoat.PublishDates");
+            return new NuGetOrgPublishDateSource(
+                new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, AutomaticDecompression = System.Net.DecompressionMethods.All, ConnectTimeout = TimeSpan.FromSeconds(10) })
+                { Timeout = TimeSpan.FromSeconds(30) },
+                sp.GetRequiredService<IClock>(),
+                log: m => datesLog.LogWarning("{Message}", m),
+                logRetry: m => datesLog.LogInformation("{Message}", m));
+        });
 
         builder.Services.AddSingleton<IUpstreamClient>(sp => new UpstreamHttpClient(
             new HttpClient(new SocketsHttpHandler
@@ -439,11 +448,15 @@ public static class PackmoatApp
             siteHosts.Add(site.Host);
         }
 
+        string[]? productionHosts = null;
         if (ProductionMode.On(options))
         {
             // Production: only our own hostnames are answered. (Caddy forwards the original Host; loopback names serve the health check.)
             if (proxyHosts.Length == 0) throw new InvalidOperationException("PACKMOAT_HOSTS is not set. Refusing to start without a list of the hostnames this service answers to.");
-            builder.Configuration["AllowedHosts"] = string.Join(';', proxyHosts.Concat(siteHosts).Concat(new[] { "127.0.0.1", "localhost" }));
+            productionHosts = proxyHosts.Concat(siteHosts).Concat(new[] { "127.0.0.1", "localhost" }).ToArray();
+            // The framework's own host filter is switched off here; the one built right after Build() applies this list to everything but a health check addressed by IP.
+            builder.Configuration["AllowedHosts"] = "*";
+            builder.Configuration[AnsweredHostsKey] = string.Join(';', productionHosts);
         }
         // With PACKMOAT_TRUSTED_PROXIES set, a forwarded host must be one of the same names the host filter allows.
         var forwarded = Packmoat.Host.TrustedProxies.Options(options.TrustedProxies, proxyHosts.Concat(siteHosts).Concat(new[] { "127.0.0.1", "localhost" }));
@@ -452,6 +465,13 @@ public static class PackmoatApp
             throw new InvalidOperationException("PACKMOAT_DB is not set, so there is no tenant store. Refusing to start without one.");
 
         var app = builder.Build();
+        // The host filter, outermost: nothing of ours runs before it, and it sees the Host as sent, before any forwarded header. It is the framework's filter
+        // with the same list and its defaults (so the same 400, ports ignored, an empty Host allowed), for every request but a GET of a health check addressed by IP.
+        if (productionHosts is not null)
+        {
+            var hostFilter = new FixedOptions<Microsoft.AspNetCore.HostFiltering.HostFilteringOptions>(new() { AllowedHosts = productionHosts, AllowEmptyHosts = true });
+            app.UseWhen(c => !HealthHost.Allows(c), b => b.UseMiddleware<Microsoft.AspNetCore.HostFiltering.HostFilteringMiddleware>(hostFilter));
+        }
         // The SQLite lock, made now, so the app's container holds it and lets go of it when the app is disposed.
         _ = app.Services.GetService<SqliteInstanceLock>();
         // A test seam is never set in production: if one is, say so at start, by name.

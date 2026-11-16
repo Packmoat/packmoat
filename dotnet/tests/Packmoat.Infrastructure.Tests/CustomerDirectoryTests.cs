@@ -64,7 +64,7 @@ public class CustomerDirectoryTests : CustomerDirectoryContract
     {
         await using var t = new TestDb();
         await t.Db.MigrateAsync(6);
-        await ScalarAsync(t, "INSERT INTO admin_actions(time, actor_tid, actor_oid, actor_name, action, tenant_id, detail) VALUES('2026-10-10T00:00:00Z','tid','oid','Founder','tenant.cooldown','acme','14')");
+        await ScalarAsync(t, "INSERT INTO admin_actions(time, actor_tid, actor_oid, actor_name, action, tenant_id, detail) VALUES('2026-10-10T00:00:00Z','tid','oid','Admin','tenant.cooldown','acme','14')");
         await t.Db.MigrateAsync(TestTracks.Modules);
         Assert.True(SqliteDatabase.LatestVersion >= 7);
         Assert.Equal("admin", await ScalarAsync(t, "SELECT site FROM admin_actions"));
@@ -100,7 +100,7 @@ public class CustomerDirectoryTests : CustomerDirectoryContract
         public Cli()
         {
             var key = AesGcmSecretProtector.GenerateKeyBase64();
-            _env = new CliEnvironment(DbPath, () => AesGcmSecretProtector.FromBase64(key), Clock, "founder");
+            _env = new CliEnvironment(DbPath, () => AesGcmSecretProtector.FromBase64(key), Clock, "ops");
         }
 
         public async Task<(int Code, string Out, string Err)> Run(params string[] args)
@@ -147,14 +147,14 @@ public class CustomerDirectoryTests : CustomerDirectoryContract
         Assert.Equal(0, show.Code);
         Assert.Contains("1 linked directory", show.Out);
         Assert.Contains(Dir + "\tbound", show.Out);
-        Assert.Contains("by founder", show.Out);
+        Assert.Contains("by ops", show.Out);
 
         Assert.Equal(0, (await cli.Run("tenant", "directory", "unbind", "acme", "--azure-tenant", Dir)).Code);
         Assert.Contains("0 linked directories", (await cli.Run("tenant", "directory", "show", "acme")).Out);
 
         var actions = await cli.Actions();
         Assert.Equal(new[] { "directory.unbind.tokens-revoked", "directory.unbind", "directory.bind" }, actions.Select(a => a.Action));
-        Assert.All(actions, a => { Assert.Equal("cli", a.Site); Assert.Equal("founder", a.ActorName); Assert.Equal("acme", a.TenantId); });
+        Assert.All(actions, a => { Assert.Equal("cli", a.Site); Assert.Equal("ops", a.ActorName); Assert.Equal("acme", a.TenantId); });
         Assert.Equal($"directory {Dir}; revoked=0", actions[0].Detail);
         Assert.All(actions.Skip(1), a => Assert.Equal("directory " + Dir, a.Detail));
     }
@@ -195,7 +195,7 @@ public class CustomerDirectoryTests : CustomerDirectoryContract
         await using var cli = await WithTenantsAsync();
         Assert.Equal(0, (await cli.Run("identity", "bind", "acme", "--azure-tenant", Dir2)).Code);
         Assert.DoesNotContain("suggestion", (await cli.Run("tenant", "directory", "show", "acme")).Out);   // no passing check yet
-        await cli.Exec($"INSERT INTO shared_app_verifications(tenant_id, azure_tenant_id, feed_index_url, client_id, verified_at, verified_by) VALUES('acme','{Dir2.ToUpperInvariant()}','https://x/','client','2026-10-10T00:00:00Z','founder')");
+        await cli.Exec($"INSERT INTO shared_app_verifications(tenant_id, azure_tenant_id, feed_index_url, client_id, verified_at, verified_by) VALUES('acme','{Dir2.ToUpperInvariant()}','https://x/','client','2026-10-10T00:00:00Z','ops')");
 
         var show = (await cli.Run("tenant", "directory", "show", "acme")).Out;
         Assert.Contains("suggestion", show);

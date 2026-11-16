@@ -58,6 +58,7 @@ A restore may fail for a while. It never gets a version that the rules did not a
 Publish dates come from **nuget.org**, never from the organisation's feed. The feed's own date is when the feed saved a copy of the package, which says nothing about how long the version has been public.
 
 - Packmoat asks nuget.org for a package's dates when a request needs them, and keeps the answer in memory. It uses that answer for 10 minutes, then asks again.
+- A request to nuget.org that stalls or fails for a reason that may pass (a timeout, a connection error, a 5xx, 408 or 429) is tried once more before Packmoat fails closed. The whole lookup for one package is given 40 seconds.
 - If nuget.org cannot be reached, Packmoat keeps using an answer up to 24 hours old. Past that, it fails closed.
 - The dates are not saved anywhere else. After a restart, Packmoat asks nuget.org again.
 - A version nuget.org does not list, or lists without a real date (as for an unlisted version), has no known publish date, so it is hidden.

@@ -19,12 +19,6 @@ public static class TestTracks
     public static IReadOnlyList<MigrationTrack> Modules { get; } = [];
 }
 
-/// <summary>The modules the tests' packmoat-admin runs with: none (the core alone).</summary>
-public static class TestCli
-{
-    public static IReadOnlyList<IAdminCliModule> Modules { get; } = [];
-}
-
 public sealed partial class TestDb
 {
     /// <summary>The gate the token service asks: the core's, which serves every tenant.</summary>

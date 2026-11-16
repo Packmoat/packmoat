@@ -1,6 +1,9 @@
 using Packmoat.Admin;
 
-namespace Packmoat.Infrastructure.Tests;
+using Packmoat.Infrastructure;
+using Packmoat.Infrastructure.Tests;
+
+namespace Packmoat.Admin.Tests;
 
 /// <summary>
 /// PACKMOAT_DB_ENGINE in packmoat-admin: unset is sqlite, as before; an unknown value is the usual "error:" line and exit 1,

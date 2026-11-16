@@ -25,7 +25,7 @@ public sealed class FakeIdentityProvider
     /// <summary>The properties of the last challenge (what the real handler would send to Microsoft as prompt and max_age).</summary>
     public AuthenticationProperties? LastChallenge { get; set; }
 
-    public static ClaimsPrincipal Person(string? tid, string? oid, string? email = null, string name = "Test Founder")
+    public static ClaimsPrincipal Person(string? tid, string? oid, string? email = null, string name = "Test Admin")
     {
         var claims = new List<Claim> { new("name", name) };
         if (tid is not null) claims.Add(new Claim("tid", tid));

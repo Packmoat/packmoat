@@ -3,7 +3,10 @@ using Packmoat.Admin;
 using Packmoat.Application;
 using Packmoat.Infrastructure.Lifecycle;
 
-namespace Packmoat.Infrastructure.Tests;
+using Packmoat.Infrastructure;
+using Packmoat.Infrastructure.Tests;
+
+namespace Packmoat.Admin.Tests;
 
 /// <summary>
 /// The command line's own commands are the core's (moved from the hosted tests): every first word the core's help lists (and -h and

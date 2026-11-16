@@ -2,6 +2,9 @@
 # the Dockerfile's base images (pinned by digest). Weekly, and only for a release at least 7 days old (cooldown), as dotnet/aspire does:
 # a release that is pulled or found bad in its first week is never proposed. Security updates are not held back by the cooldown.
 # Minor and patch updates come as one pull request per ecosystem; a major update comes on its own. CoreWorkflowTests checks all of this.
+# We stay on the current .NET LTS until the next LTS is released, so Dependabot proposes no major bump of the framework: not its Docker
+# images (dotnet/*) and not the packages that ship in step with it (Microsoft.AspNetCore.*, Microsoft.Data.Sqlite, Microsoft.Extensions.*).
+# Minor and patch updates of those still come. Other packages (Npgsql, for one) are not held back.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -26,6 +29,13 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 3
+    ignore:
+      - dependency-name: "Microsoft.AspNetCore.*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.Data.Sqlite"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.Extensions.*"
+        update-types: ["version-update:semver-major"]
     groups:
       nuget-minor-patch:
         patterns:
@@ -51,7 +61,8 @@ updates:
 
   # The Dockerfile's base images. Microsoft's .NET images are left out of the cooldown: their rebuilds carry the OS and runtime security
   # fixes, and Dependabot has no security advisories for Docker images, so a cooldown would only hold those fixes back a week. An image
-  # is named by its repository; both forms (with and without the registry) are listed, as the docs do not say which Dependabot matches.
+  # is named without its registry (Dependabot's pull requests say "dotnet/aspnet" and "dotnet/sdk"), so the pattern is dotnet/*; a pattern
+  # with the registry (mcr.microsoft.com/dotnet/*) would never match.
   - package-ecosystem: docker
     directory: /dotnet
     schedule:
@@ -60,8 +71,10 @@ updates:
       default-days: 7
       exclude:
         - "dotnet/*"
-        - "mcr.microsoft.com/dotnet/*"
     open-pull-requests-limit: 3
+    ignore:
+      - dependency-name: "dotnet/*"
+        update-types: ["version-update:semver-major"]
     groups:
       docker-minor-patch:
         patterns:

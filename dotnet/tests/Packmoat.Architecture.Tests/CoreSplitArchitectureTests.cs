@@ -86,6 +86,15 @@ public class CoreSplitArchitectureTests
         var friends = CoreAssemblies.SelectMany(a => a.GetCustomAttributes<System.Runtime.CompilerServices.InternalsVisibleToAttribute>()
             .Select(v => v.AssemblyName)).Distinct().Order(StringComparer.Ordinal).ToArray();
         Assert.All(friends, f => Assert.EndsWith(".Tests", f, StringComparison.Ordinal));
-        Assert.Equal(["Packmoat.Host.Tests", "Packmoat.Infrastructure.Tests"], friends);
+        Assert.Equal(["Packmoat.Admin.Tests", "Packmoat.Host.Tests", "Packmoat.Infrastructure.Tests"], friends);
+    }
+
+    [Fact]   // mutation: OpenStoresAsync, TokenServiceFor or CliStores made public again
+    public void The_admin_command_lines_store_helpers_are_not_public()
+    {
+        var cli = typeof(Packmoat.Admin.AdminCli);
+        Assert.Null(cli.GetMethod("OpenStoresAsync", BindingFlags.Public | BindingFlags.Static));
+        Assert.Null(cli.GetMethod("TokenServiceFor", BindingFlags.Public | BindingFlags.Static));
+        Assert.False(cli.GetNestedType("CliStores", BindingFlags.Public | BindingFlags.NonPublic)!.IsNestedPublic);
     }
 }

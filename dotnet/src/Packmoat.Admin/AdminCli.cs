@@ -16,6 +16,8 @@ public sealed record CliEnvironment(string DbPath, Func<AesGcmSecretProtector> P
     public Func<ITenantStore, ISharedAppCredentialStore, IClock, IUpstreamCredentialSource>? OnboardingCredentials { get; init; }
     /// <summary>Tests only: adjusts the onboarding options after they are read from the command line (for example shorter retry waits).</summary>
     public Action<OnboardingOptions>? TuneOnboarding { get; init; }
+    /// <summary>Tests only: runs once the restore has replaced the database, while the restore still holds the instance lock.</summary>
+    public Func<Task>? AfterRestore { get; init; }
 
     /// <summary>The database engine (PACKMOAT_DB_ENGINE): SQLite, or PostgreSQL, where <see cref="DbPath"/> is a
     /// connection string, the <c>db</c> group is PostgreSQL's own (<see cref="PostgresDbCommands"/>), every other command only checks the
@@ -27,6 +29,9 @@ public sealed record CliEnvironment(string DbPath, Func<AesGcmSecretProtector> P
     /// the start's checks then only warn about. Read, strictly, only when <see cref="Engine"/> is PostgreSQL; off otherwise.
     /// </summary>
     public bool SingleRole { get; init; }
+
+    /// <summary>The value of <see cref="SqliteInstanceLock.DisableFileLockingVariable"/>, as the server reads it: a restore refuses when it turns file locks off.</summary>
+    public string? DisableFileLocking { get; init; }
 
     public static CliEnvironment FromProcess() => FromSettings(Settings.Get);
 
@@ -43,6 +48,7 @@ public sealed record CliEnvironment(string DbPath, Func<AesGcmSecretProtector> P
             Engine = engine,
             // Strict, as the server reads it, and only on PostgreSQL: on SQLite the setting is not read at all.
             SingleRole = engine == DatabaseEngine.Postgres && PostgresStartupOptions.ParseSingleRole(setting(PostgresStartupOptions.SingleRoleVariable)),
+            DisableFileLocking = setting(SqliteInstanceLock.DisableFileLockingVariable),
         };
     }
 }
@@ -50,6 +56,9 @@ public sealed record CliEnvironment(string DbPath, Func<AesGcmSecretProtector> P
 /// <summary>
 /// The hand-run operator tool for the first customers. Prints ids and states only. A new token is printed once, on issue.
 /// Certificate files are read and stored encrypted; they are never echoed.
+/// <para>Commands work beside a running server, a backup included. A restore replaces the database file, so it takes the SQLite
+/// instance lock (<see cref="SqliteInstanceLock"/>) with no wait and holds it until the file is replaced: with a server up it
+/// refuses at once and changes nothing.</para>
 /// </summary>
 public static class AdminCli
 {
@@ -202,7 +211,20 @@ public static class AdminCli
                     await output.WriteLineAsync(Describe(v));
                     return v.Ok ? 0 : 1;
                 }
+                // The server holds the database open: replacing the file under it would corrupt it. No wait, so a restore never hangs.
+                SqliteInstanceLock instance;
+                try { instance = await SqliteInstanceLock.AcquireAsync(env.DbPath, TimeSpan.Zero, env.DisableFileLocking); }
+                catch (SqliteInstanceLock.HeldException)
+                {
+                    throw new SettingsException($"A server is using the database {Path.GetFullPath(env.DbPath)}: stop it first. Nothing was restored.");
+                }
+                catch (InvalidOperationException ex) when (ex is not SettingsException)
+                {
+                    throw new SettingsException(ex.Message.Replace("Refusing to start", "Refusing to restore", StringComparison.Ordinal));
+                }
+                using var held = instance;
                 var restored = await SqliteBackup.RestoreAsync(file, env.DbPath, args.Contains("--force"), env.Clock.UtcNow, default, key);
+                if (env.AfterRestore is { } after) await after();
                 await output.WriteLineAsync("restored. " + Describe(restored));
                 return 0;
             }
@@ -531,11 +553,10 @@ public static class AdminCli
 
     /// <summary>
     /// What the core's commands work on, from the one store list (<see cref="SqliteStores"/>), as ports.
-    /// This, <see cref="OpenStoresAsync"/> and <see cref="TokenServiceFor"/> are public only so the core's tests can check the order and
-    /// the gate (no command shows the gate, and the command line's tests live in Packmoat.Infrastructure.Tests, which may not read this
-    /// assembly's internals): they are not a module seam.
+    /// This, <see cref="OpenStoresAsync"/> and <see cref="TokenServiceFor"/> are internal, for Packmoat.Admin.Tests, which checks the
+    /// order and the gate (no command shows the gate): they are not a module seam.
     /// </summary>
-    public sealed record CliStores(CliStorePorts Stores, TenantLifecycle Lifecycle, List<string> Notes, ITenantStore Tenants,
+    internal sealed record CliStores(CliStorePorts Stores, TenantLifecycle Lifecycle, List<string> Notes, ITenantStore Tenants,
         ISharedAppCredentialStore Shared, ITokenService Tokens);
 
     /// <summary>
@@ -604,7 +625,7 @@ public static class AdminCli
     /// lifecycle's participants), the master-key check, the module's serving gate and the token service that asks it. Null, after an
     /// error line, when two modules give a lifecycle or a gate.
     /// </summary>
-    public static async Task<CliStores?> OpenStoresAsync(IRelationalDatabase db, CliEnvironment env, IReadOnlyList<IAdminCliModule> modules, TextWriter error)
+    internal static async Task<CliStores?> OpenStoresAsync(IRelationalDatabase db, CliEnvironment env, IReadOnlyList<IAdminCliModule> modules, TextWriter error)
     {
         // The stores, from the one list the server and the hosted modules also build from, for the database's own
         // engine (never a setting's): SQLite's, or PostgreSQL's.
@@ -641,7 +662,7 @@ public static class AdminCli
     }
 
     /// <summary>The token service asks the module's gate, or the core's serve-everyone gate when no module gives one.</summary>
-    public static ITokenService TokenServiceFor(CliTenantPorts tenants, IReadOnlyList<IServingGate> gates) =>
+    internal static ITokenService TokenServiceFor(CliTenantPorts tenants, IReadOnlyList<IServingGate> gates) =>
         tenants.TokenService(gates.SingleOrDefault() ?? ServeAllGate.Instance);
 
     /// <summary>

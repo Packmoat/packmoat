@@ -8,7 +8,7 @@ using Packmoat.Infrastructure;
 namespace Packmoat.Host.Tests;
 
 [Collection("sqlite-pools")]
-public class ReviewFixesM4HostTests
+public class HostStartupGuardTests
 {
     private static string NewKey() => AesGcmSecretProtector.GenerateKeyBase64();
 
@@ -87,6 +87,15 @@ public class ReviewFixesM4HostTests
             Assert.Equal(HttpStatusCode.BadRequest, await Get("/v3/index.json", "evil.example"));              // not listed: refused before anything else
             Assert.Equal(HttpStatusCode.BadRequest, await Get("/v3/index.json", "evil.example", forwardedHost: "feeds.example.test"));
             Assert.Equal(HttpStatusCode.OK, await Get("/healthz", AddressOf(app)["http://".Length..]));         // the container health check uses the loopback address
+            Assert.Equal(HttpStatusCode.OK, await Get("/healthz", "10.1.2.3:8080"));                           // a health check addressed by IP
+            Assert.Equal(HttpStatusCode.OK, await Get("/healthz", "203.0.113.9"));
+            Assert.Equal(HttpStatusCode.OK, await Get("/healthz", "[::1]:8080"));
+            Assert.NotEqual(HttpStatusCode.BadRequest, await Get("/readyz", "10.1.2.3:8080"));
+            Assert.Equal(HttpStatusCode.BadRequest, await Get("/healthz", "evil.example"));
+            Assert.Equal(HttpStatusCode.BadRequest, await Get("/healthz", "127.0.0.1.evil.com"));
+            Assert.Equal(HttpStatusCode.BadRequest, await Get("/healthz", "2130706433"));
+            Assert.Equal(HttpStatusCode.BadRequest, await Get("/v3/index.json", "10.1.2.3"));                  // an IP host reaches nothing else
+            Assert.Equal(HttpStatusCode.BadRequest, await Get("/", "10.1.2.3"));
         }
         catch when (TempDir.Failing(dir)) { throw; }
         finally { TempDir.Delete(dir, clearSqlitePools: true); }

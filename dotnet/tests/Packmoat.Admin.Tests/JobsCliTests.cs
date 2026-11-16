@@ -5,7 +5,10 @@ using Packmoat.Application;
 using Packmoat.Domain;
 using Packmoat.Infrastructure.Lifecycle;
 
-namespace Packmoat.Infrastructure.Tests;
+using Packmoat.Infrastructure;
+using Packmoat.Infrastructure.Tests;
+
+namespace Packmoat.Admin.Tests;
 
 /// <summary>
 /// `packmoat-admin jobs run retention`: the server's daily retention pass by hand, for a server whose background jobs are off. Every

@@ -4,7 +4,7 @@ using Packmoat.Domain;
 namespace Packmoat.Host.Tests;
 
 [Collection("sqlite-pools")]
-public class ReviewFixesM3HostTests
+public class PublishDateOutageAuditTests
 {
     [Fact]
     public async Task A_publish_date_outage_is_recorded_in_the_audit_trail_as_an_outage_not_as_an_unknown_date()

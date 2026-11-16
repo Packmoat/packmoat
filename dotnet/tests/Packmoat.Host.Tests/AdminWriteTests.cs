@@ -127,7 +127,7 @@ public class AdminWriteTests
         Assert.Equal("newco", row.TenantId);
         Assert.Equal(Tid, row.ActorTid);
         Assert.Equal(Oid, row.ActorOid);
-        Assert.Equal("Test Founder", row.ActorName);
+        Assert.Equal("Test Admin", row.ActorName);
         Assert.Equal(f.Clock.UtcNow, row.Time);
 
         var shown = (await b.GetTextAsync("/tenants/newco?r=created")).Body;
@@ -256,7 +256,7 @@ public class AdminWriteTests
         var add = await Post(b, "/tenants/acme/waiver-add", ("package", "Some.Pkg"), ("version", "1.2.3"), ("days", "30"), ("reason", "urgent fix"), ("created_by", "mallory"), ("actor", "mallory"));
         Assert.Equal("/tenants/acme?r=waiver-added", Where(add));
         var w = Assert.Single((await Acme(f)).Policy.Waivers);
-        Assert.Equal("Test Founder", w.CreatedBy);
+        Assert.Equal("Test Admin", w.CreatedBy);
         Assert.Equal("some.pkg", w.PackageId);
         Assert.Equal(f.Clock.UtcNow.AddDays(30), w.ExpiresAt);
         Assert.Equal("urgent fix", w.Reason);
@@ -293,7 +293,7 @@ public class AdminWriteTests
         var w = await f.Tenants.AddWaiverAsync("acme", "p.q", "1.0.0", f.Clock.UtcNow.AddDays(5), "r", "x", default);
         Assert.Equal("/tenants/acme?r=waiver-revoked", Where(await Post(b, "/tenants/acme/waiver-revoke", ("waiver", w.Id), ("confirm", "yes"))));
         var row = Assert.Single(await f.Tenants.ListWaiversAsync("acme", 10, default));
-        Assert.Equal("Test Founder", row.RevokedBy);
+        Assert.Equal("Test Admin", row.RevokedBy);
     }
 
     [Fact]
@@ -766,7 +766,7 @@ public class AdminWriteTests
 
         var b = await SignedIn(f);
         for (var i = 0; i < 105; i++)
-            await f.Actions.AppendAsync(new AdminActionRecord(f.Clock.UtcNow.AddSeconds(i), Tid, Oid, "Test Founder", "tenant.cooldown", "acme", "marker-" + i.ToString("D3")), default);
+            await f.Actions.AppendAsync(new AdminActionRecord(f.Clock.UtcNow.AddSeconds(i), Tid, Oid, "Test Admin", "tenant.cooldown", "acme", "marker-" + i.ToString("D3")), default);
         var (status, body, _) = await b.GetTextAsync("/actions");
         Assert.Equal(200, status);
         Assert.Equal(100, Regex.Matches(body, "marker-\\d{3}").Count);

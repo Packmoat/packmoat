@@ -2,7 +2,10 @@ using Packmoat.Admin;
 using Packmoat.Application;
 using Packmoat.Domain;
 
-namespace Packmoat.Infrastructure.Tests;
+using Packmoat.Infrastructure;
+using Packmoat.Infrastructure.Tests;
+
+namespace Packmoat.Admin.Tests;
 
 /// <summary>
 /// `decision show`: one tenant's decision record for a package, newest last seen first, bounded, with every field the support

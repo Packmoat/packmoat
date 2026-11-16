@@ -11,7 +11,7 @@ What the chart makes:
 
 To use a claim you made yourself, set `persistence.existingClaim`. It must be ReadWriteOncePod, and no other mode: `helm install` and `helm upgrade` refuse one that is not (`helm template` cannot read the cluster, so it cannot check). Do not change `nameOverride` or `fullnameOverride` after the install: the chart's claim is named after them, so the server would start on a new, empty database.
 
-The pod runs as user 10001, with a read-only root filesystem (only `/data` and `/tmp` are writable), every Linux capability dropped, no privilege escalation and the runtime's default seccomp profile (a filter on the system calls it may make). It gets no Kubernetes API token. Its probes ask `/healthz` (is it running) and `/readyz` (can it serve; see [Health checks](../operations.md#health-checks)) with the `Host` header set to `localhost`, the only name besides your own that the server answers.
+The pod runs as user 10001, with a read-only root filesystem (only `/data` and `/tmp` are writable), every Linux capability dropped, no privilege escalation and the runtime's default seccomp profile (a filter on the system calls it may make). It gets no Kubernetes API token. Its probes ask `/healthz` (is it running) and `/readyz` (can it serve; see [Health checks](../operations.md#health-checks)) with the `Host` header set to `localhost` (a name the server answers; the health checks also answer when the `Host` is an IP address, and the header is kept so an older image still answers them).
 
 ## Secrets
 

@@ -1,6 +1,9 @@
 using Packmoat.Admin;
 
-namespace Packmoat.Infrastructure.Tests;
+using Packmoat.Infrastructure;
+using Packmoat.Infrastructure.Tests;
+
+namespace Packmoat.Admin.Tests;
 
 /// <summary>
 /// packmoat-admin's setting errors are the usual "error:" line and exit 1, never a crash, and never print a value or a path.
