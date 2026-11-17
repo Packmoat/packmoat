@@ -1,7 +1,11 @@
-# The platform templates, checked offline: no cloud account, no sign-in, nothing deployed. Today the Azure Container Apps template
-# (deploy/azure-container-apps): bicep lint and build, then its tests (jq on the compiled template and on the resources bicep snapshot
-# predicts, and what it refuses), then each test's mutation, which it must catch. bicep is a pinned release, checked by sha256
-# (.github/scripts/install-iac-tools.sh); jq is the runner's own. No secrets, a read-only token. Actions are pinned to full commit SHAs.
+# The platform templates, checked offline: no cloud account, no sign-in, nothing deployed, nothing downloaded but the pinned tools.
+# The Azure Container Apps template (deploy/azure-container-apps): bicep lint and build, then its tests (jq on the compiled template and
+# on the resources bicep snapshot predicts, and what it refuses). The Google Cloud Run template (deploy/cloud-run): tofu fmt, init from the
+# pinned provider zip, validate, tflint, then tofu test (plans against a mock provider: what it makes and what it refuses); the AWS ECS
+# Fargate template (deploy/aws-ecs) the same way, with the AWS provider unpacked once from its pinned zip. Then each
+# test's mutation, which it must catch. bicep, OpenTofu, tflint, its Google and AWS rulesets and the Google and AWS providers are pinned releases, checked
+# by sha256 (.github/scripts/install-iac-tools.sh); jq is the runner's own. No secrets, a read-only token. Actions are pinned to full
+# commit SHAs.
 # Every path here is relative to this repository's root.
 name: templates
 
@@ -22,12 +26,12 @@ jobs:
   templates:
     name: templates
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install the pinned bicep (checked by sha256)
+      - name: Install the pinned bicep, OpenTofu, tflint, rulesets and Google and AWS providers (checked by sha256)
         run: |
           .github/scripts/install-iac-tools.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
@@ -37,3 +41,15 @@ jobs:
         env:
           MUTATION_JOBS: "4"
         run: deploy/azure-container-apps/test-template.sh --mutations
+      - name: Google Cloud Run template tests (tofu fmt, init, validate, tflint and test; what it makes and what it refuses)
+        run: deploy/cloud-run/test-template.sh
+      - name: Each Google Cloud Run template test catches its mutation
+        env:
+          MUTATION_JOBS: "4"
+        run: deploy/cloud-run/test-template.sh --mutations
+      - name: AWS ECS Fargate template tests (tofu fmt, init, validate, tflint and test; what it makes and what it refuses)
+        run: deploy/aws-ecs/test-template.sh
+      - name: Each AWS ECS Fargate template test catches its mutation
+        env:
+          MUTATION_JOBS: "4"
+        run: deploy/aws-ecs/test-template.sh --mutations

@@ -74,15 +74,15 @@ public class CoreWorkflowTests
     }
 
     [Fact]   // mutation: a release.yml added
-    public void The_core_has_its_codeql_conformance_image_dotnet_gitleaks_helm_scorecard_and_templates_workflows() =>
-        Assert.Equal(["codeql.yml", "conformance.yml", "core-image.yml", "dotnet.yml", "gitleaks.yml", "helm.yml", "scorecard.yml", "templates.yml"],
+    public void The_core_has_its_codeql_conformance_image_release_dotnet_gitleaks_helm_scorecard_and_templates_workflows() =>
+        Assert.Equal(["codeql.yml", "conformance.yml", "core-image.yml", "core-release.yml", "dotnet.yml", "gitleaks.yml", "helm.yml", "scorecard.yml", "templates.yml"],
             Workflows().Select(w => w.Name).ToArray());
 
     [Fact]   // mutation: working-directory: ../hosted/dotnet in core/.github/workflows/dotnet.yml
     public void The_core_workflows_name_only_paths_inside_core()
     {
         var root = CoreRoot();
-        var offenders = Workflows().SelectMany(w => OutsidePaths(w.Text, root, w.Name == Publisher ? PublisherNotFolders : null, w.Name == Publisher ? PublishGuard : null)
+        var offenders = Workflows().SelectMany(w => OutsidePaths(w.Text, root, w.Name is Publisher or Releaser ? PublisherNotFolders : null, GuardOf(w.Name))
             .Select(o => $"{w.Name} {o}")).ToArray();
         Assert.True(offenders.Length == 0, "core/.github/workflows runs with core/ as the repository root; these name something outside it:\n" + string.Join("\n", offenders));
     }
@@ -354,22 +354,31 @@ public class CoreWorkflowTests
     /// <summary>The one workflow that publishes: the signed core image, only from main in the public repository, never on a pull request.</summary>
     private const string Publisher = "core-image.yml";
 
+    /// <summary>The one workflow that names a release: it retags the image <see cref="Publisher"/> already built and signed, on a version tag.</summary>
+    private const string Releaser = "core-release.yml";
+
+    /// <summary>The guard line a workflow may name the repository on (<see cref="OutsidePaths"/>'s exempt line), if it has one.</summary>
+    private static string? GuardOf(string name) => name == Publisher ? PublishGuard : name == Releaser ? ReleaseGuard : null;
+
     /// <summary>
     /// The hygiene problems <see cref="Publisher"/> may have, because publishing needs them: a write permission, an identity token, and the
     /// built-in token as the registry login's password. <see cref="PublisherProblems"/> pins each to exactly that use.
     /// </summary>
-    private static bool PublisherMayHave(string problem) =>
-        problem is "says : write" or "says id-token"
-        || Regex.IsMatch(problem, @"^line \d+: a secret or token: password: \$\{\{ secrets\.GITHUB_TOKEN \}\}$", RegexOptions.CultureInvariant);
+    private static bool PublisherMayHave(string problem) => problem is "says : write" or "says id-token" || LoginPassword(problem);
+
+    /// <summary>The built-in token as the registry login's password: the one secret reference <see cref="Publisher"/> and <see cref="Releaser"/> may have.</summary>
+    private static bool LoginPassword(string problem) =>
+        Regex.IsMatch(problem, @"^line \d+: a secret or token: password: \$\{\{ secrets\.GITHUB_TOKEN \}\}$", RegexOptions.CultureInvariant);
 
     /// <summary>
     /// The workflows that may write anything, each with the one job that may and that job's whole permissions block, exactly: the
-    /// publisher (packages for the image, an identity token to sign, attestations for its SBOM and provenance); CodeQL (security events, to
+    /// publisher (packages for the image, an identity token to sign, attestations for its SBOM and provenance); the releaser (packages, to retag that image); CodeQL (security events, to
     /// upload its findings); and Scorecard (security events, and an identity token to publish its results). See <see cref="WriterProblems"/>.
     /// </summary>
     private static readonly Dictionary<string, (string Job, string[] Permissions)> Writers = new()
     {
         [Publisher] = ("publish", ["contents: read", "packages: write", "id-token: write", "attestations: write"]),
+        [Releaser] = ("retag", ["contents: read", "packages: write"]),
         ["codeql.yml"] = ("codeql", ["contents: read", "security-events: write"]),
         ["scorecard.yml"] = ("scorecard", ["contents: read", "security-events: write", "id-token: write"]),
     };
@@ -409,7 +418,7 @@ public class CoreWorkflowTests
     /// an identity token if its entry has one, and for the publisher the registry login's password (<see cref="PublisherMayHave"/>).</summary>
     private static bool MayHave(string name, string problem) =>
         Writers.TryGetValue(name, out var w)
-        && (problem == "says : write" || (problem == "says id-token" && w.Permissions.Contains("id-token: write")) || (name == Publisher && PublisherMayHave(problem)));
+        && (problem == "says : write" || (problem == "says id-token" && w.Permissions.Contains("id-token: write")) || (name == Publisher && PublisherMayHave(problem)) || (name == Releaser && LoginPassword(problem)));
 
     [Fact]   // mutations: attestations: write in codeql.yml; contents: write in scorecard.yml; id-token: write in codeql.yml
     public void Only_the_publisher_and_the_scanners_may_write_and_each_exactly_what_its_one_job_needs() =>
@@ -432,8 +441,10 @@ public class CoreWorkflowTests
             Catches("permissions:\n  contents: read\n", "permissions: write-all\n", "write-all");
             Catches("jobs:\n", "jobs:\n  second:\n    runs-on: ubuntu-24.04\n    permissions:\n      contents: read\n", "permissions are set somewhere other");
             Catches($"\n  {job}:\n", "\n  renamed:\n", $"not {job}");
-            Catches("      - uses: actions/checkout@", "      - env:\n          X: \"id-token\"\n        uses: actions/checkout@", "id-token is said");
-            Catches("      - uses: actions/checkout@", "      # attestations: write\n      - uses: actions/checkout@", "a write is said");
+            // The first step: the checkout, or in the releaser (which has none) its first action.
+            var first = text.Contains("      - uses: actions/checkout@", StringComparison.Ordinal) ? "actions/checkout@" : "docker/setup-buildx-action@";
+            Catches($"      - uses: {first}", $"      - env:\n          X: \"id-token\"\n        uses: {first}", "id-token is said");
+            Catches($"      - uses: {first}", $"      # attestations: write\n      - uses: {first}", "a write is said");
         }
         // Any other workflow may write nothing, and only the scanners may run on a schedule or on a rule change: the hygiene check says so.
         var dotnet = Workflows().Single(w => w.Name == "dotnet.yml").Text.Replace("\r\n", "\n");
@@ -726,6 +737,446 @@ public class CoreWorkflowTests
             p => p.StartsWith("an SBOM or attest step is not between", StringComparison.Ordinal));
     }
 
+    /// <summary>The job's one guard in <see cref="Releaser"/>: only a version tag of the public repository names a release.</summary>
+    private const string ReleaseGuard = "if: github.repository == 'Packmoat/packmoat' && startsWith(github.ref, 'refs/tags/v')";
+
+    /// <summary>The check on the pushed tag, as the workflow writes it: <c>vX.Y.Z</c>, each number 0 or without a leading zero, nothing after it
+    /// (no prerelease suffix, no build metadata, no extra segment or path).</summary>
+    private const string ReleaseTagCheck = @"if [[ ! ""${GITHUB_REF}"" =~ ^refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then";
+
+    /// <summary>The actions <see cref="Releaser"/> may use, all of them already used by <see cref="Publisher"/>: no checkout, no build, no attest.</summary>
+    private static readonly string[] ReleaserActions = ["docker/setup-buildx-action", "docker/login-action", "sigstore/cosign-installer"];
+
+    /// <summary>
+    /// The four steps that decide what is named, by step id, with each one's whole <c>env:</c> and whole <c>run:</c> script, exactly. A line added
+    /// to any of them (a flag that skips a check, a second digest, a break out of the loop) is a failure, not a thing the other checks must foresee.
+    /// </summary>
+    private static readonly (string Id, Dictionary<string, string> Env, string Run)[] ReleaserScripts =
+    [
+        ("version", new Dictionary<string, string> {  }, """
+            set -euo pipefail
+            if [[ ! "${GITHUB_REF}" =~ ^refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              echo "${GITHUB_REF} is not a release tag (vX.Y.Z)" >&2
+              exit 1
+            fi
+            echo "version=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}" >> "$GITHUB_OUTPUT"
+            echo "minor=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+            """),
+        ("source", new Dictionary<string, string> {  }, """
+            set -euo pipefail
+            digest="$(docker buildx imagetools inspect --format '{{json .Manifest}}' "${IMAGE}:sha-${GITHUB_SHA}" | jq -r .digest)"
+            if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then echo "no image ${IMAGE}:sha-${GITHUB_SHA}: ${digest}" >&2; exit 1; fi
+            echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+            """),
+        ("verify", new Dictionary<string, string> { ["DIGEST"] = "${{ steps.source.outputs.digest }}" }, """
+            set -euo pipefail
+            platforms="$(docker buildx imagetools inspect --raw "${IMAGE}@${DIGEST}" | jq -r '.manifests[].digest')"
+            if [[ "$(wc -l <<< "${platforms}")" -ne 2 ]]; then echo "expected 2 platform images, got: ${platforms}" >&2; exit 1; fi
+            for p in ${platforms}; do
+              if [[ ! "${p}" =~ ^sha256:[0-9a-f]{64}$ ]]; then echo "not an image digest: ${p}" >&2; exit 1; fi
+              revision="$(docker buildx imagetools inspect --format '{{json .Image}}' "${IMAGE}@${p}" | jq -r 'if has("config") then . else (.[] | select(type == "object")) end | (.config.Labels // {})["org.opencontainers.image.revision"] // ""')"
+              if [[ "${revision}" != "${GITHUB_SHA}" ]]; then echo "${IMAGE}@${p} is revision ${revision}, not ${GITHUB_SHA}" >&2; exit 1; fi
+            done
+            for d in "${DIGEST}" ${platforms}; do
+              cosign verify \
+                --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/core-image.yml@refs/heads/main" \
+                --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+                --certificate-github-workflow-sha "${GITHUB_SHA}" \
+                "${IMAGE}@${d}" > /dev/null
+              echo "verified ${IMAGE}@${d}"
+            done
+            """),
+        ("tag", new Dictionary<string, string> { ["DIGEST"] = "${{ steps.source.outputs.digest }}", ["VERSION"] = "${{ steps.version.outputs.version }}", ["MINOR"] = "${{ steps.version.outputs.minor }}" }, """
+            set -euo pipefail
+            versions=()
+            while IFS= read -r v; do versions+=("${v}"); done < <(git ls-remote --tags --refs "https://github.com/${GITHUB_REPOSITORY}.git" 'v*' | sed 's#.*refs/tags/v##' | grep -E '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' | sort -V)
+            if [[ " ${versions[*]} " != *" ${VERSION} "* ]]; then echo "${VERSION} is not among the release tags of ${GITHUB_REPOSITORY}" >&2; exit 1; fi
+            if out="$(docker buildx imagetools inspect --format '{{json .Manifest}}' "${IMAGE}:${VERSION}" 2>&1)"; then
+              existing="$(jq -r .digest <<< "${out}")"
+              if [[ "${existing}" != "${DIGEST}" ]]; then echo "${IMAGE}:${VERSION} already names ${existing}, not ${DIGEST}: a release tag is never moved" >&2; exit 1; fi
+            elif [[ "${out}" != *"not found"* ]]; then
+              echo "cannot tell whether ${IMAGE}:${VERSION} exists: ${out}" >&2
+              exit 1
+            fi
+            tags=("${VERSION}")
+            if [[ "${versions[${#versions[@]}-1]}" == "${VERSION}" ]]; then tags+=(latest); fi
+            minor_highest="$(printf '%s\n' "${versions[@]}" | grep -E "^${MINOR//./\\.}\.[0-9]+$" | tail -n 1)"
+            if [[ "${minor_highest}" == "${VERSION}" ]]; then tags+=("${MINOR}"); fi
+            args=()
+            for tag in "${tags[@]}"; do args+=(--tag "${IMAGE}:${tag}"); done
+            docker buildx imagetools create "${args[@]}" "${IMAGE}@${DIGEST}"
+            for tag in "${tags[@]}"; do
+              got="$(docker buildx imagetools inspect --format '{{json .Manifest}}' "${IMAGE}:${tag}" | jq -r .digest)"
+              if [[ "${got}" != "${DIGEST}" ]]; then echo "${IMAGE}:${tag} is ${got}, not the signed ${DIGEST}" >&2; exit 1; fi
+              echo "${IMAGE}:${tag} is ${DIGEST}"
+            done
+            echo "tags=${tags[*]}" >> "$GITHUB_OUTPUT"
+            """),
+    ];
+
+    /// <summary>
+    /// What <see cref="Releaser"/> does beyond retagging, one line each. It never builds, pushes by digest, signs or attests: a rebuild under a
+    /// tag would be another image, signed as this workflow on a tag, and the documented cosign and attestation checks would fail. It runs
+    /// only on a push of a <c>v*.*.*</c> tag; one job under the one guard <see cref="ReleaseGuard"/>; a read-only token at the top and only
+    /// contents read and packages write on the job (no identity token, no attestations); the built-in token only as the registry login's
+    /// password; one image name, <see cref="CoreImage"/>; only the actions in <see cref="ReleaserActions"/>; no expression in a run step
+    /// (values come through env); the tag checked as <see cref="ReleaseTagCheck"/>; the source digest read once; its signature, and each
+    /// platform image's, verified as <see cref="SignerTemplate"/> and the issuer; one imagetools create, of the tags that move (X.Y.Z always; X.Y and latest only for the highest version, see
+    /// <see cref="RetagProblems"/>); every tag moved checked against that digest; the scripts of the steps in <see cref="ReleaserScripts"/> exactly as
+    /// pinned (so a line added anywhere in them fails); and the steps in that order.
+    /// </summary>
+    internal static IReadOnlyList<string> ReleaserProblems(string workflow)
+    {
+        var found = new List<string>();
+        var text = workflow.Replace("\r\n", "\n");
+        var code = Regex.Replace(text, @"(?m)^\s*#.*$", "");
+        void Require(bool ok, string problem) { if (!ok) found.Add(problem); }
+
+        Require(Regex.IsMatch(text, @"(?m)^on:\n  push:\n    tags: \['v\*\.\*\.\*'\]\n\npermissions:"), "the triggers are not exactly a push of a v*.*.* tag");
+        Require(!text.Contains("pull_request", StringComparison.Ordinal) && !text.Contains("workflow_dispatch", StringComparison.Ordinal), "the triggers name pull_request or workflow_dispatch");
+
+        var jobs = text.IndexOf("\njobs:\n", StringComparison.Ordinal);
+        Require(jobs >= 0 && Regex.Matches(text[jobs..], @"(?m)^  [\w-]+:\s*$").Count == 1, "not exactly one job");
+        Require(Regex.Matches(code, @"(?m)^\s*-?\s*if:").Count == 1, "not exactly one if: line (the guard)");
+        Require(Regex.IsMatch(text, "(?m)^    " + Regex.Escape(ReleaseGuard) + "$"), $"the job's guard is not exactly {ReleaseGuard}");
+
+        Require(Regex.IsMatch(text, @"(?m)^permissions:\n  contents: read\n(?![ \t])"), "the top-level permissions are not exactly contents: read");
+        Require(Regex.IsMatch(text, @"(?m)^    permissions:\n      contents: read\n      packages: write\n(?!      )"), "the job's permissions are not exactly contents read and packages write");
+        Require(Regex.Matches(text, @"(?m)^\s*permissions:").Count == 2, "permissions are set somewhere other than the top and the job");
+        Require(Regex.Matches(text, ": write").Count == 1 && !text.Contains("id-token", StringComparison.Ordinal) && !text.Contains("attestations", StringComparison.Ordinal),
+            "a write other than packages: write once, an id-token or attestations");
+
+        // Only the three actions: no checkout, build-push, attest, SBOM or QEMU step, so nothing is built, pushed by digest or attested here.
+        var used = Regex.Matches(code, @"(?m)^\s*-?\s*uses:\s*([^@\s]+)@").Select(m => m.Groups[1].Value).ToArray();
+        Require(used.Order(StringComparer.Ordinal).SequenceEqual(ReleaserActions.Order(StringComparer.Ordinal)), $"the actions are not exactly {string.Join(", ", ReleaserActions)}");
+
+        var lines = text.Split('\n');
+        var secretLines = lines.Select((l, i) => (l, i)).Where(x => SecretReference.IsMatch(x.l)).ToArray();
+        Require(secretLines.Length == 1 && secretLines[0].l == "          password: ${{ secrets.GITHUB_TOKEN }}"
+                && lines.Take(secretLines[0].i).Last(l => Regex.IsMatch(l, @"^\s*-?\s*uses:")).Contains("uses: docker/login-action@", StringComparison.Ordinal),
+            "a secret or token other than secrets.GITHUB_TOKEN once, as the docker/login-action password");
+
+        Require(text.Contains($"    env:\n      IMAGE: {CoreImage}\n", StringComparison.Ordinal), $"the job's IMAGE is not {CoreImage}");
+        Require(Regex.Matches(code, @"ghcr\.io/").Count == 1, "an image name other than IMAGE's (ghcr.io/ more than once)");
+        Require(Regex.Matches(code, @"(?m)^\s*-?\s*IMAGE\s*:").Count == 1, "IMAGE is set more than once (a step's env: can override the job's)");
+
+        // A run step holds no ${{ }}: each value reaches it through env, as a quoted variable.
+        var walk = WalkSteps(workflow);
+        Require(walk.Error is null && !walk.Steps.Any(s => Get(s, "run") is YamlScalarNode r && r.Value?.Contains("${{", StringComparison.Ordinal) != false),
+            "a run step holds an expression (${{ }}); pass it through env");
+
+        // Nothing is built, pushed, signed or attested: the one write to the registry is imagetools create, after the checks.
+        Require(!Regex.IsMatch(code, @"\bdocker\s+(image\s+)?(push|build|tag|load|save|import|commit)\b|\bdocker\s+buildx\s+(build|bake)\b|\bbuildctl\b|\bkaniko\b"), "a docker build, push or tag");
+        Require(!Regex.IsMatch(code, @"\b(crane|oras|skopeo|regctl)\b"), "another registry tool (crane, oras, skopeo or regctl)");
+        Require(!Regex.IsMatch(code, @"push-by-digest|(?m)^\s+push: true|\bsubject-(name|digest|path)\b|\bsbom-path\b"), "a build, a push or an attestation input");
+        Require(Regex.Matches(code, @"\bcosign\s+\S+").Count == 1 && Regex.Matches(code, @"\bcosign\s+verify\b").Count == 1, "a cosign command other than the one verify (no sign, attest or sign-blob)");
+        Require(Regex.Matches(code, @"imagetools\s+create").Count == 1, "imagetools create more than once");
+        Require(!code.Contains("continue-on-error", StringComparison.Ordinal), "continue-on-error");
+        Require(!Regex.IsMatch(code, @"\|\|\s*(true|:)\b|\|\|\s*:|\|\|\s*echo\b|set \+e"), "a failed command can pass (|| true, || :, || echo or set +e)");
+        Require(!Regex.IsMatch(code, @"(?m)^\s*shell:"), "a step sets its shell (the default, bash -e, is what stops a failure)");
+
+        Require(code.Contains(ReleaseTagCheck, StringComparison.Ordinal), "the tag is not checked as exactly vX.Y.Z (the pattern)");
+        Require(code.Contains("version=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}", StringComparison.Ordinal)
+                && code.Contains("minor=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}", StringComparison.Ordinal), "the version and minor are not taken from the checked tag's parts");
+        Require(code.Contains("docker buildx imagetools inspect --format '{{json .Manifest}}' \"${IMAGE}:sha-${GITHUB_SHA}\" | jq -r .digest", StringComparison.Ordinal),
+            "the source is not the image main built for this commit (sha-<commit>)");
+        Require(Regex.Matches(code, @"(?m)^\s+DIGEST: \$\{\{ steps\.source\.outputs\.digest \}\}$").Count == 3 && Regex.Matches(code, @"(?m)^\s*-?\s*DIGEST\s*:").Count == 3,
+            "DIGEST is not the source step's digest in each step that uses it");
+
+        Require(Regex.IsMatch(code, @"cosign verify \\\n(?:\s+--[^\n]*\\\n){3}\s+""\$\{IMAGE\}@\$\{d\}"" > /dev/null\n"), "the verify is not the whole command, ending > /dev/null");
+        Require(Regex.Matches(code, @"--certificate-github-workflow-sha ""\$\{GITHUB_SHA\}"" \\\n").Count == 1, "the verify does not demand the signature is for this commit (--certificate-github-workflow-sha ${GITHUB_SHA})");
+        Require(code.Contains("[\"org.opencontainers.image.revision\"]", StringComparison.Ordinal) && code.Contains("if [[ \"${revision}\" != \"${GITHUB_SHA}\" ]]; then", StringComparison.Ordinal),
+            "each platform image's revision label is not checked against this commit");
+        Require(!Regex.IsMatch(code, @"--insecure|--allow-insecure|--allow-http|--private-infrastructure|\bSKIP\b"), "the verify is weakened (an --insecure, --allow or --private-infrastructure flag)");
+        Require(code.Contains("for d in \"${DIGEST}\" ${platforms}; do", StringComparison.Ordinal), "the verify is not of the index and each platform image");
+        Require(code.Contains($"--certificate-identity \"{SignerTemplate}\"", StringComparison.Ordinal), $"the verify does not demand {SignerTemplate}");
+        Require(code.Contains($"--certificate-oidc-issuer \"{Issuer}\"", StringComparison.Ordinal), $"the verify does not demand the issuer {Issuer}");
+        Require(Regex.Matches(code, @"--certificate-identity\b").Count == 1 && Regex.Matches(code, @"--certificate-oidc-issuer\b").Count == 1
+                && !Regex.IsMatch(code, @"--certificate-(identity|oidc-issuer)-regexp"), "the verify's identity or issuer is given twice, or as a pattern (-regexp)");
+
+        Require(code.Contains("docker buildx imagetools create \"${args[@]}\" \"${IMAGE}@${DIGEST}\"", StringComparison.Ordinal), "the one imagetools create is not of the tags that move, on the source digest");
+        Require(code.Contains("for tag in \"${tags[@]}\"; do\n            got=", StringComparison.Ordinal), "not every tag moved is checked");
+        Require(code.Contains("if [[ \"${got}\" != \"${DIGEST}\" ]]; then", StringComparison.Ordinal)
+                && code.Contains("not the signed ${DIGEST}\" >&2; exit 1; fi\n            echo \"${IMAGE}:${tag} is ${DIGEST}\"", StringComparison.Ordinal),
+            "the tags are not checked against the signed digest, failing on a difference");
+
+        // Whole scripts and env, by step id: the same text as ReleaserScripts, character for character, and nothing else on the step.
+        if (walk.Error is null)
+        {
+            var byId = walk.Steps.Select(st => (Id: (Get(st, "id") as YamlScalarNode)?.Value, Step: st)).Where(x => x.Id is not null).ToDictionary(x => x.Id!, x => x.Step);
+            foreach (var (id, env, run) in ReleaserScripts)
+            {
+                if (!byId.TryGetValue(id, out var step)) { found.Add($"no step with the id {id}"); continue; }
+                Require(step.Children.Keys.OfType<YamlScalarNode>().Select(k => k.Value).Order(StringComparer.Ordinal)
+                            .SequenceEqual(new[] { "id", "name", "run" }.Concat(env.Count > 0 ? new[] { "env" } : Array.Empty<string>()).Order(StringComparer.Ordinal)),
+                    $"the {id} step has keys other than id, name, run and its env");
+                Require((Get(step, "run") as YamlScalarNode)?.Value?.Replace("\r\n", "\n") == run + "\n", $"the {id} step's script is not exactly the pinned one");
+                var actual = Get(step, "env") is YamlMappingNode m ? m.Children.ToDictionary(kv => (kv.Key as YamlScalarNode)?.Value ?? "", kv => (kv.Value as YamlScalarNode)?.Value ?? "") : [];
+                Require(actual.Count == env.Count && env.All(kv => actual.GetValueOrDefault(kv.Key) == kv.Value), $"the {id} step's env is not exactly the pinned one");
+            }
+        }
+        else found.Add(walk.Error);
+
+        string[] order = ["id: version", "uses: docker/login-action@", "id: source", "cosign verify", "imagetools create", "name: Summary"];
+        var at = order.Select(s => code.IndexOf(s, StringComparison.Ordinal)).ToArray();
+        Require(at.All(i => i >= 0) && at.Zip(at.Skip(1)).All(p => p.First < p.Second),
+            "the steps are not in order: check the tag, log in, find the digest, verify the signature, retag, summary");
+        return found;
+    }
+
+    [Fact]   // mutations: a build or push step; cosign sign or attest; id-token: write; a second imagetools create; the guard dropped; the verify by
+             // -regexp or another identity; latest not checked against the digest; the tag pattern loosened (each is a case in the self-test below)
+    public void The_core_release_retags_the_signed_main_image_and_builds_nothing() =>
+        Assert.Empty(ReleaserProblems(Workflows().Single(w => w.Name == Releaser).Text));
+
+    [Fact]
+    public void The_release_tag_check_takes_only_vX_Y_Z()
+    {
+        var text = Workflows().Single(w => w.Name == Releaser).Text.Replace("\r\n", "\n");
+        var pattern = new Regex(@"=~ (\^refs/tags/v\S+\$) \]\]").Match(text).Groups[1].Value;
+        Assert.NotEmpty(pattern);
+        var accepts = new Regex(pattern, RegexOptions.CultureInvariant);
+        foreach (var ok in new[] { "v0.0.0", "v0.1.0", "v1.2.3", "v10.20.30", "v1.0.100" })
+            Assert.Matches(accepts, "refs/tags/" + ok);
+        foreach (var bad in new[] { "v1.2", "v1", "v01.2.3", "v1.02.3", "v1.2.03", "v1.2.3-rc1", "v1.2.3+build", "v1.2.3.4", "v1.2.3/x", "v1.2.3 ", "V1.2.3", "1.2.3", "v1.2.x", "v-1.2.3", "v1..3", "vx.y.z" })
+            Assert.DoesNotMatch(accepts, "refs/tags/" + bad);
+        foreach (var bad in new[] { "refs/heads/v1.2.3", "refs/tags/x/v1.2.3", "v1.2.3", "refs/tags/refs/tags/v1.2.3", "xrefs/tags/v1.2.3" })
+            Assert.DoesNotMatch(accepts, bad);
+    }
+
+    [Fact]
+    public void The_release_check_catches_each_way_to_build_sign_or_name_an_unchecked_image()
+    {
+        var text = Workflows().Single(w => w.Name == Releaser).Text.Replace("\r\n", "\n");
+        Assert.Empty(ReleaserProblems(text));
+        void Catches(string from, string to, string expect) => CatchesIn(ReleaserProblems, text, from, to, expect);
+        const string Buildx = "      - uses: docker/setup-buildx-action@";
+
+        // A build or a push.
+        Catches(Buildx, "      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0\n        with:\n          context: dotnet\n          push: true\n" + Buildx,
+            "the actions are not exactly");
+        Catches(Buildx, "      - run: docker buildx build --push --tag \"${IMAGE}:x\" dotnet\n" + Buildx, "a docker build, push or tag");
+        Catches(Buildx, "      - run: docker build -t x dotnet\n" + Buildx, "a docker build, push or tag");
+        Catches(Buildx, "      - run: docker push \"${IMAGE}:x\"\n" + Buildx, "a docker build, push or tag");
+        Catches(Buildx, "      - run: crane copy a b\n" + Buildx, "another registry tool");
+        Catches(Buildx, "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n" + Buildx, "the actions are not exactly");
+        // A signature or an attestation made here.
+        const string Echo = "            echo \"${IMAGE}:${tag} is ${DIGEST}\"\n";
+        Catches(Echo, Echo + "          cosign sign --yes \"${IMAGE}@${DIGEST}\"\n", "a cosign command other than");
+        Catches(Echo, Echo + "          cosign attest --yes x\n", "a cosign command other than");
+        Catches("      - name: Summary\n", "      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2\n        with:\n          subject-name: x\n      - name: Summary\n",
+            "the actions are not exactly");
+        // A wider token.
+        Catches("      packages: write\n", "      packages: write\n      id-token: write\n", "the job's permissions");
+        Catches("      packages: write\n", "      packages: write\n      attestations: write\n", "the job's permissions");
+        Catches("permissions:\n  contents: read\n", "permissions:\n  contents: read\n  packages: write\n", "the top-level permissions");
+        Catches("      contents: read\n      packages: write\n", "      contents: write\n      packages: write\n", "the job's permissions");
+        // A second imagetools create, before or after the checks.
+        const string Retag = "          docker buildx imagetools create \"${args[@]}\" \"${IMAGE}@${DIGEST}\"\n";
+        Catches(Retag, Retag + "          docker buildx imagetools create --tag \"${IMAGE}:next\" \"${IMAGE}@${DIGEST}\"\n", "imagetools create more than once");
+        Catches("      - uses: sigstore/cosign-installer@", "      - run: docker buildx imagetools create --tag \"${IMAGE}:latest\" \"${IMAGE}:main\"\n      - uses: sigstore/cosign-installer@",
+            "imagetools create more than once");
+        Catches(Retag, Retag.Replace("@${DIGEST}", ":main"), "the one imagetools create is not of the tags that move");
+        Catches(Retag, Retag.Replace("\"${args[@]}\" ", "--tag \"${IMAGE}:latest\" "), "the one imagetools create is not of the tags that move");
+        // The guard and the triggers.
+        Catches(ReleaseGuard, ReleaseGuard + " || github.event_name == 'workflow_dispatch'", "the job's guard");
+        Catches(ReleaseGuard, "if: github.repository == 'Packmoat/packmoat'", "the job's guard");
+        Catches("    " + ReleaseGuard + "\n", "", "not exactly one if: line");
+        Catches("      - name: Summary\n", "      - if: always()\n        name: Summary\n", "not exactly one if: line");
+        Catches("    tags: ['v*.*.*']\n", "    tags: ['v*']\n", "the triggers are not exactly");
+        Catches("    tags: ['v*.*.*']\n", "    tags: ['v*.*.*']\n  pull_request:\n", "the triggers");
+        Catches("    tags: ['v*.*.*']\n", "    tags: ['v*.*.*']\n  workflow_dispatch:\n", "the triggers");
+        Catches("jobs:\n", "jobs:\n  second:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi\n", "not exactly one job");
+        // The signature check: by pattern, another identity or issuer, or let through.
+        Catches("--certificate-identity \"", "--certificate-identity-regexp \"", "the verify does not demand");
+        Catches("core-image.yml@refs/heads/main\" \\\n", "core-release.yml@refs/tags/v0.1.0\" \\\n", "the verify does not demand");
+        Catches("core-image.yml@refs/heads/main\" \\\n", "core-image.yml@refs/heads/main\" \\\n              --certificate-identity-regexp \".*\" \\\n", "as a pattern");
+        Catches("--certificate-oidc-issuer \"https://token.actions.githubusercontent.com\"", "--certificate-oidc-issuer-regexp \".*\"", "the verify does not demand the issuer");
+        Catches("> /dev/null\n", "> /dev/null || true\n", "a failed command can pass");
+        Catches("for d in \"${DIGEST}\" ${platforms}; do", "for d in \"${DIGEST}\"; do", "the verify is not of the index and each platform");
+        // Latest, or a tag, named without the digest check.
+        Catches("          for tag in \"${tags[@]}\"; do\n            got=", "          for tag in \"${VERSION}\"; do\n            got=", "not every tag moved is checked");
+        Catches("          for tag in \"${tags[@]}\"; do\n            got=", "          for tag in \"${tags[@]:0:1}\"; do\n            got=", "not every tag moved is checked");
+        Catches("if [[ \"${got}\" != \"${DIGEST}\" ]]; then", "if [[ \"${got}\" == \"\" ]]; then", "the tags are not checked against the signed digest");
+        Catches("not the signed ${DIGEST}\" >&2; exit 1; fi", "not the signed ${DIGEST}\" >&2; fi", "the tags are not checked against the signed digest");
+        // The tag pattern loosened or dropped.
+        Catches("(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$", "[0-9]+\\.[0-9]+\\.[0-9]+", "the tag is not checked as exactly vX.Y.Z");
+        Catches("^refs/tags/v(0|[1-9][0-9]*)", "refs/tags/v(0|[1-9][0-9]*)", "the tag is not checked as exactly vX.Y.Z");
+        Catches("\\.(0|[1-9][0-9]*)$ ]]", "\\.(0|[1-9][0-9]*) ]]", "the tag is not checked as exactly vX.Y.Z");
+        Catches("\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$", "\\.(0|[1-9][0-9]*)(-[a-z0-9]+)?$", "the tag is not checked as exactly vX.Y.Z");
+        // The source, the image name, the secret, expressions in code.
+        Catches("\"${IMAGE}:sha-${GITHUB_SHA}\" | jq", "\"${IMAGE}:main\" | jq", "the source is not the image main built");
+        Catches("          DIGEST: ${{ steps.source.outputs.digest }}\n        run: |\n          set -euo pipefail\n          platforms=", "          DIGEST: sha256:0\n        run: |\n          set -euo pipefail\n          platforms=",
+            "DIGEST is not the source step's digest");
+        Catches($"IMAGE: {CoreImage}\n", "IMAGE: ghcr.io/${{ github.repository_owner }}/packmoat-core\n", "the job's IMAGE is not");
+        Catches("      - name: Summary\n", "      - name: Summary\n        env:\n          X: ${{ secrets.NPM_TOKEN }}\n", "a secret or token");
+        Catches("      - name: Summary\n", "      - name: Summary\n        env:\n          X: ${{ github.token }}\n", "a secret or token");
+        Catches("          echo \"version=", "          echo \"${{ github.ref }}\" > /dev/null\n          echo \"version=", "a run step holds an expression");
+        Catches("    timeout-minutes: 15\n", "    timeout-minutes: 15\n    continue-on-error: true\n", "continue-on-error");
+        Catches(Buildx, "      - run: echo hi\n        shell: bash {0}\n" + Buildx, "a step sets its shell");
+        // Whole scripts: the seven lines a review found that the other checks did not foresee, and the signature's commit and the label.
+        const string Pinned = "script is not exactly the pinned one";
+        Catches("          for p in ${platforms}; do\n", "          platforms=\"\"\n          for p in ${platforms}; do\n", Pinned);
+        Catches("              --certificate-github-workflow-sha \"${GITHUB_SHA}\" \\\n", "              --certificate-github-workflow-sha \"${GITHUB_SHA}\" \\\n              --insecure-ignore-tlog=true --insecure-ignore-sct=true \\\n", Pinned);
+        Catches("          echo \"digest=${digest}\" >> \"$GITHUB_OUTPUT\"\n",
+            "          digest=\"$(docker buildx imagetools inspect --format '{{json .Manifest}}' \"${IMAGE}:main\" | jq -r .digest)\"\n          echo \"digest=${digest}\" >> \"$GITHUB_OUTPUT\"\n", Pinned);
+        Catches("            echo \"${GITHUB_REF} is not a release tag (vX.Y.Z)\" >&2\n            exit 1\n", "            echo \"${GITHUB_REF} is not a release tag (vX.Y.Z)\" >&2\n", Pinned);
+        Catches("            cosign verify \\\n", "            [[ -n \"${SKIP:-}\" ]] || cosign verify \\\n", Pinned);
+        Catches("            echo \"verified ${IMAGE}@${d}\"\n", "            echo \"verified ${IMAGE}@${d}\"; break\n", Pinned);
+        Catches("          echo \"minor=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}\" >> \"$GITHUB_OUTPUT\"\n",
+            "          echo \"minor=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}\" >> \"$GITHUB_OUTPUT\"\n          echo \"version=${GITHUB_REF_NAME}\" >> \"$GITHUB_OUTPUT\"\n", Pinned);
+        Catches("              --certificate-github-workflow-sha \"${GITHUB_SHA}\" \\\n", "", "does not demand the signature is for this commit");
+        Catches("              --certificate-github-workflow-sha \"${GITHUB_SHA}\" \\\n", "              --certificate-github-workflow-sha \"${GITHUB_REF}\" \\\n", "does not demand the signature is for this commit");
+        Catches("            if [[ \"${revision}\" != \"${GITHUB_SHA}\" ]]; then echo \"${IMAGE}@${p} is revision ${revision}, not ${GITHUB_SHA}\" >&2; exit 1; fi\n", "",
+            "revision label is not checked");
+        Catches("          set -euo pipefail\n          platforms=", "          platforms=", Pinned);
+        Catches("            if [[ ! \"${p}\" =~ ^sha256:[0-9a-f]{64}$ ]]; then echo \"not an image digest: ${p}\" >&2; exit 1; fi\n", "", Pinned);
+        // The tags that move.
+        Catches("sort -V)", "sort)", Pinned);
+        Catches("grep -E \"^${MINOR//./\\\\.}", "grep -E \"${MINOR//./\\\\.}", Pinned);
+        Catches("          if [[ \"${versions[${#versions[@]}-1]}\" == \"${VERSION}\" ]]; then tags+=(latest); fi\n", "          tags+=(latest)\n", Pinned);
+        Catches("            if [[ \"${existing}\" != \"${DIGEST}\" ]]; then echo \"${IMAGE}:${VERSION} already names ${existing}, not ${DIGEST}: a release tag is never moved\" >&2; exit 1; fi\n", "", Pinned);
+        Catches("git ls-remote --tags --refs", "git ls-remote --tags", Pinned);
+        // The order: a step moved ahead of the tag check.
+        var reordered = text.Replace("      - name: Check the tag is a release version", "      - name: Summary\n        run: echo hi\n      - name: Check the tag is a release version");
+        Assert.Contains(ReleaserProblems(reordered), p => p.StartsWith("the steps are not in order", StringComparison.Ordinal));
+    }
+
+    private const string RetagDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    private const string OtherDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    /// <summary>What one run of a workflow's tag step did: its exit code, its output, and the tags it moved (without the image name).</summary>
+    private sealed record RetagRun(int Code, string Output, string[] Moved);
+
+    /// <summary>
+    /// Runs the real script of the step with the id <c>tag</c> under bash, as Actions does (<c>bash -e</c>), with <c>docker</c> and <c>git</c> replaced
+    /// by stubs: <c>git ls-remote</c> lists <paramref name="remoteTags"/>; <c>docker buildx imagetools inspect</c> answers from a table of
+    /// <paramref name="existing"/> tags (and a tag it just created), and says "not found" for any other; <c>imagetools create</c> adds its
+    /// tags to the table, unless <paramref name="createFails"/> (a create that moved nothing). Nothing reaches a network.
+    /// </summary>
+    private static RetagRun RunRetag(string workflow, string version, string minor, string[] remoteTags, IDictionary<string, string>? existing = null, bool createFails = false)
+    {
+        if (OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("the tag step is a bash script: run this check on Linux or macOS");
+        var step = WalkSteps(workflow).Steps.Single(s => (Get(s, "id") as YamlScalarNode)?.Value == "tag");
+        var script = ((YamlScalarNode)Get(step, "run")!).Value!;
+        var dir = Directory.CreateTempSubdirectory("packmoat-retag-").FullName;
+        try
+        {
+            var bin = Directory.CreateDirectory(Path.Combine(dir, "bin")).FullName;
+            File.WriteAllText(Path.Combine(dir, "script.sh"), script);
+            File.WriteAllLines(Path.Combine(dir, "refs.txt"), (existing ?? new Dictionary<string, string>()).Select(kv => $"{CoreImage}:{kv.Key} {kv.Value}"));
+            File.WriteAllLines(Path.Combine(dir, "tags.txt"), remoteTags.Select(t => $"0123456789abcdef0123456789abcdef01234567\trefs/tags/{t}"));
+            File.WriteAllText(Path.Combine(dir, "created.txt"), "");
+            File.WriteAllText(Path.Combine(bin, "docker"), """
+                #!/bin/sh
+                [ "$1 $2" = "buildx imagetools" ] || { echo "unexpected: docker $*" >&2; exit 2; }
+                case "$3" in
+                  inspect)
+                    d="$(awk -v r="$6" '$1 == r { d = $2 } END { print d }' "$STUB/refs.txt")"
+                    if [ -z "$d" ]; then echo "ERROR: $6: not found" >&2; exit 1; fi
+                    echo "{\"digest\":\"$d\"}" ;;
+                  create)
+                    shift 3; tags=""; src=""
+                    while [ $# -gt 0 ]; do
+                      case "$1" in --tag) tags="$tags $2"; shift 2 ;; *) src="$1"; shift ;; esac
+                    done
+                    echo "$tags" >> "$STUB/created.txt"
+                    [ -n "$STUB_CREATE_FAILS" ] || for t in $tags; do echo "$t ${src#*@}" >> "$STUB/refs.txt"; done ;;
+                  *) echo "unexpected: docker $*" >&2; exit 2 ;;
+                esac
+
+                """.Replace("\r", ""));
+            File.WriteAllText(Path.Combine(bin, "git"), """
+                #!/bin/sh
+                case "$*" in
+                  "ls-remote --tags --refs https://github.com/Packmoat/packmoat.git v*") cat "$STUB/tags.txt" ;;
+                  *) echo "unexpected: git $*" >&2; exit 2 ;;
+                esac
+
+                """.Replace("\r", ""));
+            foreach (var tool in new[] { "docker", "git" }) File.SetUnixFileMode(Path.Combine(bin, tool), (UnixFileMode)Convert.ToInt32("755", 8));
+
+            var start = new System.Diagnostics.ProcessStartInfo("bash") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+            start.ArgumentList.Add("-e");
+            start.ArgumentList.Add(Path.Combine(dir, "script.sh"));
+            start.Environment["PATH"] = bin + ":" + Environment.GetEnvironmentVariable("PATH");
+            start.Environment["STUB"] = dir;
+            start.Environment["STUB_CREATE_FAILS"] = createFails ? "1" : "";
+            start.Environment["IMAGE"] = CoreImage;
+            start.Environment["DIGEST"] = RetagDigest;
+            start.Environment["VERSION"] = version;
+            start.Environment["MINOR"] = minor;
+            start.Environment["GITHUB_REPOSITORY"] = "Packmoat/packmoat";
+            start.Environment["GITHUB_OUTPUT"] = Path.Combine(dir, "output.txt");
+            using var process = System.Diagnostics.Process.Start(start)!;
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(60_000)) { process.Kill(true); throw new TimeoutException("the tag step did not finish"); }
+            var moved = File.ReadAllText(Path.Combine(dir, "created.txt")).Split([' ', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                .Select(t => t[(CoreImage.Length + 1)..]).ToArray();
+            return new RetagRun(process.ExitCode, stdout.Result + stderr.Result, moved);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    /// <summary>
+    /// What the real tag step does wrong, one line each, on the cases that decide which tags move: X.Y.Z always; latest only for the highest
+    /// version of all (compared as versions: 0.10.0 is above 0.9.0); X.Y only for the highest of that very minor (10.1.x is not 0.1.x); tags
+    /// that are not vX.Y.Z are ignored; an X.Y.Z that already names the same digest may be moved again, one that names another is refused and nothing
+    /// is created; a tag not among the repository's tags, or a create that moved nothing, fails.
+    /// </summary>
+    internal static IReadOnlyList<string> RetagProblems(string workflow)
+    {
+        var found = new List<string>();
+        void Moves(string what, string version, string minor, string[] remote, string[] expected, IDictionary<string, string>? existing = null)
+        {
+            var run = RunRetag(workflow, version, minor, remote, existing);
+            if (run.Code != 0) found.Add($"{what}: failed ({run.Code}): {run.Output.Trim()}");
+            else if (!run.Moved.Order(StringComparer.Ordinal).SequenceEqual(expected.Order(StringComparer.Ordinal)))
+                found.Add($"{what}: moved {string.Join(", ", run.Moved)}, not {string.Join(", ", expected)}");
+        }
+        void Refuses(string what, string version, string minor, string[] remote, IDictionary<string, string>? existing = null, bool createFails = false)
+        {
+            var run = RunRetag(workflow, version, minor, remote, existing, createFails);
+            if (run.Code == 0) found.Add($"{what}: not refused");
+            if (!createFails && run.Moved.Length > 0) found.Add($"{what}: moved {string.Join(", ", run.Moved)} though refused");
+        }
+        Moves("the first release", "0.1.0", "0.1", ["v0.1.0"], ["0.1.0", "0.1", "latest"]);
+        Moves("a backport after a newer minor", "0.1.5", "0.1", ["v0.1.0", "v0.1.5", "v0.2.0"], ["0.1.5", "0.1"]);
+        Moves("an older patch after a newer one", "0.1.0", "0.1", ["v0.1.0", "v0.1.5"], ["0.1.0"]);
+        Moves("v10.1.x is not v0.1.x", "0.1.2", "0.1", ["v0.1.2", "v10.1.9"], ["0.1.2", "0.1"]);
+        Moves("v0.1.x is not v10.1.x", "10.1.9", "10.1", ["v0.1.2", "v10.1.9"], ["10.1.9", "10.1", "latest"]);
+        Moves("0.10.0 is above 0.9.0", "0.10.0", "0.10", ["v0.9.0", "v0.10.0"], ["0.10.0", "0.10", "latest"]);
+        Moves("tags that are not vX.Y.Z", "0.1.0", "0.1", ["v0.1.0", "v9.9.9-rc1", "v1.2", "v01.2.3", "v0.1.0.1"], ["0.1.0", "0.1", "latest"]);
+        Moves("a second run on the same digest", "0.1.0", "0.1", ["v0.1.0"], ["0.1.0", "0.1", "latest"], new Dictionary<string, string> { ["0.1.0"] = RetagDigest });
+        Refuses("an X.Y.Z that names another digest", "0.1.0", "0.1", ["v0.1.0"], new Dictionary<string, string> { ["0.1.0"] = OtherDigest });
+        Refuses("a version that is not among the tags", "0.1.0", "0.1", ["v0.1.1"]);
+        Refuses("no tags at all", "0.1.0", "0.1", []);
+        Refuses("a create that moved nothing", "0.1.0", "0.1", ["v0.1.0"], createFails: true);
+        return found;
+    }
+
+    [Fact]   // mutations: sort -V as sort; the X.Y match unanchored; latest always; the refusal of an X.Y.Z at another digest dropped (each is a case below)
+    public void The_release_tags_move_only_forwards_and_never_an_existing_version() =>
+        Assert.Empty(RetagProblems(Workflows().Single(w => w.Name == Releaser).Text));
+
+    [Fact]
+    public void The_retag_check_catches_a_step_that_moves_the_wrong_tags()
+    {
+        var text = Workflows().Single(w => w.Name == Releaser).Text.Replace("\r\n", "\n");
+        void Catches(string from, string to, string expect) => CatchesIn(RetagProblems, text, from, to, expect);
+        Catches("sort -V)", "sort)", "0.10.0 is above 0.9.0");
+        Catches("grep -E \"^${MINOR//./\\\\.}", "grep -E \"${MINOR//./\\\\.}", "v10.1.x is not v0.1.x");
+        Catches("if [[ \"${versions[${#versions[@]}-1]}\" == \"${VERSION}\" ]]; then tags+=(latest); fi\n", "tags+=(latest)\n", "a backport after a newer minor");
+        Catches("if [[ \"${minor_highest}\" == \"${VERSION}\" ]]; then tags+=(\"${MINOR}\"); fi\n", "tags+=(\"${MINOR}\")\n", "an older patch after a newer one");
+        Catches("            if [[ \"${existing}\" != \"${DIGEST}\" ]]; then echo \"${IMAGE}:${VERSION} already names ${existing}, not ${DIGEST}: a release tag is never moved\" >&2; exit 1; fi\n", "",
+            "an X.Y.Z that names another digest");
+        Catches("          if [[ \" ${versions[*]} \" != *\" ${VERSION} \"* ]]; then echo \"${VERSION} is not among the release tags of ${GITHUB_REPOSITORY}\" >&2; exit 1; fi\n", "",
+            "a version that is not among the tags");
+        Catches("got=\"$(docker buildx imagetools inspect --format '{{json .Manifest}}' \"${IMAGE}:${tag}\" | jq -r .digest)\"", "got=\"${DIGEST}\"", "a create that moved nothing");
+        Catches("grep -E '^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$' | sort -V", "sort -V", "tags that are not vX.Y.Z");
+    }
+
     [Fact]   // mutations: the guide's signer in lower case (cosign compares it exactly); the guide's image under <owner>; the image name changed
              // in the Kubernetes guide
     public void The_deploy_guides_name_the_published_image_and_its_signer()
@@ -901,15 +1352,233 @@ public class CoreWorkflowTests
         Assert.All(curls, c => Assert.StartsWith("curl -fsSL " + RetryFlags + " -o ", c));
     }
 
-    [Fact]   // mutations: --retry 3, or --retry-all-errors removed, on the bicep download; a second curl added; set -euo pipefail moved below it; || true added to the download
-    public void The_bicep_download_retries_like_the_other_tools()
+    [Fact]   // mutations: a second curl; --retry 3; --retry-all-errors removed; || true after the check; a fetch call with a literal or missing sha256; exit 0 before the end
+    public void The_iac_tool_downloads_are_pinned_checked_and_retry_like_the_other_tools()
     {
         var script = File.ReadAllText(Path.Combine(CoreRoot(), ".github", "scripts", "install-iac-tools.sh")).Replace("\r\n", "\n");
+        // One curl in the whole script: the one inside fetch(), under set -euo pipefail, with the standard retry flags.
         AssertCurlsUnderStrictMode(script, 1);
-        Assert.Matches(@"(?m)^curl -fsSL " + RetryFlags + @" -o ""\$dir/bicep"" ", script);
-        Assert.Matches(@"(?m)^echo ""\$\{bicep_sha256\}  \$dir/bicep"" \| check$", script);
-        // Nothing may swallow a failure (|| true, set +e), as for the gitleaks and actionlint downloads.
-        Assert.DoesNotMatch(@"\|\||set\s+\+e", script);
+        Assert.Matches(@"(?m)^  curl -fsSL " + RetryFlags + @" -o ""\$dir/\$1"" ""\$2""$", script);
+        // The check is the next line of fetch(), whole line: nothing after it can let a wrong download through.
+        Assert.Matches(@"(?m)^fetch\(\) \{\n  curl [^\n]*\n  echo ""\$3  \$dir/\$1"" \| check\n\}$", script);
+        Assert.Single(Regex.Matches(script, @"(?m)^\s*echo ""\$3  \$dir/\$1"" \| check"));
+        // Every download goes through fetch and passes a pinned sha256 variable, never a literal.
+        var calls = Regex.Matches(script, @"(?m)^[ \t]*fetch[ \t].*$").Select(m => m.Value).ToArray();
+        Assert.Equal(7, calls.Length);
+        Assert.All(calls, c => Assert.Matches(@"^fetch \S+ ""https://(github\.com/(opentofu/opentofu|terraform-linters/tflint|terraform-linters/tflint-ruleset-google|terraform-linters/tflint-ruleset-aws|Azure/bicep)/releases/download/|releases\.hashicorp\.com/terraform-provider-(google|aws)/)[^""]+"" ""\$\{(bicep|tofu|tflint|ruleset|google|aws|aws_ruleset)_sha256\}""$", c));
+        Assert.Equal(new[] { "aws", "aws_ruleset", "bicep", "google", "ruleset", "tflint", "tofu" }, calls.Select(c => Regex.Match(c, @"\$\{(\w+)_sha256\}""$").Groups[1].Value).Order());
+        // Each pinned variable is a full sha256 in both the Linux and the macOS arm of the case, and set nowhere else.
+        foreach (var name in new[] { "bicep", "tofu", "tflint", "ruleset", "google", "aws", "aws_ruleset" })
+            Assert.Equal(2, Regex.Matches(script, @"(?m)^    " + name + @"_sha256=[0-9a-f]{64}$").Count);
+        Assert.Equal(14, Regex.Matches(script, @"(?m)^\s*\w+_sha256=").Count);
+        // Nothing may swallow a failure, and the script ends on the bicep check, as for the other tools.
+        AssertNothingSwallowsTheExit(script, "\"$bin/bicep\" --version");
+    }
+
+    [Fact]   // mutations: check() made a no-op, or --strict swapped for --ignore-missing; a download that skips fetch (tar of <(curl ...), wget, a second helper function);
+             // [[ ... ]] && exit 0; tflint --init; a different platform arm or a catch-all *) arm; google.zip unpacked by another tool; a fetch URL from another host
+    public void The_iac_script_has_one_checked_way_to_download_and_nothing_else_runs()
+    {
+        var script = File.ReadAllText(Path.Combine(CoreRoot(), ".github", "scripts", "install-iac-tools.sh")).Replace("\r\n", "\n");
+        var code = Regex.Replace(script, @"(?m)^[ \t]*#.*$", "");
+
+        // check() is the real sha256 check, the only definition, and the only one of the two functions besides fetch().
+        const string check = "check() { if command -v sha256sum > /dev/null; then sha256sum --check --strict -; else shasum -a 256 --check --strict -; fi; }";
+        Assert.Single(Regex.Matches(code, @"(?m)^check\(\)"));
+        Assert.Contains("\n" + check + "\n", code);
+        Assert.Equal(2, Regex.Matches(code, @"(?m)^\s*(function\s+)?[A-Za-z_]\w*\s*\(\)").Count);
+
+        // No other way to download: one curl anywhere, no other fetcher, no process or command substitution around one.
+        Assert.Single(Regex.Matches(code, @"\bcurl\b"));
+        Assert.DoesNotMatch(@"\b(wget|aria2c|nc|ncat|fetch\.sh)\b|<\(|\$\(\s*curl|`", code);
+        // After fetch(), column 0 holds only these commands, and nothing is indented (no if, case or loop).
+        var afterFetch = code[(code.IndexOf("\n}\n", code.IndexOf("\nfetch() {", StringComparison.Ordinal), StringComparison.Ordinal) + 3)..];
+        var lines = afterFetch.Split('\n').Where(l => l.Trim().Length > 0).ToArray();
+        Assert.All(lines, l => Assert.Matches(@"^(fetch |mkdir |tar |unzip |install |""\$bin/bicep"" )", l));
+        // Only the named binary is taken out of each zip.
+        var unzips = lines.Where(l => l.StartsWith("unzip ")).ToArray();
+        Assert.Equal(3, unzips.Length);
+        Assert.All(unzips, l => Assert.Matches(@"^unzip -q ""\$dir/(tflint|ruleset|aws-ruleset)\.zip"" (tflint|tflint-ruleset-google|tflint-ruleset-aws) -d ""\$dir/(tflint|ruleset|aws-ruleset)-x""$", l));
+        // The provider zip is only fetched and copied, never opened.
+        var google = code.Split('\n').Where(l => l.Contains("google.zip")).ToArray();
+        Assert.Equal(2, google.Length);
+        Assert.Single(google, l => l.StartsWith("fetch google.zip "));
+        Assert.Single(google, l => l.StartsWith("install -m 644 \"$dir/google.zip\" \"$bin/tofu-providers/registry.opentofu.org/hashicorp/google/"));
+        // The AWS provider zip too: fetched once and copied into its plugin-dir folder, never opened (a bare aws.zip, not aws-ruleset.zip).
+        var aws = code.Split('\n').Where(l => Regex.IsMatch(l, @"\baws\.zip")).ToArray();
+        Assert.Equal(2, aws.Length);
+        Assert.Single(aws, l => l.StartsWith("fetch aws.zip "));
+        Assert.Single(aws, l => l.StartsWith("install -m 644 \"$dir/aws.zip\" \"$bin/tofu-providers/registry.opentofu.org/hashicorp/aws/"));
+
+        // No early exit: not after &&, never exit 0, and the only exits are the two refusals, matched whole.
+        Assert.DoesNotMatch(@"&&\s*(exit|exec)|\bexit\s+0\b", code);
+        var exits = code.Split('\n').Where(l => Regex.IsMatch(l, @"\bexit\b")).ToArray();
+        Assert.Equal(2, exits.Length);
+        Assert.Contains("  *) echo \"install-iac-tools.sh: no pinned checksums for $(uname -s)-$(uname -m)\" >&2; exit 1 ;;", exits);
+        Assert.Contains("if [[ $# -ne 1 ]]; then echo \"Usage: install-iac-tools.sh <folder>\" >&2; exit 2; fi", exits);
+
+        // tflint is never asked to download a plugin.
+        Assert.DoesNotMatch(@"--init\b", code);
+
+        // The platform case: exactly the two supported systems, and the refusal for the rest.
+        Assert.Single(Regex.Matches(code, @"(?m)^case ""\$\(uname -s\)-\$\(uname -m\)"" in$"));
+        var arms = Regex.Matches(code, @"(?m)^  (\S+\)).*$").Select(m => m.Groups[1].Value).ToArray();
+        Assert.Equal(new[] { "Linux-x86_64)", "Darwin-arm64)", "*)" }, arms);
+    }
+
+    [Fact]   // mutation: the provider zip extracted (unzip of google.zip) instead of kept packed; the ruleset moved out of the version folder
+    public void The_iac_tools_land_where_tflint_and_tofu_look_for_them()
+    {
+        var script = File.ReadAllText(Path.Combine(CoreRoot(), ".github", "scripts", "install-iac-tools.sh")).Replace("\r\n", "\n");
+        Assert.Contains("\"$bin/tflint-plugins/github.com/terraform-linters/tflint-ruleset-google/${ruleset_version}/tflint-ruleset-google\"", script);
+        Assert.Contains("\"$bin/tofu-providers/registry.opentofu.org/hashicorp/google/terraform-provider-google_${google_version}_${platform}.zip\"", script);
+        Assert.Contains("\"$bin/tflint-plugins/github.com/terraform-linters/tflint-ruleset-aws/${aws_ruleset_version}/tflint-ruleset-aws\"", script);
+        Assert.Contains("\"$bin/tofu-providers/registry.opentofu.org/hashicorp/aws/terraform-provider-aws_${aws_version}_${platform}.zip\"", script);
+        Assert.DoesNotContain("unzip -q \"$dir/aws.zip\"", script);
+        Assert.DoesNotContain("unzip -q \"$dir/google.zip\"", script);
+        Assert.DoesNotContain("tflint --init", Regex.Replace(script, @"(?m)^\s*#.*$", ""));
+    }
+
+    // The three written-out lines outside check() and fetch() whose ; is the shell's own: an arm's end, and the two refusals.
+    private static readonly Regex ArmEnd = Whole("    ;;");
+    private static readonly Regex PlatformRefusal = Whole("  *) echo \"install-iac-tools.sh: no pinned checksums for $(uname -s)-$(uname -m)\" >&2; exit 1 ;;");
+    private static readonly Regex UsageRefusal = Whole("if [[ $# -ne 1 ]]; then echo \"Usage: install-iac-tools.sh <folder>\" >&2; exit 2; fi");
+
+    /// <summary>
+    /// install-iac-tools.sh, line by line and in order: with the comments stripped, the lines that are not blank must be exactly these,
+    /// one each, in this order, each matched whole. The pinned versions and checksums are shapes; everything else, from the platform arms
+    /// and the refusals to the last bicep --version, is written out. A new line in the script, or a line moved, needs a change here, so
+    /// nothing can run beside or before the checked downloads unseen.
+    /// </summary>
+    private static readonly Regex[] IacScriptLines =
+    [
+        new(@"^set -euo pipefail$"),
+        .. new[] { "bicep", "tofu", "tflint", "ruleset", "google", "aws", "aws_ruleset" }.Select(n => new Regex("^" + n + @"_version=[0-9]+\.[0-9]+\.[0-9]+$")),
+        new(@"^case ""\$\(uname -s\)-\$\(uname -m\)"" in$"),
+        .. Arm("Linux-x86_64", "linux_amd64", "bicep-linux-x64"),
+        .. Arm("Darwin-arm64", "darwin_arm64", "bicep-osx-arm64"),
+        PlatformRefusal,
+        new(@"^esac$"),
+        UsageRefusal,
+        Whole("bin=\"$1\""),
+        Whole("mkdir -p \"$bin\""),
+        Whole("check() { if command -v sha256sum > /dev/null; then sha256sum --check --strict -; else shasum -a 256 --check --strict -; fi; }"),
+        Whole("dir=\"$(mktemp -d)\""),
+        Whole("trap 'rm -rf \"$dir\"' EXIT"),
+        Whole("fetch() {"),
+        Whole("  curl -fsSL --retry 6 --retry-all-errors --retry-max-time 120 -o \"$dir/$1\" \"$2\""),
+        Whole("  echo \"$3  $dir/$1\" | check"),
+        Whole("}"),
+        Whole("fetch tofu.tar.gz \"https://github.com/opentofu/opentofu/releases/download/v${tofu_version}/tofu_${tofu_version}_${platform}.tar.gz\" \"${tofu_sha256}\""),
+        Whole("mkdir \"$dir/tofu-x\""),
+        Whole("tar -xzf \"$dir/tofu.tar.gz\" -C \"$dir/tofu-x\" tofu"),
+        Whole("install -m 755 \"$dir/tofu-x/tofu\" \"$bin/tofu\""),
+        Whole("fetch tflint.zip \"https://github.com/terraform-linters/tflint/releases/download/v${tflint_version}/tflint_${platform}.zip\" \"${tflint_sha256}\""),
+        Whole("unzip -q \"$dir/tflint.zip\" tflint -d \"$dir/tflint-x\""),
+        Whole("install -m 755 \"$dir/tflint-x/tflint\" \"$bin/tflint\""),
+        Whole("fetch ruleset.zip \"https://github.com/terraform-linters/tflint-ruleset-google/releases/download/v${ruleset_version}/tflint-ruleset-google_${platform}.zip\" \"${ruleset_sha256}\""),
+        Whole("unzip -q \"$dir/ruleset.zip\" tflint-ruleset-google -d \"$dir/ruleset-x\""),
+        Whole("mkdir -p \"$bin/tflint-plugins/github.com/terraform-linters/tflint-ruleset-google/${ruleset_version}\""),
+        Whole("install -m 755 \"$dir/ruleset-x/tflint-ruleset-google\" \"$bin/tflint-plugins/github.com/terraform-linters/tflint-ruleset-google/${ruleset_version}/tflint-ruleset-google\""),
+        Whole("fetch google.zip \"https://releases.hashicorp.com/terraform-provider-google/${google_version}/terraform-provider-google_${google_version}_${platform}.zip\" \"${google_sha256}\""),
+        Whole("mkdir -p \"$bin/tofu-providers/registry.opentofu.org/hashicorp/google\""),
+        Whole("install -m 644 \"$dir/google.zip\" \"$bin/tofu-providers/registry.opentofu.org/hashicorp/google/terraform-provider-google_${google_version}_${platform}.zip\""),
+        Whole("fetch aws.zip \"https://releases.hashicorp.com/terraform-provider-aws/${aws_version}/terraform-provider-aws_${aws_version}_${platform}.zip\" \"${aws_sha256}\""),
+        Whole("mkdir -p \"$bin/tofu-providers/registry.opentofu.org/hashicorp/aws\""),
+        Whole("install -m 644 \"$dir/aws.zip\" \"$bin/tofu-providers/registry.opentofu.org/hashicorp/aws/terraform-provider-aws_${aws_version}_${platform}.zip\""),
+        Whole("fetch aws-ruleset.zip \"https://github.com/terraform-linters/tflint-ruleset-aws/releases/download/v${aws_ruleset_version}/tflint-ruleset-aws_${platform}.zip\" \"${aws_ruleset_sha256}\""),
+        Whole("unzip -q \"$dir/aws-ruleset.zip\" tflint-ruleset-aws -d \"$dir/aws-ruleset-x\""),
+        Whole("mkdir -p \"$bin/tflint-plugins/github.com/terraform-linters/tflint-ruleset-aws/${aws_ruleset_version}\""),
+        Whole("install -m 755 \"$dir/aws-ruleset-x/tflint-ruleset-aws\" \"$bin/tflint-plugins/github.com/terraform-linters/tflint-ruleset-aws/${aws_ruleset_version}/tflint-ruleset-aws\""),
+        Whole("fetch bicep \"https://github.com/Azure/bicep/releases/download/v${bicep_version}/${bicep_asset}\" \"${bicep_sha256}\""),
+        Whole("install -m 755 \"$dir/bicep\" \"$bin/bicep\""),
+        Whole("\"$bin/bicep\" --version"),
+    ];
+
+    private static Regex Whole(string line) => new("^" + Regex.Escape(line) + "$");
+
+    // One platform's arm of the case: its name, its platform and bicep asset, its seven checksums in the order the versions are set, its end.
+    private static Regex[] Arm(string system, string platform, string bicepAsset) =>
+    [
+        Whole("  " + system + ")"),
+        Whole("    platform=" + platform),
+        Whole("    bicep_asset=" + bicepAsset),
+        .. new[] { "bicep", "tofu", "tflint", "ruleset", "google", "aws", "aws_ruleset" }.Select(n => new Regex("^    " + n + "_sha256=[0-9a-f]{64}$")),
+        ArmEnd,
+    ];
+
+    // The lines that are a function's own (check() is one line; fetch()'s body is two), where a ; is part of the written-out text.
+    private static readonly Regex InFunction = new(@"^(check\(\) \{ .*|  curl .*|  echo ""\$3  \$dir/\$1"" \| check)$");
+
+    /// <summary>
+    /// What is wrong with the script, line by line: a first line that is not the shebang; a line (comments stripped) that is not the
+    /// entry of <see cref="IacScriptLines"/> in its place, or one too many or too few; and, outside check() and fetch(), eval, source,
+    /// a . command or a ; on any line but an arm's end and the two written-out refusals.
+    /// </summary>
+    internal static IReadOnlyList<string> IacScriptProblems(string script)
+    {
+        var found = new List<string>();
+        // Before any normalisation: a carriage return anywhere in the file is a problem (a bash line ending in CR is a different word).
+        if (script.Contains('\r')) found.Add("a carriage return (CR) in the script");
+        var text = script.Replace("\r\n", "\n");
+        if (!text.StartsWith("#!/usr/bin/env bash\n", StringComparison.Ordinal)) found.Add("the first line is not #!/usr/bin/env bash");
+        var lines = Regex.Replace(text, @"(?m)^[ \t]*#.*$", "").Split('\n').Where(l => l.Trim().Length > 0).ToArray();
+        // In order: the first line out of place is reported (and every one after it, which has moved too), then any line missing.
+        for (var i = 0; i < Math.Max(lines.Length, IacScriptLines.Length); i++)
+        {
+            if (i >= IacScriptLines.Length) found.Add($"a line past the pinned ones: {lines[i]}");
+            else if (i >= lines.Length) found.Add($"a pinned line missing: {IacScriptLines[i]}");
+            else if (!IacScriptLines[i].IsMatch(lines[i])) found.Add($"line {i + 1} is not the pinned one: {lines[i]}");
+        }
+        var shellSemicolons = new[] { ArmEnd, PlatformRefusal, UsageRefusal };
+        foreach (var line in lines.Where(l => !InFunction.IsMatch(l) && !shellSemicolons.Any(r => r.IsMatch(l))))
+            if (Regex.IsMatch(line, @"\beval\b|\bsource\b|(^|[\s;&|(])\.\s|;"))
+                found.Add($"eval, source, . or ; outside check() and fetch(): {line}");
+        return found;
+    }
+
+    [Fact]   // mutations: each bypass below, put into the real script
+    public void The_iac_script_is_exactly_its_pinned_lines() =>
+        Assert.Empty(IacScriptProblems(File.ReadAllText(Path.Combine(CoreRoot(), ".github", "scripts", "install-iac-tools.sh"))));
+
+    [Fact]
+    public void The_iac_script_line_check_catches_each_bypass()
+    {
+        var script = File.ReadAllText(Path.Combine(CoreRoot(), ".github", "scripts", "install-iac-tools.sh")).Replace("\r\n", "\n");
+        Assert.Empty(IacScriptProblems(script));
+        const string fetchLine = "fetch() {";
+        const string tofuTar = "tar -xzf \"$dir/tofu.tar.gz\" -C \"$dir/tofu-x\" tofu";
+        void Catches(string from, string to, string expect) => CatchesIn(IacScriptProblems, script, from, to, expect);
+        // Six ways to run or fetch something the sha256 checks never see, each of which passed the checks above.
+        // 1. A download by another tool, above fetch().
+        Catches(fetchLine, "python3 -c 'import urllib.request as u; u.urlretrieve(\"https://example.com/x\", \"x\")'\n" + fetchLine, "is not the pinned one: python3");
+        // 2. eval of a built-up command.
+        Catches(tofuTar, tofuTar + "\neval \"$(printf 'cu%s' rl) -o x https://example.com/x\"", "is not the pinned one: eval");
+        // 3. A command in a variable.
+        Catches(tofuTar, "get=wget\n\"$get\" -q -O \"$dir/x\" https://example.com/x\n" + tofuTar, "is not the pinned one: get=wget");
+        // 4. A downloaded file sourced, by either name.
+        Catches(tofuTar, tofuTar + "\nsource \"$dir/tofu-x/tofu\"", "is not the pinned one: source");
+        Catches(tofuTar, tofuTar + "\n. \"$dir/tofu-x/tofu\"", "is not the pinned one: . ");
+        // 5. tar told to run a program on the archive.
+        Catches(tofuTar, "tar --use-compress-program=sh -xf \"$dir/tofu.tar.gz\" -C \"$dir/tofu-x\" tofu", "is not the pinned one: tar --use-compress-program");
+        // 6. eval above fetch().
+        Catches(fetchLine, "eval 'curl -fsSL -o x https://example.com/x'\n" + fetchLine, "is not the pinned one: eval");
+        // A pinned line out of its place: a second bicep --version, run before fetch() exists, or before bicep's own fetch.
+        Catches(fetchLine, "\"$bin/bicep\" --version\n" + fetchLine, "is not the pinned one: \"$bin/bicep\" --version");
+        Catches("\nfetch bicep ", "\n\"$bin/bicep\" --version\nfetch bicep ", "is not the pinned one: \"$bin/bicep\" --version");
+        // Two pinned lines swapped: the archive unpacked before its folder is made.
+        Catches("mkdir \"$dir/tofu-x\"\ntar -xzf \"$dir/tofu.tar.gz\" -C \"$dir/tofu-x\" tofu\n",
+            "tar -xzf \"$dir/tofu.tar.gz\" -C \"$dir/tofu-x\" tofu\nmkdir \"$dir/tofu-x\"\n", "is not the pinned one: tar -xzf");
+        // The ban on its own: a line a pattern allows, with eval, source, . or ; added.
+        Catches("bin=\"$1\"", "bin=\"$1\"; eval x", "eval, source, . or ; outside check() and fetch()");
+        Assert.Contains(IacScriptProblems(script.Replace("set -euo pipefail\n", "set -euo pipefail\n. ./x\n")), p => p.StartsWith("eval, source, . or ;", StringComparison.Ordinal));
+        // A shape cannot be stretched: a sha256 line with a command after it, an indented copy of a written-out line, no shebang.
+        Catches("google_version=8.11.0", "google_version=8.11.0 curl", "is not the pinned one: google_version=8.11.0 curl");
+        // A non-ASCII digit in a version, and a CR at the end of a line.
+        Catches("aws_version=6.73.0", "aws_version=\u0666.73.0", "is not the pinned one: aws_version=\u0666.73.0");
+        Assert.Contains(IacScriptProblems(script.Replace("aws_version=6.73.0\n", "aws_version=6.73.0\r\n")), p => p.StartsWith("a carriage return", StringComparison.Ordinal));
+        Catches("mkdir -p \"$bin\"\n", "  mkdir -p \"$bin\"\n", "is not the pinned one:   mkdir -p \"$bin\"");
+        Catches("#!/usr/bin/env bash\n", "#!/bin/sh\n", "the first line is not #!/usr/bin/env bash");
     }
 
     /// <summary>The actions each scanner may use. Scorecard publishes its results only from a workflow whose job uses its approved

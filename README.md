@@ -35,6 +35,8 @@ Packmoat only serves restores. It does not search or publish packages.
 | Behind your own HTTPS proxy or load balancer | Supported |
 | Kubernetes, with the Helm chart | Supported. The chart is not published to a chart repository yet. |
 | Azure Container Apps | Supported (pre-production), more than one copy on PostgreSQL (SQLite runs one); tested in CI against PostgreSQL 17. It needs a PostgreSQL database: see [docs/deploy/azure-container-apps.md](docs/deploy/azure-container-apps.md). |
+| Google Cloud Run | Template checked offline in CI; not yet deployed by the project. It needs a PostgreSQL database (Cloud SQL): see [docs/deploy/cloud-run.md](docs/deploy/cloud-run.md). |
+| AWS ECS on Fargate | Template checked offline in CI; not yet deployed by the project. It needs a PostgreSQL database (RDS): see [docs/deploy/aws-ecs.md](docs/deploy/aws-ecs.md). |
 
 [docs/deploy/README.md](docs/deploy/README.md) lists what every deployment needs, and links to a guide for each way.
 
