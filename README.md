@@ -50,7 +50,7 @@ If you would rather not run Packmoat yourself, a hosted service is available at 
 
 ## Status
 
-Packmoat supports NuGet today. Until version 1.0, settings and the interfaces for modules may change in any release. Only the latest `main` branch receives fixes.
+Packmoat supports NuGet today. Until version 1.0, settings and the interfaces for modules may change in a minor release; see [docs/versioning.md](docs/versioning.md). Only the newest release receives fixes.
 
 To build and test the code you need the .NET SDK named in [dotnet/global.json](dotnet/global.json):
 

@@ -6,7 +6,7 @@ description: >-
 type: application
 # The chart's own version. Charts are not published yet.
 version: 0.1.0
-# The image tag used when image.tag and image.digest are both empty. There are no release images yet: main is the newest build.
-appVersion: "main"
+# The image tag used when image.tag and image.digest are both empty: the release this chart belongs to.
+appVersion: "0.1.0"
 # 1.29: ReadWriteOncePod, which the data claim uses, is generally available from Kubernetes 1.29.
 kubeVersion: ">=1.29.0-0"

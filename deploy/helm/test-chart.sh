@@ -77,7 +77,7 @@ count  "three probes send Host: localhost" 3 '^                  value: localhos
 count  "startup and liveness probe /healthz" 2 '^              path: /healthz$'
 count  "readiness probes /readyz" 1 '^              path: /readyz$'
 after  "the readiness probe is /readyz" '^          readinessProbe:$' '^            httpGet:$'
-has    "the image is the chart's appVersion" '^          image: "registry.example.test/packmoat-core:main"$'
+has    "the image is the chart's appVersion" '^          image: "registry.example.test/packmoat-core:0.1.0"$'
 
 echo "--- the other resources"
 render "claim" --show-only templates/pvc.yaml
