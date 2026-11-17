@@ -453,6 +453,14 @@ resource app 'Microsoft.App/containerApps@2025-07-01' = {
         {
           name: 'packmoat'
           image: checkedServiceImage
+          // The image bakes PACKMOAT_DB (a SQLite path), which the server refuses beside PACKMOAT_DB_FILE: env -u clears it first, then runs the image's own entrypoint.
+          command: [
+            '/usr/bin/env'
+            '-u'
+            'PACKMOAT_DB'
+            'dotnet'
+            '/app/host/Packmoat.Server.dll'
+          ]
           resources: {
             cpu: json(cpu)
             memory: memory
@@ -580,7 +588,11 @@ resource migrate 'Microsoft.App/jobs@2025-07-01' = {
         {
           name: 'migrate'
           image: checkedJobImage
+          // Cleared for the same reason as the server's: the image's PACKMOAT_DB beside PACKMOAT_DB_FILE is refused.
           command: [
+            '/usr/bin/env'
+            '-u'
+            'PACKMOAT_DB'
             'packmoat-admin'
           ]
           args: [

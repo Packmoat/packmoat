@@ -28,8 +28,8 @@ public class SelfHostingDocTests
         Assert.Equal(new[]
         {
             "CODE_OF_CONDUCT.md", "CONTRIBUTING.md", "README.md", "SECURITY.md",
-            "docs/architecture.md", "docs/concepts.md", "docs/deploy/README.md", "docs/deploy/azure-container-apps.md",
-            "docs/deploy/kubernetes.md", "docs/deploy/own-proxy.md", "docs/deploy/single-server.md", "docs/operations.md",
+            "docs/architecture.md", "docs/concepts.md", "docs/deploy/README.md", "docs/deploy/aws-ecs.md", "docs/deploy/azure-container-apps.md",
+            "docs/deploy/cloud-run.md", "docs/deploy/kubernetes.md", "docs/deploy/own-proxy.md", "docs/deploy/single-server.md", "docs/operations.md",
             "docs/self-hosting.md", "spec/README.md",
         }, MarkdownFiles(CoreRoot.Path()));
     }

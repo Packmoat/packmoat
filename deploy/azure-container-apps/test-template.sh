@@ -125,6 +125,14 @@ output ownerSecretName string = ownerDatabaseSecretName"
   mutation "refused: PACKMOAT_DB_FILE in fileSettings" main.bicep "endsWith(k, '_FILE') || !startsWith(k, 'PACKMOAT_'))
 var checkedFileSettings" "!startsWith(k, 'PACKMOAT_'))
 var checkedFileSettings"
+  mutation "the server and the job clear the image's PACKMOAT_DB before reading PACKMOAT_DB_FILE (env -u, then the image's own command)" main.bicep "'/usr/bin/env'
+            '-u'
+            'PACKMOAT_DB'
+            'dotnet'" "'dotnet'"
+  mutation "the server and the job clear the image's PACKMOAT_DB before reading PACKMOAT_DB_FILE (env -u, then the image's own command)" main.bicep "'/usr/bin/env'
+            '-u'
+            'PACKMOAT_DB'
+            'packmoat-admin'" "'packmoat-admin'"
   jobs_at_once="${MUTATION_JOBS:-2}"
   for (( start = 0; start < ${#labels[@]}; start += jobs_at_once )); do
     for (( i = start; i < start + jobs_at_once && i < ${#labels[@]}; i++ )); do run_mutation "$i" > "$work/result-$i" 2>&1 & done
@@ -318,8 +326,10 @@ check "the server reads the master key and the app role's connection string from
   $(settings_of "$app") | .PACKMOAT_MASTER_KEY_FILE == \"/run/secrets/packmoat/master-key\" and .PACKMOAT_DB_FILE == \"/run/secrets/packmoat/db-app\""
 check "the job is run by hand and runs packmoat-admin db migrate --grant-to the app role" "$d" "
   $job | .properties.configuration.triggerType == \"Manual\" and .properties.configuration.replicaRetryLimit == 0
-  and .properties.template.containers[0].command == [\"packmoat-admin\"]
   and .properties.template.containers[0].args == [\"db\", \"migrate\", \"--grant-to\", \"packmoat_app\"]"
+check "the server and the job clear the image's PACKMOAT_DB before reading PACKMOAT_DB_FILE (env -u, then the image's own command)" "$d" "
+  ([$app | .properties.template.containers[0].command] == [[\"/usr/bin/env\", \"-u\", \"PACKMOAT_DB\", \"dotnet\", \"/app/host/Packmoat.Server.dll\"]])
+  and ([$job | .properties.template.containers[0].command] == [[\"/usr/bin/env\", \"-u\", \"PACKMOAT_DB\", \"packmoat-admin\"]])"
 
 echo "--- the example parameters (main.example.bicepparam) are accepted"
 if skipped "the example parameters are accepted"; then :

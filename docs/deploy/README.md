@@ -47,5 +47,7 @@ The full list of settings is in the [operations guide](../operations.md#settings
 | [Your own proxy](own-proxy.md) | You already have HTTPS in front: nginx, a cloud load balancer or similar. | Supported |
 | [Kubernetes](kubernetes.md) | A cluster, with the Helm chart. | Supported. The chart is not published to a chart repository yet. |
 | [Azure Container Apps](azure-container-apps.md) | A managed container platform on Azure. | Supported (pre-production), more than one copy on PostgreSQL (SQLite runs one); tested in CI against PostgreSQL 17. It needs a PostgreSQL database. A Bicep template (`deploy/azure-container-apps`): template checked offline in CI; not yet deployed by the project. |
+| [Google Cloud Run](cloud-run.md) | A managed container platform on Google Cloud. | Template checked offline in CI; not yet deployed by the project. It needs a PostgreSQL database (Cloud SQL). An OpenTofu module (`deploy/cloud-run`). |
+| [AWS ECS on Fargate](aws-ecs.md) | A managed container platform on AWS, behind an Application Load Balancer. | Template checked offline in CI; not yet deployed by the project. It needs a PostgreSQL database (RDS). An OpenTofu module (`deploy/aws-ecs`). |
 
 If you would rather not run Packmoat yourself, a hosted service is available at https://packmoat.com.

@@ -26,6 +26,12 @@ public class SettingsTests
         Assert.Null(Reader(new() { [FileName] = "" }).Read(Name));
     }
 
+    [Fact]   // mutation: Read tests the value with `value is not null` instead of !string.IsNullOrEmpty(value)
+    public void An_empty_variable_beside_its_file_counts_as_not_set()
+    {
+        Assert.Equal(Secret, Reader(new() { [Name] = "", [FileName] = Path }, _ => Secret + "\n").Read(Name));
+    }
+
     [Fact]
     public void The_file_alone_is_read_with_one_trailing_newline_removed()
     {
