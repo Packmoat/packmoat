@@ -16,4 +16,10 @@ We acknowledge your report within 5 business days, keep you informed while we wo
 
 ## Supported versions
 
-Only the latest `main` branch, and images built from it, receives security fixes. To get a fix, upgrade to the latest `main` (see "Upgrades and rollback" in [docs/operations.md](docs/operations.md#upgrades-and-rollback)).
+| Version | Security fixes |
+|---|---|
+| Newest release (see [Releases](https://github.com/Packmoat/packmoat/releases)) | Yes, as a new patch release |
+| `main` branch | Yes; fixes land here first |
+| Any older release | No: upgrade to the newest release |
+
+How releases are numbered, and what may change before 1.0: [docs/versioning.md](docs/versioning.md). How to upgrade: [Upgrades and rollback](docs/operations.md#upgrades-and-rollback).

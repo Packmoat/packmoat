@@ -7,12 +7,12 @@ namespace Packmoat.Architecture.Tests;
 
 /// <summary>
 /// The files a public repository needs, at the core's root: the licence and its notice, a README, the security policy, how to
-/// contribute and the code of conduct. The licence is Apache-2.0 everywhere one is declared, and the code says nothing of who approves its
+/// contribute, the code of conduct and the changelog. The licence is Apache-2.0 everywhere one is declared, and the code says nothing of who approves its
 /// wording: an issue number is the reference.
 /// </summary>
 public class OpenSourceFilesTests
 {
-    private static readonly string[] Files = ["LICENSE", "NOTICE", "README.md", "SECURITY.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md"];
+    private static readonly string[] Files = ["LICENSE", "NOTICE", "README.md", "SECURITY.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "CHANGELOG.md"];
 
     /// <summary>A file's text with Windows line ends made Unix ones, so a checkout that converts them still compares.</summary>
     private static string Unix(string text) => text.Replace("\r\n", "\n");
