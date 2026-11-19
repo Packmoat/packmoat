@@ -18,7 +18,11 @@ script="$here/$(basename "$0")"
 settings_doc="$here/../../docs/operations.md"
 tools_script="$here/../../.github/scripts/install-iac-tools.sh"
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+# A stop that is not an exit 0 or exit 1 of this script's own (an unbound variable under set -u, say) must not end as success: on macOS's
+# bash 3.2, $? is already 0 in the trap then, so the trap treats an exit 0 before `finished=1` as a failure. test-exit-status.sh checks it.
+rc=0   # (set in the trap; named here so that shellcheck sees it)
+finished=0
+trap 'rc=$?; rm -rf "$work"; if [[ $rc -eq 0 && $finished -ne 1 ]]; then rc=1; fi; exit $rc' EXIT
 failed=0
 
 init_label="tofu init offline, from the pinned provider (lock file read-only)"
@@ -53,7 +57,7 @@ unpack_provider() {
 # They run MUTATION_JOBS at a time (default 2).
 labels=(); files=(); froms=(); tos=()
 # mutation <check label> <file> <text> <replacement>: adds one to the list.
-# A call with too few arguments stops the script with exit 1 here: under the EXIT trap, macOS's bash 3.2 ends a set -u stop with exit 0.
+# A call with too few arguments stops the script with exit 1 here, whatever the shell's own set -u stop would do.
 mutation() {
   if [[ $# -ne 4 ]]; then echo "mutation needs 4 arguments, got $#: ${1:-}" >&2; exit 1; fi
   labels+=("$1"); files+=("$2"); froms+=("$3"); tos+=("$4")
@@ -406,6 +410,7 @@ output "task_security_group_id" {'
   echo "template mutations: ${#labels[@]}, caught ${caught}, broken ${broken}, not caught $(( ${#labels[@]} - caught - broken ))"
   if [[ "$failed" -ne 0 ]]; then echo "template mutations: some not caught, or broken" >&2; exit 1; fi
   echo "template mutations: all ${#labels[@]} caught"
+  finished=1
   exit 0
 fi
 
@@ -586,14 +591,18 @@ else
   # --only: first, whether the module still plans with the required inputs at all ("plan: ok"), so that a mutation that merely breaks
   # the module is not counted as caught by the check it names. Then, when <label> is a run, that run alone, in a file of its own (so no
   # earlier run's failure can skip it), and whether it failed on its own assertion or expected failure, or on some other error ("broken").
+  # The probe and the run are two files of one tofu test call (a file's failure does not skip the other file), with one output.
   { header tests/defaults.tftest.hcl; printf 'run "plan_probe" {\n  command = plan\n}\n'; } > tests/plan_probe.tftest.hcl
-  tofu test -no-color -filter=tests/plan_probe.tftest.hcl > "$work/probe.txt" 2>&1 || true
-  if grep -Fxq '  run "plan_probe"... pass' "$work/probe.txt"; then echo "plan: ok"; else echo "plan: broken: $(grep '^Error: ' "$work/probe.txt" | head -3 | tr '\n' ' ')"; fi
   test_file="$(grep -lF "run \"$only\" {" tests/*.tftest.hcl || true)"
+  filters=(-filter=tests/plan_probe.tftest.hcl)
   if [[ -n "$test_file" ]]; then
     { header "$test_file"; sed -n "/^run \"$only\" {\$/,/^}\$/p" "$test_file"; } > "$work/only.hcl"
     mv "$work/only.hcl" tests/only.tftest.hcl
-    tofu test -no-color -filter=tests/only.tftest.hcl > "$work/test.txt" 2>&1 || true
+    filters+=(-filter=tests/only.tftest.hcl)
+  fi
+  tofu test -no-color "${filters[@]}" > "$work/test.txt" 2>&1 || true
+  if grep -Fxq '  run "plan_probe"... pass' "$work/test.txt"; then echo "plan: ok"; else echo "plan: broken: $(grep '^Error: ' "$work/test.txt" | head -3 | tr '\n' ' ')"; fi
+  if [[ -n "$test_file" ]]; then
     if grep -Fxq "  run \"$only\"... pass" "$work/test.txt"; then ok "$only"
     else
       # The example's own way to fail is an input it gives being refused.
@@ -608,4 +617,5 @@ else
 fi
 
 if [[ "$failed" -ne 0 ]]; then echo "template tests: FAILED" >&2; exit 1; fi
+finished=1
 echo "template tests: all passed"
