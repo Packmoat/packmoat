@@ -12,7 +12,11 @@ here="$(cd "$(dirname "$0")" && pwd)"
 script="$here/$(basename "$0")"
 settings_doc="$here/../../docs/operations.md"
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+# A stop that is not an exit 0 or exit 1 of this script's own (an unbound variable under set -u, say) must not end as success: on macOS's
+# bash 3.2, $? is already 0 in the trap then, so the trap treats an exit 0 before `finished=1` as a failure. test-exit-status.sh checks it.
+rc=0   # (set in the trap; named here so that shellcheck sees it)
+finished=0
+trap 'rc=$?; rm -rf "$work"; if [[ $rc -eq 0 && $finished -ne 1 ]]; then rc=1; fi; exit $rc' EXIT
 failed=0
 
 ok() { echo "ok:   $1"; }
@@ -144,6 +148,7 @@ var checkedFileSettings"
   done
   if [[ "$failed" -ne 0 ]]; then echo "template mutations: some not caught" >&2; exit 1; fi
   echo "template mutations: all caught"
+  finished=1
   exit 0
 fi
 
@@ -395,4 +400,5 @@ done
 refused "refused: PACKMOAT_DB_FILE in fileSettings" "fileSettings may not set PACKMOAT_DB_FILE" "${images[@]}" "param fileSettings = { PACKMOAT_DB_FILE: 'x' }"
 
 if [[ "$failed" -ne 0 ]]; then echo "template tests: FAILED" >&2; exit 1; fi
+finished=1
 echo "template tests: all passed"
